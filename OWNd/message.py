@@ -1,11 +1,7 @@
 """ This module contains OpenWebNet messages definition """  # pylint: disable=too-many-lines
 
-from __future__ import annotations
-
 import datetime
 import re
-from typing import Optional
-
 from dateutil.relativedelta import relativedelta
 import pytz
 
@@ -155,7 +151,7 @@ class OWNMessage:
             del self._dimension_value[0]
 
     @classmethod
-    def parse(cls, data) -> Optional[OWNMessage]:
+    def parse(cls, data):
         if (
             cls._ACK.match(data)
             or cls._NACK.match(data)
@@ -211,7 +207,7 @@ class OWNMessage:
         """The 'where' parameter corresponding to the bus interface of the subject of this message"""
         return (
             self._where_param[1]
-            if self._who in [1, 2, 15]
+            if self._who in ["1", "2", "15"]
             and len(self._where_param) > 0
             and self._where_param[0] == "4"
             else None
@@ -342,7 +338,7 @@ class OWNEvent(OWNMessage):
     """
 
     @classmethod
-    def parse(cls, data) -> Optional[OWNEvent]:
+    def parse(cls, data):
         _match = re.match(r"^\*#?(?P<who>\d+)\*.+##$", data)
 
         if _match:
@@ -377,7 +373,7 @@ class OWNEvent(OWNMessage):
             elif _who > 1000:
                 return cls(data)
 
-        return None
+        return data
 
 
 class OWNScenarioEvent(OWNEvent):
@@ -493,10 +489,6 @@ class OWNLightingEvent(OWNEvent):
                     seconds=int(self._dimension_value[2]),
                 )
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} has timeout set to {self._motion_timeout}."  # pylint: disable=line-too-long
-            elif self._dimension_value is not None:
-                self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} has sent an unknown dimension {self._dimension}."
-            else:
-                pass
 
     @property
     def message_type(self):
@@ -777,9 +769,6 @@ class OWNHeatingEvent(OWNEvent):
                 or self._dimension_value[0] == "00"
                 or self._dimension_value[0] == "4"
                 or self._dimension_value[0] == "5"
-                or self._dimension_value[0] == "6"
-                or self._dimension_value[0] == "7"
-                or self._dimension_value[0] == "8"
             ):
                 self._local_offset = 0
             elif self._dimension_value[0].startswith("0"):
@@ -1613,7 +1602,7 @@ class OWNCommand(OWNMessage):
     """
 
     @classmethod
-    def parse(cls, data) -> Optional[OWNCommand]:
+    def parse(cls, data):
         _match = re.match(r"^\*#?(?P<who>\d+)\*.+##$", data)
 
         if _match:
@@ -1905,13 +1894,16 @@ class OWNGatewayCommand(OWNCommand):
             self._minute = self._dimension_value[1]
             self._second = self._dimension_value[2]
             # Timezone is sometimes missing from messages, assuming UTC
-            if self._dimension_value[3] != "":
-                self._timezone = (
-                    f"+{self._dimension_value[3][1:]}:00"
-                    if self._dimension_value[3][0] == "0"
-                    else f"-{self._dimension_value[3][1:]}:00"
-                )
-            else:
+            try:
+                if self._dimension_value[3] != "":
+                    self._timezone = (
+                        f"+{self._dimension_value[3][1:]}:00"
+                        if self._dimension_value[3][0] == "0"
+                        else f"-{self._dimension_value[3][1:]}:00"
+                    )
+                else:
+                    self._timezone = ""
+            except IndexError:
                 self._timezone = ""
             self._time = datetime.time.fromisoformat(
                 f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
