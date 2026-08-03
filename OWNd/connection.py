@@ -15,6 +15,13 @@ from .message import OWNMessage, OWNSignaling
 
 
 class OWNGateway:
+    @staticmethod
+    def _as_str(value):
+        """Collapse a repeated-XML-tag list/tuple down to its first value."""
+        if isinstance(value, (list, tuple)):
+            return value[0] if value else None
+        return value
+
     def __init__(self, discovery_info: dict):
         # Attributes potentially provided by user
         self.address = (
@@ -32,29 +39,32 @@ class OWNGateway:
         self.ssdp_st = (
             discovery_info["ssdp_st"] if "ssdp_st" in discovery_info else None
         )
-        # Attributes retrieved from UPnP device description
-        self.device_type = (
+        # Attributes retrieved from UPnP device description. Some UPnP/SSDP XML
+        # parsers (e.g. when a device repeats a tag) yield a list instead of a
+        # plain string for these; downstream consumers (HA's device registry)
+        # require a plain string, so normalize at the source.
+        self.device_type = self._as_str(
             discovery_info["deviceType"] if "deviceType" in discovery_info else None
         )
-        self.friendly_name = (
+        self.friendly_name = self._as_str(
             discovery_info["friendlyName"] if "friendlyName" in discovery_info else None
         )
-        self.manufacturer = (
+        self.manufacturer = self._as_str(
             discovery_info["manufacturer"]
             if "manufacturer" in discovery_info
             else "BTicino S.p.A."
         )
-        self.manufacturer_url = (
+        self.manufacturer_url = self._as_str(
             discovery_info["manufacturerURL"]
             if "manufacturerURL" in discovery_info
             else None
         )
-        self.model_name = (
+        self.model_name = self._as_str(
             discovery_info["modelName"]
             if "modelName" in discovery_info
             else "Unknown model"
         )
-        self.model_number = (
+        self.model_number = self._as_str(
             discovery_info["modelNumber"] if "modelNumber" in discovery_info else None
         )
         # self.presentationURL = (
@@ -62,10 +72,12 @@ class OWNGateway:
         #     if "presentationURL" in discovery_info
         #     else None
         # )
-        self.serial_number = (
+        self.serial_number = self._as_str(
             discovery_info["serialNumber"] if "serialNumber" in discovery_info else None
         )
-        self.udn = discovery_info["UDN"] if "UDN" in discovery_info else None
+        self.udn = self._as_str(
+            discovery_info["UDN"] if "UDN" in discovery_info else None
+        )
         # Attributes retrieved from SOAP service control
         self.port = discovery_info["port"] if "port" in discovery_info else None
 
