@@ -136,3 +136,6 @@ dmypy.json
 
 #Pylint
 .pylintrc
+# Build artifacts, built fresh by the release workflow, not committed
+dist/
+*.egg-info/
