@@ -154,6 +154,17 @@ class OWNMessage:
             self._dimension_value = self._match.group("dimension_value").split("*")
             del self._dimension_value[0]
 
+    def _dim(self, index: int, default: str = "") -> str:
+        """Safely read a dimension value by index.
+
+        Some gateways (F454 observed) omit trailing optional fields (e.g. the
+        timezone in time-broadcast frames), so `_dimension_value` can be
+        shorter than the message format normally implies.
+        """
+        if self._dimension_value is None or index >= len(self._dimension_value):
+            return default
+        return self._dimension_value[index]
+
     @classmethod
     def parse(cls, data) -> Optional[OWNMessage]:
         if (
@@ -1175,11 +1186,11 @@ class OWNGatewayEvent(OWNEvent):
             self._minute = self._dimension_value[1]
             self._second = self._dimension_value[2]
             # Timezone is sometimes missing from messages, assuming UTC
-            if self._dimension_value[3] != "":
+            if self._dim(3) != "":
                 self._timezone = (
-                    f"+{self._dimension_value[3][1:]}:00"
-                    if self._dimension_value[3][0] == "0"
-                    else f"-{self._dimension_value[3][1:]}:00"
+                    f"+{self._dim(3)[1:]}:00"
+                    if self._dim(3)[0] == "0"
+                    else f"-{self._dim(3)[1:]}:00"
                 )
             else:
                 self._timezone = ""
@@ -1247,11 +1258,11 @@ class OWNGatewayEvent(OWNEvent):
             self._minute = self._dimension_value[1]
             self._second = self._dimension_value[2]
             # Timezone is sometimes missing from messages, assuming UTC
-            if self._dimension_value[3] != "":
+            if self._dim(3) != "":
                 self._timezone = (
-                    f"+{self._dimension_value[3][1:]}:00"
-                    if self._dimension_value[3][0] == "0"
-                    else f"-{self._dimension_value[3][1:]}:00"
+                    f"+{self._dim(3)[1:]}:00"
+                    if self._dim(3)[0] == "0"
+                    else f"-{self._dim(3)[1:]}:00"
                 )
             else:
                 self._timezone = ""
@@ -1905,11 +1916,11 @@ class OWNGatewayCommand(OWNCommand):
             self._minute = self._dimension_value[1]
             self._second = self._dimension_value[2]
             # Timezone is sometimes missing from messages, assuming UTC
-            if self._dimension_value[3] != "":
+            if self._dim(3) != "":
                 self._timezone = (
-                    f"+{self._dimension_value[3][1:]}:00"
-                    if self._dimension_value[3][0] == "0"
-                    else f"-{self._dimension_value[3][1:]}:00"
+                    f"+{self._dim(3)[1:]}:00"
+                    if self._dim(3)[0] == "0"
+                    else f"-{self._dim(3)[1:]}:00"
                 )
             else:
                 self._timezone = ""
@@ -1936,11 +1947,11 @@ class OWNGatewayCommand(OWNCommand):
             self._minute = self._dimension_value[1]
             self._second = self._dimension_value[2]
             # Timezone is sometimes missing from messages, assuming UTC
-            if self._dimension_value[3] != "":
+            if self._dim(3) != "":
                 self._timezone = (
-                    f"+{self._dimension_value[3][1:]}:00"
-                    if self._dimension_value[3][0] == "0"
-                    else f"-{self._dimension_value[3][1:]}:00"
+                    f"+{self._dim(3)[1:]}:00"
+                    if self._dim(3)[0] == "0"
+                    else f"-{self._dim(3)[1:]}:00"
                 )
             else:
                 self._timezone = ""

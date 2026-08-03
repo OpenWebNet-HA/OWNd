@@ -665,13 +665,32 @@ class OWNSession:
 
 
 class OWNEventSession(OWNSession):
+    # A parse/attribute/generic failure alone doesn't reconnect the socket
+    # (see except branches below). If the underlying reader wedges without
+    # ever raising a cancellable timeout, we'd otherwise spin on the same
+    # broken stream forever. After this many *consecutive* non-reconnecting
+    # failures, force a fresh connection rather than keep trusting the reader.
+    MAX_CONSECUTIVE_SOFT_FAILURES = 3
+
     def __init__(self, gateway: OWNGateway = None, logger: logging.Logger = None):
         super().__init__(gateway=gateway, connection_type="event", logger=logger)
+        self._consecutive_soft_failures = 0
 
     @classmethod
     async def connect_to_gateway(cls, gateway: OWNGateway):
         connection = cls(gateway)
         await connection.connect()
+
+    async def _force_reconnect_after_soft_failures(self) -> None:
+        self._consecutive_soft_failures += 1
+        if self._consecutive_soft_failures >= self.MAX_CONSECUTIVE_SOFT_FAILURES:
+            self._logger.warning(
+                "%s %d consecutive event session failures, forcing reconnect...",
+                self._gateway.log_id,
+                self._consecutive_soft_failures,
+            )
+            self._consecutive_soft_failures = 0
+            await self.connect()
 
     async def get_next(self) -> Union[OWNMessage, str, None]:
         """Acts as an entry point to read messages on the event bus.
@@ -683,17 +702,20 @@ class OWNEventSession(OWNSession):
             )
             _decoded_data = data.decode()
             _message = OWNMessage.parse(_decoded_data)
+            self._consecutive_soft_failures = 0
             return _message if _message else _decoded_data
         except asyncio.IncompleteReadError:
             self._logger.warning(
                 "%s Connection interrupted, reconnecting...", self._gateway.log_id
             )
+            self._consecutive_soft_failures = 0
             await self.connect()
             return None
         except asyncio.TimeoutError:
             self._logger.warning(
                 "%s Event session idle timeout, reconnecting...", self._gateway.log_id
             )
+            self._consecutive_soft_failures = 0
             await self.connect()
             return None
         except AttributeError:
@@ -701,12 +723,15 @@ class OWNEventSession(OWNSession):
                 "%s Received data could not be parsed into a message:",
                 self._gateway.log_id,
             )
+            await self._force_reconnect_after_soft_failures()
             return None
         except ConnectionError:
             self._logger.exception("%s Connection error:", self._gateway.log_id)
+            await self._force_reconnect_after_soft_failures()
             return None
         except Exception:  # pylint: disable=broad-except
             self._logger.exception("%s Event session crashed.", self._gateway.log_id)
+            await self._force_reconnect_after_soft_failures()
             return None
 
 
