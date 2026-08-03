@@ -3,7 +3,7 @@ name: Release
 on:
   push:
     tags:
-      - "v*"
+      - "*"
 
 jobs:
   release:
@@ -16,14 +16,14 @@ jobs:
       - name: Validate tag format
         run: |
           TAG="${GITHUB_REF_NAME}"
-          if [[ ! "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Tag '$TAG' does not match vX.Y.Z, aborting."
+          if [[ ! "$TAG" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Tag '$TAG' does not match X.Y.Z, aborting."
             exit 1
           fi
 
       - name: Check package version matches tag
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_VERSION="$GITHUB_REF_NAME"
           PACKAGE_VERSION=$(python3 -c "import re; print(re.search(r'__version__ = \"([^\"]+)\"', open('OWNd/__init__.py').read()).group(1))")
           if [ "$TAG_VERSION" != "$PACKAGE_VERSION" ]; then
             echo "Tag $GITHUB_REF_NAME does not match OWNd/__init__.py version $PACKAGE_VERSION, aborting."
