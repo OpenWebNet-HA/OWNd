@@ -6,7 +6,7 @@ build-backend = "setuptools.build_meta"
 testpaths = ["tests"]
 
 [tool.ruff]
-target-version = "py38"
+target-version = "py311"
 
 [tool.ruff.lint]
 # Start with correctness checks that the existing code already satisfies.
@@ -15,9 +15,8 @@ target-version = "py38"
 select = ["E9", "F63", "F7", "F82"]
 
 [tool.mypy]
-# Current mypy releases no longer target Python 3.8, while OWNd still supports
-# it at runtime. Python 3.8 compatibility is covered by the test matrix below.
-python_version = "3.10"
+# Keep static analysis aligned with the oldest supported runtime.
+python_version = "3.11"
 check_untyped_defs = true
 ignore_missing_imports = true
 implicit_optional = true
