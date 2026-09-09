@@ -148,6 +148,117 @@ async def test_command_response_frame_count_is_bounded() -> None:
 
 
 @pytest.mark.asyncio
+async def test_large_status_sweep_is_drained_before_ack() -> None:
+    session, writer = make_session(OWNCommandSession)
+    assert isinstance(session, OWNCommandSession)
+    assert session._stream_reader is not None
+    for index in range(100):
+        session._stream_reader.feed_data(f"*1*0*{index + 11}##".encode())
+    session._stream_reader.feed_data(b"*#*1##")
+
+    result = await session.send("*#1*0##", is_status_request=True)
+
+    assert isinstance(result, list)
+    assert len(result) == 100
+    assert writer.written == [b"*#1*0##"]
+
+
+@pytest.mark.asyncio
+async def test_written_command_is_not_replayed_after_lost_ack() -> None:
+    session, writer = make_session(OWNCommandSession)
+    assert isinstance(session, OWNCommandSession)
+    assert session._stream_reader is not None
+    session._stream_reader.feed_eof()
+
+    with patch.object(session, "connect", new_callable=AsyncMock) as connect:
+        result = await session.send("*1*1*11##")
+
+    assert result is None
+    assert writer.written == [b"*1*1*11##"]
+    connect.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_disconnected_status_request_retries_once() -> None:
+    session, original_writer = make_session(OWNCommandSession)
+    assert isinstance(session, OWNCommandSession)
+    assert session._stream_reader is not None
+    session._stream_reader.feed_eof()
+
+    retry_writer = FakeWriter()
+
+    async def reconnect() -> dict:
+        session._stream_reader = asyncio.StreamReader()
+        session._stream_reader.feed_eof()
+        session._stream_writer = retry_writer  # type: ignore[assignment]
+        return {"Success": True, "Message": None}
+
+    with patch.object(session, "connect", side_effect=reconnect) as connect:
+        result = await session.send("*#1*0##", is_status_request=True)
+
+    assert result is None
+    connect.assert_awaited_once()
+    assert original_writer.written == [b"*#1*0##"]
+    assert retry_writer.written == [b"*#1*0##"]
+
+
+@pytest.mark.asyncio
+async def test_cancelled_command_closes_stream() -> None:
+    session, writer = make_session(OWNCommandSession)
+    assert isinstance(session, OWNCommandSession)
+
+    pending = asyncio.create_task(
+        session.send("*#1*0##", is_status_request=True)
+    )
+    await asyncio.sleep(0)
+    pending.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await pending
+
+    assert writer.closed
+    assert session._stream_reader is None
+    assert session._stream_writer is None
+
+
+@pytest.mark.asyncio
+async def test_partial_response_followed_by_nack_is_not_retried() -> None:
+    session, writer = make_session(OWNCommandSession)
+    assert isinstance(session, OWNCommandSession)
+    assert session._stream_reader is not None
+    session._stream_reader.feed_data(b"*1*0*11##*#*0##")
+
+    result = await session.send("*#1*0##", is_status_request=True)
+
+    assert result is None
+    assert writer.written == [b"*#1*0##"]
+
+
+@pytest.mark.asyncio
+async def test_probe_gateway_uses_read_only_model_request() -> None:
+    gateway = OWNGateway({"address": "192.0.2.1", "port": 20000})
+
+    with (
+        patch.object(
+            OWNCommandSession,
+            "connect",
+            new=AsyncMock(return_value={"Success": True, "Message": None}),
+        ),
+        patch.object(
+            OWNCommandSession,
+            "send",
+            new=AsyncMock(return_value=True),
+        ) as send,
+        patch.object(OWNCommandSession, "close", new=AsyncMock()) as close,
+    ):
+        result = await OWNCommandSession.probe_gateway(gateway)
+
+    assert result is True
+    send.assert_awaited_once_with("*#13**15##", is_status_request=True)
+    close.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_event_keepalive_is_profile_controlled() -> None:
     enabled, _ = make_session(OWNEventSession, model="F454")
     disabled, _ = make_session(OWNEventSession, model="MH201")

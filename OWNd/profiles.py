@@ -6,23 +6,25 @@ from dataclasses import dataclass
 
 WHO_LIGHTING = 1
 WHO_AUTOMATION = 2
+WHO_LOAD_CONTROL = 3
 WHO_HEATING = 4
 WHO_CEN = 15
 WHO_SOUND = 16
 WHO_SCENARIO = 17
 WHO_ENERGY = 18
-WHO_LOAD_CONTROL = 22
+WHO_SOUND_DIFFUSION = 22
 WHO_CEN_PLUS = 25
 
 DEFAULT_SUPPORTED_WHO = (
     WHO_LIGHTING,
     WHO_AUTOMATION,
+    WHO_LOAD_CONTROL,
     WHO_HEATING,
     WHO_CEN,
     WHO_SOUND,
     WHO_SCENARIO,
     WHO_ENERGY,
-    WHO_LOAD_CONTROL,
+    WHO_SOUND_DIFFUSION,
     WHO_CEN_PLUS,
 )
 
@@ -79,63 +81,100 @@ class GatewayProfile:
         return self.supports_session_count(count)
 
 
-_GENERIC = GatewayProfile(model_name="Generic")
+class F454Profile(GatewayProfile):
+    def __init__(self) -> None:
+        super().__init__(
+            model_name="F454",
+            max_command_sessions=4,
+            max_queue_size=250,
+            event_keepalive_interval=90,
+            supports_hmac=True,
+            supports_native_transitions=True,
+            supports_extended_frames=True,
+        )
+
+
+class F455Profile(GatewayProfile):
+    def __init__(self) -> None:
+        super().__init__(
+            model_name="F455",
+            max_command_sessions=4,
+            max_queue_size=250,
+            supports_hmac=True,
+            supports_native_transitions=True,
+            supports_extended_frames=True,
+        )
+
+
+class MH200NProfile(GatewayProfile):
+    def __init__(self) -> None:
+        super().__init__(
+            model_name="MH200N",
+            command_queue_delay=0.15,
+            max_queue_size=100,
+            event_keepalive_interval=90,
+            supports_energy_instant_power=False,
+            supports_audio=False,
+            supported_who=(
+                WHO_LIGHTING,
+                WHO_AUTOMATION,
+                WHO_HEATING,
+                WHO_CEN,
+                WHO_SCENARIO,
+                WHO_CEN_PLUS,
+            ),
+        )
+
+
+class MH201Profile(GatewayProfile):
+    def __init__(self) -> None:
+        super().__init__(
+            model_name="MH201",
+            command_queue_delay=0.10,
+            max_queue_size=100,
+            supports_extended_frames=True,
+        )
+
+
+class MH202Profile(GatewayProfile):
+    def __init__(self) -> None:
+        super().__init__(
+            model_name="MH202",
+            max_command_sessions=2,
+            command_queue_delay=0.10,
+            supports_hmac=True,
+            supports_extended_frames=True,
+        )
+
+
+class MyHomeServer1Profile(GatewayProfile):
+    def __init__(self) -> None:
+        super().__init__(
+            model_name="MyHomeServer1",
+            max_command_sessions=4,
+            default_command_sessions=2,
+            command_queue_delay=0.02,
+            max_queue_size=300,
+            supports_hmac=True,
+            supports_native_transitions=True,
+            supports_extended_frames=True,
+        )
+
+
+class GenericGatewayProfile(GatewayProfile):
+    def __init__(self, model_name: str = "Generic") -> None:
+        super().__init__(model_name=model_name)
+
+
+_GENERIC = GenericGatewayProfile()
 
 _PROFILES = {
-    "f454": GatewayProfile(
-        model_name="F454",
-        max_command_sessions=4,
-        event_keepalive_interval=90,
-        supports_hmac=True,
-        supports_native_transitions=True,
-        supports_extended_frames=True,
-    ),
-    "f455": GatewayProfile(
-        model_name="F455",
-        max_command_sessions=4,
-        supports_hmac=True,
-        supports_native_transitions=True,
-        supports_extended_frames=True,
-    ),
-    "mh200n": GatewayProfile(
-        model_name="MH200N",
-        command_queue_delay=0.15,
-        max_queue_size=100,
-        event_keepalive_interval=90,
-        supports_energy_instant_power=False,
-        supports_audio=False,
-        supported_who=(
-            WHO_LIGHTING,
-            WHO_AUTOMATION,
-            WHO_HEATING,
-            WHO_CEN,
-            WHO_SCENARIO,
-            WHO_CEN_PLUS,
-        ),
-    ),
-    "mh201": GatewayProfile(
-        model_name="MH201",
-        command_queue_delay=0.10,
-        max_queue_size=100,
-        supports_extended_frames=True,
-    ),
-    "mh202": GatewayProfile(
-        model_name="MH202",
-        max_command_sessions=2,
-        command_queue_delay=0.10,
-        supports_hmac=True,
-        supports_extended_frames=True,
-    ),
-    "myhomeserver1": GatewayProfile(
-        model_name="MyHomeServer1",
-        max_command_sessions=4,
-        default_command_sessions=2,
-        command_queue_delay=0.02,
-        max_queue_size=300,
-        supports_hmac=True,
-        supports_native_transitions=True,
-        supports_extended_frames=True,
-    ),
+    "f454": F454Profile(),
+    "f455": F455Profile(),
+    "mh200n": MH200NProfile(),
+    "mh201": MH201Profile(),
+    "mh202": MH202Profile(),
+    "myhomeserver1": MyHomeServer1Profile(),
 }
 
 _ALIASES = {
@@ -156,4 +195,4 @@ def get_gateway_profile(model_name: str | None) -> GatewayProfile:
     profile = _PROFILES.get(normalized)
     if profile is not None:
         return profile
-    return GatewayProfile(model_name=model_name)
+    return GenericGatewayProfile(model_name=model_name)

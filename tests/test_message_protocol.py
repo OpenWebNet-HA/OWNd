@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import datetime
+
 import pytest
 
 from OWNd.message import (
+    OWNAlarmCommand,
     OWNAutomationCommand,
     OWNAutomationEvent,
     OWNCENPlusEvent,
@@ -15,6 +18,10 @@ from OWNd.message import (
     OWNEvent,
     OWNGatewayCommand,
     OWNGatewayEvent,
+    OWNHeatingCommand,
+    OWNHeatingEvent,
+    OWNLightingCommand,
+    MESSAGE_TYPE_FAN_SPEED,
     OWNMessage,
     OWNStatusRequest,
 )
@@ -57,7 +64,7 @@ def test_status_requests_can_omit_where() -> None:
     alarm = OWNMessage.parse("*#5##")
     auxiliary = OWNMessage.parse("*#9##")
 
-    assert isinstance(alarm, OWNStatusRequest)
+    assert isinstance(alarm, OWNAlarmCommand)
     assert alarm.where is None
     assert alarm.unique_id == "5"
     assert isinstance(auxiliary, OWNStatusRequest)
@@ -65,6 +72,20 @@ def test_status_requests_can_omit_where() -> None:
     assert auxiliary.unique_id == "9"
     assert str(OWNStatusRequest.request(9)) == "*#9##"
     assert str(OWNStatusRequest.request(9, "1")) == "*#9*1##"
+
+
+def test_alarm_command_helpers_and_dispatch() -> None:
+    assert str(OWNAlarmCommand.disarm()) == "*5*2*0##"
+    assert str(OWNAlarmCommand.arm_away()) == "*5*1*0##"
+    assert str(OWNAlarmCommand.arm_home()) == "*5*1*0##"
+    assert str(OWNAlarmCommand.trigger()) == "*5*17*0##"
+    assert str(OWNAlarmCommand.panic()) == "*5*17*0##"
+    assert str(OWNAlarmCommand.status()) == "*#5*0##"
+    assert str(OWNAlarmCommand.status("1")) == "*#5*#1##"
+    assert str(OWNAlarmCommand.status("#2")) == "*#5*#2##"
+    assert str(OWNAlarmCommand.status(None)) == "*#5##"
+    assert str(OWNAlarmCommand.status("")) == "*#5##"
+    assert isinstance(OWNCommand.parse("*5*2*0##"), OWNAlarmCommand)
 
 
 def test_f454_time_without_timezone_is_parsed_safely() -> None:
@@ -77,6 +98,59 @@ def test_f454_time_without_timezone_is_parsed_safely() -> None:
     assert event._timezone == ""
     assert command._hour == "12"
     assert command._timezone == ""
+
+
+@pytest.mark.parametrize(
+    ("suffix", "expected"),
+    [
+        ("", "15:00:01"),
+        ("*", "15:00:01"),
+        ("*002", "15:00:01+02:00"),
+        ("*105", "15:00:01-05:00"),
+    ],
+)
+def test_gateway_time_supports_optional_timezone(
+    suffix: str, expected: str
+) -> None:
+    message = OWNMessage.parse(f"*#13**0*15*00*01{suffix}##")
+
+    assert isinstance(message, OWNGatewayEvent)
+    assert message._time == datetime.time.fromisoformat(expected)
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        "*#13**#0*15*00##",
+        "*#13**0*25*00*00##",
+        "*#13**0*15*00*00*200##",
+        "*#13**#1*03*09*09##",
+        "*#13**22*15*00*01*002*03*31*02*2026##",
+    ],
+)
+def test_malformed_gateway_clock_is_rejected(frame: str) -> None:
+    with pytest.raises(ValueError):
+        OWNMessage.parse(frame)
+
+
+def test_gateway_time_command_has_no_empty_trailing_value() -> None:
+    message = OWNGatewayCommand.set_time_to_now("UTC")
+
+    assert str(message).endswith("##")
+    assert not str(message).endswith("*##")
+
+
+def test_heating_fan_speed_dimension_has_message_type() -> None:
+    event = OWNHeatingEvent("*#4*1*11*2##")
+
+    assert event.message_type == MESSAGE_TYPE_FAN_SPEED
+    assert event.fan_speed == 2
+    assert event.fan_on is True
+    assert str(OWNHeatingCommand.set_fan_speed("1", 2)) == "*#4*#1*#11*2##"
+
+    automatic = OWNHeatingEvent("*#4*1*11*0##")
+    assert automatic.fan_speed == 0
+    assert automatic.fan_on is True
 
 
 def test_shutter_dimension_10_supports_short_and_full_replies() -> None:
@@ -98,6 +172,27 @@ def test_stop_and_go_energy_addresses_are_supported() -> None:
     assert single_digit.total_consumption == 1200
     assert single_digit.sensor == "1"
     assert invalid_date.message_type is None
+
+
+@pytest.mark.parametrize(
+    ("frame", "attribute"),
+    [
+        ("*#18*1*113*##", "active_power"),
+        ("*#18*1*51*##", "total_consumption"),
+        ("*#18*1*54*##", "current_day_partial_consumption"),
+        ("*#18*1*53*##", "current_month_partial_consumption"),
+    ],
+)
+def test_empty_energy_value_is_zero(frame: str, attribute: str) -> None:
+    event = OWNEnergyEvent(frame)
+
+    assert getattr(event, attribute) == 0
+
+
+def test_incomplete_hourly_energy_sample_is_ignored() -> None:
+    event = OWNEnergyEvent("*#18*1*511#1#1*##")
+
+    assert event.message_type is None
 
 
 @pytest.mark.parametrize("button", [0, 31])
@@ -122,3 +217,15 @@ def test_cenplus_supports_rotary_actions(what: int, property_name: str) -> None:
 
     assert isinstance(message, OWNCENPlusEvent)
     assert getattr(message, property_name) is True
+
+
+def test_cenplus_unknown_state_has_a_diagnostic_log() -> None:
+    message = OWNCENPlusEvent("*25*99#1*21##")
+
+    assert "state is 99" in message.human_readable_log
+
+
+def test_flash_accepts_bundled_v2_keyword_alias() -> None:
+    message = OWNLightingCommand.flash("21", _freqency=1.0)
+
+    assert str(message) == "*1*21*21##"

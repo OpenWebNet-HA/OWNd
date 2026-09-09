@@ -381,6 +381,20 @@ async def find_gateways(session: aiohttp.ClientSession | None = None) -> list[di
 async def get_gateway(
     address: str, session: aiohttp.ClientSession | None = None
 ) -> dict | None:
+    # Prefer a direct descriptor lookup. SSDP multicast is commonly blocked
+    # at container and VM boundaries even when the gateway itself is reachable.
+    for port in (49153, 80):
+        scpd_location = f"http://{address}:{port}/description.xml"
+        try:
+            details = await _get_scpd_details(scpd_location, session=session)
+        except Exception:  # noqa: BLE001 - discovery fallback is best-effort
+            continue
+        if details.get("serialNumber"):
+            details["address"] = address
+            details["ssdp_location"] = scpd_location
+            details["ssdp_st"] = None
+            return details
+
     _local_gateways = await find_gateways(session=session)
     for _gateway in _local_gateways:
         if _gateway["address"] == address:

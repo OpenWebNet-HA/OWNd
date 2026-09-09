@@ -29,7 +29,10 @@ NEGOTIATION_TIMEOUT = 10
 NEGOTIATION_TOTAL_TIMEOUT = 30
 NEGOTIATION_MAX_FRAMES = 5
 COMMAND_TIMEOUT = 10
-COMMAND_RESPONSE_MAX_FRAMES = 32
+# Status sweeps can legitimately return one frame per configured device.  Keep
+# a hard budget, but leave enough headroom for large installations (the V2
+# regression suite covers a 100-frame lighting sweep).
+COMMAND_RESPONSE_MAX_FRAMES = 256
 # Bound the TCP connect itself, so a black-holed host (SYN accepted, never
 # completed) cannot hang the event loop for the OS-default TCP timeout.
 CONNECT_TIMEOUT = 10
@@ -804,7 +807,10 @@ class OWNSession:
 
         return {"Success": not error, "Message": error_message}
 
-    def _get_own_password(self, password, nonce):
+    def _get_own_password(self, password, nonce, test: bool = False):
+        # Retained for compatibility with the previously vendored implementation.
+        # Do not print password-derived intermediate values even in test mode.
+        del test
         start = True
         num1 = 0
         num2 = 0
@@ -1078,13 +1084,15 @@ class OWNEventSession(OWNSession):
             _decoded_data = data.decode()
             _message = OWNMessage.parse(_decoded_data)
             return _message if _message else _decoded_data
-        except Exception:  # pylint: disable=broad-except
-            self._logger.exception(
-                "%s Could not parse frame %r; skipping it.",
+        except (UnicodeDecodeError, ValueError, IndexError, TypeError) as error:
+            _decoded_data = data.decode(errors="replace")
+            self._logger.warning(
+                "%s Malformed event frame %r: %s",
                 self._log_id,
-                data,
+                _decoded_data,
+                error,
             )
-            return None
+            return _decoded_data
 
 
 class OWNCommandSession(OWNSession):
@@ -1120,6 +1128,26 @@ class OWNCommandSession(OWNSession):
         connection = cls(gateway)
         try:
             return await connection.connect()
+        finally:
+            with contextlib.suppress(Exception):
+                await connection.close()
+
+    @classmethod
+    async def probe_gateway(
+        cls, gateway: OWNGateway, logger: logging.Logger | None = None
+    ) -> bool:
+        """Probe gateway responsiveness with a read-only model request."""
+        connection = cls(gateway=gateway, logger=logger)
+        try:
+            result = await connection.connect()
+            if result is None or not result.get("Success", False):
+                return False
+            response = await connection.send(
+                "*#13**15##", is_status_request=True
+            )
+            return response is not None
+        except Exception:  # noqa: BLE001 - watchdog probes must be fail-safe
+            return False
         finally:
             with contextlib.suppress(Exception):
                 await connection.close()
@@ -1169,9 +1197,25 @@ class OWNCommandSession(OWNSession):
         async with asyncio.timeout(COMMAND_TIMEOUT):
             for _ in range(COMMAND_RESPONSE_MAX_FRAMES):
                 raw_response = await self._read_frame(COMMAND_TIMEOUT)
-                resulting_message = OWNMessage.parse(raw_response)
+                try:
+                    resulting_message = OWNMessage.parse(raw_response)
+                except (ValueError, IndexError, TypeError) as error:
+                    self._logger.warning(
+                        "%s Malformed command response %r: %s",
+                        self._log_id,
+                        raw_response,
+                        error,
+                    )
+                    resulting_message = None
                 if isinstance(resulting_message, OWNSignaling):
-                    return resulting_message, collected
+                    if resulting_message.is_ack() or resulting_message.is_nack():
+                        return resulting_message, collected
+                    self._logger.debug(
+                        "%s Ignoring non-terminal signaling response `%s`.",
+                        self._log_id,
+                        resulting_message,
+                    )
+                    continue
                 collected.append(resulting_message or raw_response)
                 self._logger.debug(
                     "%s Collected command response `%s`.",
@@ -1207,27 +1251,38 @@ class OWNCommandSession(OWNSession):
     async def _locked_send(
         self, message, is_status_request: bool = False
     ) -> list[OWNMessage | str] | bool | None:
-        max_attempts = 3
+        # One retry is enough for an immediate NACK or for a connection that
+        # was already unavailable.  More importantly, never replay a command
+        # after it was written: the gateway may have executed it even if its
+        # acknowledgement was lost.  Status requests are idempotent and can be
+        # retried safely after a transport reset.
+        max_attempts = 2
 
         for attempt in range(1, max_attempts + 1):
             # After an outage the previous connect()/reconnect may have given up
             # and left the writer at None; rebuild the session here so commands
             # resume automatically when the gateway comes back, instead of
             # crashing forever on `NoneType.write`.
-            if self._stream_writer is None:
-                await self.connect()
-            if self._stream_writer is None:
-                # Still unreachable: drop THIS message without killing the
-                # worker; the next command will try to reconnect again.
-                self._logger.warning(
-                    "%s Command session unavailable; message `%s` not sent.",
-                    self._log_id,
-                    message,
-                )
-                return
+            if self._stream_reader is None or self._stream_writer is None:
+                result = await self.connect()
+                if (
+                    result is None
+                    or not result.get("Success", False)
+                    or self._stream_reader is None
+                    or self._stream_writer is None
+                ):
+                    await self.close()
+                    self._logger.warning(
+                        "%s Command session unavailable; message `%s` not sent.",
+                        self._log_id,
+                        message,
+                    )
+                    return None
 
+            written = False
             try:
                 self._stream_writer.write(str(message).encode())
+                written = True
                 await self._stream_writer.drain()
 
                 resulting_message, collected = await self._read_command_response()
@@ -1241,56 +1296,69 @@ class OWNCommandSession(OWNSession):
                     return collected or True
 
                 if resulting_message.is_nack():
-                    if attempt < max_attempts:
+                    # A NACK after response data terminates that transaction;
+                    # replaying it would duplicate the already returned sweep.
+                    if collected or attempt == max_attempts:
                         self._logger.error(
-                            "%s Could not send message `%s`. Retrying (%d)...",
+                            "%s Could not send message `%s`. No more retries.",
                             self._log_id,
                             message,
-                            attempt,
                         )
-                        continue
+                        return None
                     self._logger.error(
-                        "%s Could not send message `%s`. No more retries.",
+                        "%s Could not send message `%s`. Retrying (%d)...",
                         self._log_id,
                         message,
+                        attempt,
                     )
-                    return
+                    continue
 
-                # Any other signaling message is unexpected here: stop.
                 self._logger.warning(
                     "%s Unexpected response `%s` to message `%s`.",
                     self._log_id,
                     resulting_message,
                     message,
                 )
-                return
+                return None
 
-            except (ConnectionResetError, asyncio.IncompleteReadError, OSError):
-                self._logger.debug(
-                    "%s Command session connection reset, reconnecting (%d)...",
-                    self._log_id,
-                    attempt,
-                )
-                await self._reconnect()
-                continue
-            except TimeoutError:
+            except asyncio.CancelledError:
+                await self.close()
+                raise
+            except (
+                ConnectionResetError,
+                asyncio.IncompleteReadError,
+                asyncio.LimitOverrunError,
+                OSError,
+            ) as error:
+                await self.close()
+                if attempt < max_attempts and (is_status_request or not written):
+                    self._logger.debug(
+                        "%s Command session connection lost (%s), retrying once...",
+                        self._log_id,
+                        error,
+                    )
+                    continue
                 self._logger.warning(
-                    "%s Timed out awaiting acknowledgement for `%s`, reconnecting (%d)...",
+                    "%s Connection lost before acknowledgement of `%s`; "
+                    "message will not be replayed.",
                     self._log_id,
                     message,
-                    attempt,
                 )
-                await self._reconnect()
-                continue
+                return None
+            except TimeoutError:
+                await self.close()
+                self._logger.warning(
+                    "%s Timed out awaiting the complete response for `%s`; "
+                    "command session closed.",
+                    self._log_id,
+                    message,
+                )
+                return None
             except Exception:  # pylint: disable=broad-except
+                await self.close()
                 self._logger.exception(
                     "%s Command session crashed.", self._log_id
                 )
-                return
+                return None
 
-        self._logger.error(
-            "%s Could not send message `%s` after %d attempts.",
-            self._log_id,
-            message,
-            max_attempts,
-        )
+        return None

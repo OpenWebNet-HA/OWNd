@@ -29,6 +29,7 @@ MESSAGE_TYPE_MOTION = "motion_detected"
 MESSAGE_TYPE_PIR_SENSITIVITY = "pir_sensitivity"
 MESSAGE_TYPE_ILLUMINANCE = "illuminance_value"
 MESSAGE_TYPE_MOTION_TIMEOUT = "motion_timeout"
+MESSAGE_TYPE_FAN_SPEED = "fan_speed"
 
 CLIMATE_MODE_OFF = "off"
 CLIMATE_MODE_HEAT = "heat"
@@ -45,12 +46,44 @@ LOCAL_CONTROL_UNKNOWN = "unknown"
 PIR_SENSITIVITY_MAPPING = ["low", "medium", "high", "very high"]
 
 
+def _validate_gateway_clock_values(
+    dimension: int | None, values: list[str]
+) -> None:
+    """Reject truncated gateway clock frames before indexing their values."""
+    required = {0: 3, 1: 4, 22: 8}.get(dimension)
+    if required is not None and len(values) < required:
+        raise ValueError(
+            f"Gateway dimension {dimension} requires {required} values"
+        )
+
+
+def _gateway_timezone(values: list[str]) -> str:
+    """Decode an optional OWN timezone, preserving unspecified local time."""
+    value = values[3] if len(values) > 3 else ""
+    if not value:
+        return ""
+    if re.fullmatch(r"[01]\d{2}", value) is None:
+        raise ValueError(f"Invalid gateway timezone: {value!r}")
+    sign = "+" if value[0] == "0" else "-"
+    return f"{sign}{value[1:]}:00"
+
+
+def _integer_value(
+    values: list[str], index: int, default: int = 0
+) -> int:
+    """Read an integer field without letting an empty telemetry value crash."""
+    try:
+        return int(values[index])
+    except (IndexError, TypeError, ValueError):
+        return default
+
+
 class OWNMessage:
     _ACK = re.compile(r"^\*#\*1##$")  #  *#*1##
     _NACK = re.compile(r"^\*#\*0##$")  #  *#*0##
     _COMMAND_SESSION = re.compile(r"^\*99\*0##$")  #  *99*0##
     _EVENT_SESSION = re.compile(r"^\*99\*1##$")  #  *99*1##
-    _NONCE = re.compile(r"^\*#(\d{5,})##$")  #  *#123456789##
+    _NONCE = re.compile(r"^\*#(\d{4,})##$")  #  *#123456789##
     _SHA = re.compile(r"^\*98\*(\d)##$")  #  *98*SHA##
 
     _STATUS = re.compile(
@@ -452,7 +485,7 @@ class OWNLightingEvent(OWNEvent):
                 self._motion = True
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} detected motion"
 
-        if self._dimension is not None:
+        if self._dimension is not None and self._dimension_value:
             if self._dimension == 1 or self._dimension == 4:  # Brightness value
                 self._brightness = int(self._dimension_value[0]) - 100
                 # Some gateways omit the transition speed in the reply.
@@ -521,6 +554,20 @@ class OWNLightingEvent(OWNEvent):
         if self._state is None:
             return None
         return 0 < self._state < 32
+
+    @property
+    def is_sensor(self) -> bool:
+        return (
+            self._state == 34
+            or (self._dimension is not None and self._dimension in (5, 6, 7))
+            or self._type
+            in (
+                MESSAGE_TYPE_MOTION,
+                MESSAGE_TYPE_ILLUMINANCE,
+                MESSAGE_TYPE_PIR_SENSITIVITY,
+                MESSAGE_TYPE_MOTION_TIMEOUT,
+            )
+        )
 
     @property
     def timer(self):
@@ -768,12 +815,13 @@ class OWNHeatingEvent(OWNEvent):
                 self._human_readable_log = f"Zone {self._zone}'s secondary sensor {self._sensor} is reporting a temperature of {self._secondary_temperature}°C."  # pylint: disable=line-too-long
 
         elif self._dimension == 11:  # Fan speed
+            self._type = MESSAGE_TYPE_FAN_SPEED
             _fan_mode = int(self._dimension_value[0])
             if _fan_mode < 4:
                 self._fan_on = True
                 self._is_active = True
+                self._fan_speed = _fan_mode
                 if _fan_mode > 0:
-                    self._fan_speed = _fan_mode
                     self._human_readable_log = (
                         f"Zone {self._zone}'s fan is on at speed {self._fan_speed}."
                     )
@@ -1000,6 +1048,14 @@ class OWNHeatingEvent(OWNEvent):
     def local_set_temperature(self) -> float | None:
         return self._local_set_temperature
 
+    @property
+    def fan_speed(self):
+        return self._fan_speed
+
+    @property
+    def fan_on(self):
+        return self._fan_on
+
 
 class OWNAlarmEvent(OWNEvent):
     def __init__(self, data):
@@ -1106,6 +1162,26 @@ class OWNAlarmEvent(OWNEvent):
         return self._state_code == 8
 
     @property
+    def is_disarmed(self):
+        return self._state_code in (0, 2, 9)
+
+    @property
+    def is_armed_away(self):
+        return self._state_code in (1, 8)
+
+    @property
+    def is_armed_home(self):
+        return self._state_code == 11
+
+    @property
+    def state_name(self):
+        return self._state
+
+    @property
+    def state_code(self):
+        return self._state_code
+
+    @property
     def is_alarm(self):
         return (
             self._state_code == 12
@@ -1209,55 +1285,46 @@ class OWNGatewayEvent(OWNEvent):
         self._kernel_version = None
         self._distribution_version = None
 
-        if self._dimension == 0 and self._dimension_value:
-            try:
-                self._hour = self._dimension_value[0]
-                self._minute = self._dimension_value[1]
-                self._second = self._dimension_value[2]
-                timezone = (
-                    self._dimension_value[3]
-                    if len(self._dimension_value) > 3
-                    else ""
-                )
-                if timezone:
-                    self._timezone = (
-                        f"+{timezone[1:]}:00"
-                        if timezone[0] == "0"
-                        else f"-{timezone[1:]}:00"
-                    )
-                else:
-                    self._timezone = ""
-                self._human_readable_log = f"Gateway's internal time is: {self._hour}:{self._minute}:{self._second} UTC {self._timezone}."  # pylint: disable=line-too-long
-            except (IndexError, TypeError, ValueError):
-                pass
+        _validate_gateway_clock_values(self._dimension, self._dimension_value)
 
-        elif self._dimension == 1 and self._dimension_value:
-            try:
-                self._year = self._dimension_value[3]
-                self._month = self._dimension_value[2]
-                self._day = self._dimension_value[1]
-                self._date = datetime.date(
-                    year=int(self._year), month=int(self._month), day=int(self._day)
-                )
-                self._human_readable_log = (
-                    f"Gateway's internal date is: {self._year}-{self._month}-{self._day}."
-                )
-            except (IndexError, TypeError, ValueError):
-                pass
+        if self._dimension == 0:
+            self._hour = self._dimension_value[0]
+            self._minute = self._dimension_value[1]
+            self._second = self._dimension_value[2]
+            self._timezone = _gateway_timezone(self._dimension_value)
+            self._time = datetime.time.fromisoformat(
+                f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
+            )
+            self._human_readable_log = (
+                f"Gateway's internal time is: {self._time}."
+            )
 
-        elif self._dimension == 10:
+        elif self._dimension == 1:
+            self._year = self._dimension_value[3]
+            self._month = self._dimension_value[2]
+            self._day = self._dimension_value[1]
+            self._date = datetime.date(
+                year=int(self._year), month=int(self._month), day=int(self._day)
+            )
+            self._human_readable_log = (
+                f"Gateway's internal date is: {self._date}."
+            )
+        elif self._dimension == 10 and len(self._dimension_value) >= 4:
             self._ip_address = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}.{self._dimension_value[3]}"  # pylint: disable=line-too-long
             self._human_readable_log = f"Gateway's IP address is: {self._ip_address}."
 
-        elif self._dimension == 11:
+        elif self._dimension == 11 and len(self._dimension_value) >= 4:
             self._netmask = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}.{self._dimension_value[3]}"  # pylint: disable=line-too-long
             self._human_readable_log = f"Gateway's netmask is: {self._netmask}."
 
-        elif self._dimension == 12:
-            self._mac_address = f"{int(self._dimension_value[0]):02x}:{int(self._dimension_value[1]):02x}:{int(self._dimension_value[2]):02x}:{int(self._dimension_value[3]):02x}:{int(self._dimension_value[4]):02x}:{int(self._dimension_value[5]):02x}"  # pylint: disable=line-too-long
-            self._human_readable_log = f"Gateway's MAC address is: {self._mac_address}."
+        elif self._dimension == 12 and len(self._dimension_value) >= 6:
+            try:
+                self._mac_address = f"{int(self._dimension_value[0]):02x}:{int(self._dimension_value[1]):02x}:{int(self._dimension_value[2]):02x}:{int(self._dimension_value[3]):02x}:{int(self._dimension_value[4]):02x}:{int(self._dimension_value[5]):02x}"  # pylint: disable=line-too-long
+                self._human_readable_log = f"Gateway's MAC address is: {self._mac_address}."
+            except (IndexError, TypeError, ValueError):
+                pass
 
-        elif self._dimension == 15:
+        elif self._dimension == 15 and self._dimension_value:
             if self._dimension_value[0] == "2":
                 self._device_type = "MHServer"
             elif self._dimension_value[0] == "4":
@@ -1276,58 +1343,49 @@ class OWNGatewayEvent(OWNEvent):
                 self._device_type = f"Unknown ({self._dimension_value[0]})"
             self._human_readable_log = f"Gateway device type is: {self._device_type}."
 
-        elif self._dimension == 16:
+        elif self._dimension == 16 and len(self._dimension_value) >= 3:
             self._firmware_version = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}"  # pylint: disable=line-too-long
             self._human_readable_log = (
                 f"Gateway's firmware version is: {self._firmware_version}."
             )
 
-        elif self._dimension == 19:
-            self._uptime = datetime.timedelta(
-                days=int(self._dimension_value[0]),
-                hours=int(self._dimension_value[1]),
-                minutes=int(self._dimension_value[2]),
-                seconds=int(self._dimension_value[3]),
-            )
-            self._human_readable_log = f"Gateway's uptime is: {self._uptime}."
-
-        elif self._dimension == 22 and self._dimension_value:
+        elif (
+            self._dimension == 19
+            and len(self._dimension_value) >= 4
+            and all(self._dimension_value[:4])
+        ):
             try:
-                self._hour = self._dimension_value[0]
-                self._minute = self._dimension_value[1]
-                self._second = self._dimension_value[2]
-                timezone = (
-                    self._dimension_value[3]
-                    if len(self._dimension_value) > 3
-                    else ""
+                self._uptime = datetime.timedelta(
+                    days=int(self._dimension_value[0]),
+                    hours=int(self._dimension_value[1]),
+                    minutes=int(self._dimension_value[2]),
+                    seconds=int(self._dimension_value[3]),
                 )
-                if timezone:
-                    self._timezone = (
-                        f"+{timezone[1:]}:00"
-                        if timezone[0] == "0"
-                        else f"-{timezone[1:]}:00"
-                    )
-                else:
-                    self._timezone = ""
-                self._day = self._dimension_value[5]
-                self._month = self._dimension_value[6]
-                self._year = self._dimension_value[7]
-                self._datetime = datetime.datetime.fromisoformat(
-                    f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
-                )
-                self._human_readable_log = (
-                    f"Gateway's internal datetime is: {self._datetime}."
-                )
+                self._human_readable_log = f"Gateway's uptime is: {self._uptime}."
             except (IndexError, TypeError, ValueError):
                 pass
 
-        elif self._dimension == 23:
+        elif self._dimension == 22:
+            self._hour = self._dimension_value[0]
+            self._minute = self._dimension_value[1]
+            self._second = self._dimension_value[2]
+            self._timezone = _gateway_timezone(self._dimension_value)
+            self._day = self._dimension_value[5]
+            self._month = self._dimension_value[6]
+            self._year = self._dimension_value[7]
+            self._datetime = datetime.datetime.fromisoformat(
+                f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
+            )
+            self._human_readable_log = (
+                f"Gateway's internal datetime is: {self._datetime}."
+            )
+        elif self._dimension == 23 and len(self._dimension_value) >= 3:
             self._kernel_version = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}"  # pylint: disable=line-too-long
             self._human_readable_log = (
                 f"Gateway's kernel version is: {self._kernel_version}."
             )
 
-        elif self._dimension == 24:
+        elif self._dimension == 24 and len(self._dimension_value) >= 3:
             self._distribution_version = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}"  # pylint: disable=line-too-long
             self._human_readable_log = (
                 f"Gateway's distribution version is: {self._distribution_version}."
@@ -1435,7 +1493,7 @@ class OWNEnergyEvent(OWNEvent):
         if self._dimension is not None:
             if self._dimension == 113:
                 self._type = MESSAGE_TYPE_ACTIVE_POWER
-                self._active_power = int(self._dimension_value[0])
+                self._active_power = _integer_value(self._dimension_value, 0)
                 self._human_readable_log = f"Sensor {self._sensor} is reporting an active power draw of {self._active_power} W."  # pylint: disable=line-too-long
             elif self._dimension == 511:
                 _now = datetime.date.today()
@@ -1458,6 +1516,10 @@ class OWNEnergyEvent(OWNEvent):
                     # missing parameters: drop the sample, keep the session.
                     return
 
+                if len(self._dimension_value) < 2 or not all(
+                    self._dimension_value[:2]
+                ):
+                    return
                 if int(self._dimension_value[0]) != 25:
                     self._type = MESSAGE_TYPE_HOURLY_CONSUMPTION
                     self._hourly_consumption["date"] = _message_date
@@ -1470,6 +1532,10 @@ class OWNEnergyEvent(OWNEvent):
                     self._daily_consumption["value"] = int(self._dimension_value[1])
                     self._human_readable_log = f"Sensor {self._sensor} is reporting a power consumption of {self._daily_consumption['value']} Wh for {self._daily_consumption['date']}."  # pylint: disable=line-too-long
             elif self._dimension == 513 or self._dimension == 514:
+                if len(self._dimension_value) < 2 or not all(
+                    self._dimension_value[:2]
+                ):
+                    return
                 _now = datetime.date.today()
                 try:
                     _raw_message_date = datetime.date(
@@ -1508,11 +1574,13 @@ class OWNEnergyEvent(OWNEvent):
                 self._human_readable_log = f"Sensor {self._sensor} is reporting a power consumption of {self._daily_consumption['value']} Wh for {self._daily_consumption['date']}."  # pylint: disable=line-too-long
             elif self._dimension == 51:
                 self._type = MESSAGE_TYPE_ENERGY_TOTALIZER
-                self._total_consumption = int(self._dimension_value[0])
+                self._total_consumption = _integer_value(self._dimension_value, 0)
                 self._human_readable_log = f"Sensor {self._sensor} is reporting a total power consumption of {self._total_consumption} Wh."  # pylint: disable=line-too-long
             elif self._dimension == 54:
                 self._type = MESSAGE_TYPE_CURRENT_DAY_CONSUMPTION
-                self._current_day_partial_consumption = int(self._dimension_value[0])
+                self._current_day_partial_consumption = _integer_value(
+                    self._dimension_value, 0
+                )
                 self._human_readable_log = f"Sensor {self._sensor} is reporting a power consumption of {self._current_day_partial_consumption} Wh up to now today."  # pylint: disable=line-too-long
             elif self._dimension == 52:
                 self._type = MESSAGE_TYPE_MONTHLY_CONSUMPTION
@@ -1527,11 +1595,15 @@ class OWNEnergyEvent(OWNEvent):
                 except (ValueError, IndexError):
                     return
                 self._monthly_consumption["date"] = _message_date
-                self._monthly_consumption["value"] = int(self._dimension_value[0])
+                self._monthly_consumption["value"] = _integer_value(
+                    self._dimension_value, 0
+                )
                 self._human_readable_log = f"Sensor {self._sensor} is reporting a power consumption of {self._monthly_consumption['value']} Wh for {self._monthly_consumption['date'].strftime('%B %Y')}."  # pylint: disable=line-too-long
             elif self._dimension == 53:
                 self._type = MESSAGE_TYPE_CURRENT_MONTH_CONSUMPTION
-                self._current_month_partial_consumption = int(self._dimension_value[0])
+                self._current_month_partial_consumption = _integer_value(
+                    self._dimension_value, 0
+                )
                 self._human_readable_log = f"Sensor {self._sensor} is reporting a power consumption of {self._current_month_partial_consumption} Wh up to now this month."  # pylint: disable=line-too-long
 
     @property
@@ -1644,6 +1716,8 @@ class OWNCENPlusEvent(OWNEvent):
             self._human_readable_log = f"Button {self.push_button} of CEN+ object {self.object} has been slowly rotated counter-clockwise"  # pylint: disable=line-too-long
         elif self._state == 28:
             self._human_readable_log = f"Button {self.push_button} of CEN+ object {self.object} has been quickly rotated counter-clockwise"  # pylint: disable=line-too-long
+        else:
+            self._human_readable_log = f"Button {self.push_button} of CEN+ object {self.object} state is {self._state}."  # pylint: disable=line-too-long
 
     @property
     def is_short_pressed(self):
@@ -1701,16 +1775,16 @@ class OWNSoundEvent(OWNEvent):
         self._volume: int | None = None
 
         subject = (
-            f"Audio source {self._source_id}"
+            f"Audio Source {self._source_id}"
             if self._is_source_event
-            else f"Audio zone {self._zone}"
+            else f"Audio Zone {self._zone}"
         )
         if self._state in (0, 3):
-            self._human_readable_log = f"{subject} is switched on."
+            self._human_readable_log = f"{subject} is switched ON."
         elif self._state in (10, 13):
-            self._human_readable_log = f"{subject} is switched off."
+            self._human_readable_log = f"{subject} is switched OFF."
         elif self._state is not None:
-            self._human_readable_log = f"{subject} received command {self._state}."
+            self._human_readable_log = f"{subject} received command: {self._state}."
         elif self._dimension == 1 and self._dimension_value:
             try:
                 self._volume = int(self._dimension_value[0])
@@ -1769,7 +1843,9 @@ class OWNCommand(OWNMessage):
                 return cls(data)
             if _who == 4:
                 return OWNHeatingCommand(data)
-            if _who == 5 or _who == 6 or _who == 7 or _who == 9:
+            if _who == 5:
+                return OWNAlarmCommand(data)
+            if _who == 6 or _who == 7 or _who == 9:
                 return (
                     OWNStatusRequest(data)
                     if cls._STATUS_REQUEST.match(data)
@@ -1852,7 +1928,10 @@ class OWNLightingCommand(OWNCommand):
         return message
 
     @classmethod
-    def flash(cls, where, _frequency=0.5):
+    def flash(cls, where, _frequency=0.5, _freqency=None):
+        # Compatibility with the misspelled keyword exposed by bundled V2.
+        if _freqency is not None:
+            _frequency = _freqency
         if _frequency is not None and _frequency >= 0.5 and _frequency <= 5:
             _frequency = round(_frequency * 2) / 2
         else:
@@ -2033,6 +2112,85 @@ class OWNHeatingCommand(OWNCommand):
         )
         return message
 
+    @classmethod
+    def set_fan_speed(cls, where, speed: int, standalone=False):
+        central_local = re.compile(r"^#0#\d+$")
+        if central_local.match(str(where)):
+            zone = where
+            zone_name = f"zone {int(where.split('#')[-1])}"
+        else:
+            zone_number = (
+                int(where.split("#")[-1]) if where.startswith("#") else int(where)
+            )
+            zone_name = f"zone {zone_number}" if zone_number > 0 else "general"
+            if standalone:
+                zone = f"#{zone_number}" if zone_number == 0 else str(zone_number)
+            else:
+                zone = f"#{zone_number}"
+
+        speed_code = int(speed)
+        message = cls(f"*#4*{zone}*#11*{speed_code}##")
+        message._human_readable_log = (
+            f"Setting {zone_name} fan speed to {speed_code}."
+        )
+        return message
+
+
+class OWNAlarmCommand(OWNCommand):
+    @classmethod
+    def status(cls, where="0"):
+        if where is None or where == "":
+            message = cls("*#5##")
+            message._human_readable_log = "Querying burglar alarm central status."
+            return message
+
+        where_str = str(where)
+        if where_str == "0":
+            message = cls("*#5*0##")
+            message._human_readable_log = "Querying burglar alarm central status."
+            return message
+
+        target = where_str if where_str.startswith("#") else f"#{where_str}"
+        message = cls(f"*#5*{target}##")
+        message._human_readable_log = (
+            f"Querying burglar alarm status for zone {where}."
+        )
+        return message
+
+    @classmethod
+    def disarm(cls, where="0"):
+        message = cls(f"*5*2*{where}##")
+        message._human_readable_log = f"Disarming burglar alarm for zone {where}."
+        return message
+
+    @classmethod
+    def arm_away(cls, where="0"):
+        message = cls(f"*5*1*{where}##")
+        message._human_readable_log = (
+            f"Arming burglar alarm (away) for zone {where}."
+        )
+        return message
+
+    @classmethod
+    def arm_home(cls, where="0"):
+        message = cls(f"*5*1*{where}##")
+        message._human_readable_log = (
+            f"Arming burglar alarm (home) for zone {where}."
+        )
+        return message
+
+    @classmethod
+    def trigger(cls, where="0"):
+        message = cls(f"*5*17*{where}##")
+        message._human_readable_log = (
+            f"Triggering panic burglar alarm for zone {where}."
+        )
+        return message
+
+    @classmethod
+    def panic(cls, where="0"):
+        return cls.trigger(where=where)
+
 
 class OWNAVCommand(OWNCommand):
     @classmethod
@@ -2072,79 +2230,49 @@ class OWNGatewayCommand(OWNCommand):
         self._date = None
         self._datetime = None
 
-        # NB: the length guards matter — a dimension REQUEST (e.g. `*#13**0##`,
-        # the "gateway time" query) matches the same dimension numbers as a
-        # WRITING but carries no values at all.
-        if self._dimension == 0 and self._dimension_value:
-            try:
-                self._hour = self._dimension_value[0]
-                self._minute = self._dimension_value[1]
-                self._second = self._dimension_value[2]
-                timezone = (
-                    self._dimension_value[3]
-                    if len(self._dimension_value) > 3
-                    else ""
-                )
-                if timezone:
-                    self._timezone = (
-                        f"+{timezone[1:]}:00"
-                        if timezone[0] == "0"
-                        else f"-{timezone[1:]}:00"
-                    )
-                else:
-                    self._timezone = ""
-                self._time = datetime.time.fromisoformat(
-                    f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
-                )
-                self._human_readable_log = (
-                    f"Gateway broadcasting internal time: {self._time}."
-                )
-            except (IndexError, TypeError, ValueError):
-                pass
+        # Dimension requests carry no values and are valid as-is.
+        if self.is_request:
+            return
 
-        elif self._dimension == 1 and self._dimension_value:
-            try:
-                self._year = self._dimension_value[3]
-                self._month = self._dimension_value[2]
-                self._day = self._dimension_value[1]
-                self._date = datetime.date(
-                    year=int(self._year), month=int(self._month), day=int(self._day)
-                )
-                self._human_readable_log = (
-                    f"Gateway broadcasting internal date: {self._date}."
-                )
-            except (IndexError, TypeError, ValueError):
-                pass
+        _validate_gateway_clock_values(self._dimension, self._dimension_value)
 
-        elif self._dimension == 22 and self._dimension_value:
-            try:
-                self._hour = self._dimension_value[0]
-                self._minute = self._dimension_value[1]
-                self._second = self._dimension_value[2]
-                timezone = (
-                    self._dimension_value[3]
-                    if len(self._dimension_value) > 3
-                    else ""
-                )
-                if timezone:
-                    self._timezone = (
-                        f"+{timezone[1:]}:00"
-                        if timezone[0] == "0"
-                        else f"-{timezone[1:]}:00"
-                    )
-                else:
-                    self._timezone = ""
-                self._day = self._dimension_value[5]
-                self._month = self._dimension_value[6]
-                self._year = self._dimension_value[7]
-                self._datetime = datetime.datetime.fromisoformat(
-                    f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
-                )
-                self._human_readable_log = (
-                    f"Gateway broadcasting internal datetime: {self._datetime}."
-                )
-            except (IndexError, TypeError, ValueError):
-                pass
+        if self._dimension == 0:
+            self._hour = self._dimension_value[0]
+            self._minute = self._dimension_value[1]
+            self._second = self._dimension_value[2]
+            self._timezone = _gateway_timezone(self._dimension_value)
+            self._time = datetime.time.fromisoformat(
+                f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
+            )
+            self._human_readable_log = (
+                f"Gateway broadcasting internal time: {self._time}."
+            )
+
+        elif self._dimension == 1:
+            self._year = self._dimension_value[3]
+            self._month = self._dimension_value[2]
+            self._day = self._dimension_value[1]
+            self._date = datetime.date(
+                year=int(self._year), month=int(self._month), day=int(self._day)
+            )
+            self._human_readable_log = (
+                f"Gateway broadcasting internal date: {self._date}."
+            )
+
+        elif self._dimension == 22:
+            self._hour = self._dimension_value[0]
+            self._minute = self._dimension_value[1]
+            self._second = self._dimension_value[2]
+            self._timezone = _gateway_timezone(self._dimension_value)
+            self._day = self._dimension_value[5]
+            self._month = self._dimension_value[6]
+            self._year = self._dimension_value[7]
+            self._datetime = datetime.datetime.fromisoformat(
+                f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
+            )
+            self._human_readable_log = (
+                f"Gateway broadcasting internal datetime: {self._datetime}."
+            )
 
     @classmethod
     def set_datetime_to_now(cls, time_zone: str):
@@ -2178,7 +2306,7 @@ class OWNGatewayCommand(OWNCommand):
             if now.strftime("%z")[0] == "+"
             else f"1{now.strftime('%z')[1:3]}"
         )
-        message = cls(f"*#13**#0*{now.strftime('%H*%M*%S')}*{timezone_offset}*##")
+        message = cls(f"*#13**#0*{now.strftime('%H*%M*%S')}*{timezone_offset}##")
         message._human_readable_log = f"Setting gateway time to: {message._time}."
         return message
 
