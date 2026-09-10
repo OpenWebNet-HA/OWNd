@@ -267,14 +267,14 @@ OWNd maintains an automated unit test suite with strict line coverage tracking a
 | Component / Module | Coverage | Notes |
 |---|:---:|---|
 | [`OWNd/__init__.py`](OWNd/__init__.py) | **100%** | Package initialization and version metadata |
+| [`OWNd/discovery.py`](OWNd/discovery.py) | **100%** | SSDP multicast and UPnP XML gateway discovery and descriptor parsing |
+| [`OWNd/profiles.py`](OWNd/profiles.py) | **100%** | Declarative hardware gateway models (F454, MH200N, MH201, MH202, MyHomeServer1) |
 | [`OWNd/transport/__init__.py`](OWNd/transport/__init__.py) | **100%** | Transport subpackage exports |
 | [`OWNd/transport/base.py`](OWNd/transport/base.py) | **100%** | Abstract transport layer and event listener notification contracts |
-| [`OWNd/profiles.py`](OWNd/profiles.py) | **96%** | Declarative hardware gateway models (F454, MH200N, MH201, MH202, MyHomeServer1) |
-| [`OWNd/discovery.py`](OWNd/discovery.py) | **96%** | SSDP multicast and UPnP XML gateway discovery and descriptor parsing |
-| [`OWNd/transport/tcp.py`](OWNd/transport/tcp.py) | **96%** | Dual-session TCP transport linking event and command channels |
-| [`OWNd/transport/serial.py`](OWNd/transport/serial.py) | **93%** | Async Serial/USB transport for Legrand 3578 interface with in-band demux |
-| [`OWNd/connection.py`](OWNd/connection.py) | **92%** | Hardened dual-session TCP engine, SHA-1/HMAC auth, keepalives & bounded read loops |
-| [`OWNd/message.py`](OWNd/message.py) | 86% | OpenWebNet frame parsers, encoders, and WHO dimension decoders |
+| [`OWNd/transport/tcp.py`](OWNd/transport/tcp.py) | **100%** | Dual-session TCP transport linking event and command channels |
+| [`OWNd/message.py`](OWNd/message.py) | **100%** | OpenWebNet frame parsers, encoders, and WHO dimension decoders |
+| [`OWNd/connection.py`](OWNd/connection.py) | **100%** | Hardened dual-session TCP engine, SHA-1/HMAC auth, keepalives & bounded read loops |
+| [`OWNd/transport/serial.py`](OWNd/transport/serial.py) | **100%** | Async Serial/USB transport for Legrand 3578 interface with in-band demux |
 
 <!-- END_COVERAGE_TABLE -->
 
