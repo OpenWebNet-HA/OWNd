@@ -1,2 +1,2 @@
 """ OWNd - an OpenWebNet daemon """  # pylint: disable=invalid-name
-__version__ = "2.0.0-b3"
+__version__ = "2.0.0-b4"

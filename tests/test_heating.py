@@ -89,6 +89,15 @@ def test_probe_temperature_dimension_15_events() -> None:
     assert event_malformed.message_type == MESSAGE_TYPE_SECONDARY_TEMPERATURE
     assert event_malformed.probe_temperature is None
 
+    # Dimension 15 with no dimension values
+    event_no_val = OWNHeatingEvent("*#4*100*15##")
+    assert event_no_val.message_type == MESSAGE_TYPE_SECONDARY_TEMPERATURE
+    assert event_no_val.probe_temperature is None
+
+    # Dimension 15 negative zero 1000
+    event_neg_zero = OWNHeatingEvent("*#4*100*15*1*1000##")
+    assert event_neg_zero.probe_temperature == 0.0
+
 
 def test_probe_temperature_command() -> None:
     cmd = OWNHeatingCommand.get_probe_temperature("100")

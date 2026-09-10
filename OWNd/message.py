@@ -878,27 +878,21 @@ class OWNHeatingEvent(OWNEvent):
             self._type = MESSAGE_TYPE_SECONDARY_TEMPERATURE
             if self._dimension_value:
                 if len(self._dimension_value) >= 2:
-                    try:
-                        self._sensor = int(self._dimension_value[0])
-                    except (ValueError, TypeError):
-                        pass
+                    self._sensor = int(self._dimension_value[0])
                     temp_raw = self._dimension_value[1]
                 else:
                     temp_raw = self._dimension_value[0]
 
-                try:
-                    if len(temp_raw) < 3:
-                        self._secondary_temperature = None
-                    elif temp_raw.startswith("1") and len(temp_raw) == 4 and int(temp_raw[1:]) != 0:
-                        self._secondary_temperature = -float(
-                            f"{temp_raw[1:3]}.{temp_raw[-1]}"
-                        )
-                    else:
-                        self._secondary_temperature = float(
-                            f"{temp_raw[1:3]}.{temp_raw[-1]}"
-                        )
-                except (ValueError, TypeError, IndexError):
+                if len(temp_raw) < 3:
                     self._secondary_temperature = None
+                elif temp_raw.startswith("1") and len(temp_raw) == 4 and int(temp_raw[1:]) != 0:
+                    self._secondary_temperature = -float(
+                        f"{temp_raw[1:3]}.{temp_raw[-1]}"
+                    )
+                else:
+                    self._secondary_temperature = float(
+                        f"{temp_raw[1:3]}.{temp_raw[-1]}"
+                    )
 
             if self._secondary_temperature is not None:
                 if self._sensor is not None:
