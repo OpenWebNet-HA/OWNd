@@ -219,6 +219,22 @@ class TestSerialTransportExhaustive:
             future.result()
 
     @pytest.mark.asyncio
+    async def test_listen_loop_none_message_and_stopping(self) -> None:
+        gateway = OWNGateway({"address": "127.0.0.1", "port": 20000})
+        transport = AsyncTcpTransport(gateway=gateway)
+        fake_ev = MagicMock()
+
+        async def get_next_side_effect():
+            transport._stopping = True
+            return None
+
+        fake_ev.get_next = AsyncMock(side_effect=get_next_side_effect)
+        transport._event_session = fake_ev
+
+        await transport._listen_loop()
+        assert fake_ev.get_next.call_count == 1
+
+    @pytest.mark.asyncio
     async def test_disconnect_cancels_pending_future(self) -> None:
         transport = AsyncSerialTransport(port="COM1")
         loop = asyncio.get_running_loop()
@@ -227,3 +243,52 @@ class TestSerialTransportExhaustive:
         await transport.disconnect()
         assert future.done()
         assert future.result() is None
+
+    @pytest.mark.asyncio
+    async def test_serial_read_loop_cancellation_and_finally_cleanup(self) -> None:
+        transport = AsyncSerialTransport(port="COM1")
+        mock_reader = MagicMock()
+        mock_reader.readuntil = AsyncMock(side_effect=asyncio.CancelledError)
+        transport._reader = mock_reader
+
+        mock_writer = MagicMock()
+        transport._writer = mock_writer
+
+        loop = asyncio.get_running_loop()
+        future = loop.create_future()
+        transport._pending_future = future
+        transport._connected = True
+
+        with pytest.raises(asyncio.CancelledError):
+            await transport._read_loop()
+
+        assert transport._connected is False
+        mock_writer.close.assert_called_once()
+        assert future.done()
+        assert future.result() is None
+
+    @pytest.mark.asyncio
+    async def test_serial_read_loop_stopping_normal_exit(self) -> None:
+        transport = AsyncSerialTransport(port="COM1")
+        mock_reader = MagicMock()
+        transport._reader = mock_reader
+        transport._stopping = True
+
+        await transport._read_loop()
+        assert transport._connected is False
+
+    @pytest.mark.asyncio
+    async def test_serial_read_loop_stopping_on_oserror(self) -> None:
+        transport = AsyncSerialTransport(port="COM1")
+        mock_reader = MagicMock()
+
+        async def read_side_effect(sep: bytes) -> bytes:
+            transport._stopping = True
+            raise OSError("Device removed")
+
+        mock_reader.readuntil = AsyncMock(side_effect=read_side_effect)
+        transport._reader = mock_reader
+        transport._stopping = False
+
+        await transport._read_loop()
+        assert transport._connected is False

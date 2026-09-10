@@ -89,8 +89,15 @@ class TestConnectionFaults:
         assert session._connected is True
         logger.exception.assert_called_once()
 
+        # When logger is None, exception is still swallowed without error
+        session._logger = None
+        session._set_connected(False)
+        assert session._connected is False
+
     @pytest.mark.asyncio
     async def test_apply_tcp_keepalive_socket_none_and_oserror(self) -> None:
+        import socket
+
         session, writer = make_fault_session()
         logger = MagicMock()
         session._logger = logger
@@ -105,6 +112,16 @@ class TestConnectionFaults:
         writer._sock.setsockopt.side_effect = OSError("Keepalive unsupported")
         session._apply_tcp_keepalive()
         logger.warning.assert_called_once()
+
+        # 3. Fine-grained Linux knobs present
+        writer._sock.setsockopt.side_effect = None
+        with (
+            patch.object(socket, "TCP_KEEPIDLE", 4, create=True),
+            patch.object(socket, "TCP_KEEPINTVL", 5, create=True),
+            patch.object(socket, "TCP_KEEPCNT", 6, create=True),
+        ):
+            session._apply_tcp_keepalive()
+            assert writer._sock.setsockopt.call_count >= 4
 
     @pytest.mark.asyncio
     async def test_read_frame_without_timeout(self) -> None:
@@ -254,6 +271,12 @@ class TestConnectionFaults:
         sig2 = await session._read_signaling_response()
         assert sig2.is_ack()
 
+        # 3. Malformed frame raises ValueError during OWNMessage.parse (lines 1217-1224)
+        with patch("OWNd.connection.OWNMessage.parse", side_effect=[ValueError("Malformed"), OWNSignaling("*#*1##")]):
+            session._read_frame = AsyncMock(side_effect=["*#bad##", "*#*1##"])
+            sig3, collected3 = await session._read_command_response()
+            assert sig3.is_ack()
+
     @pytest.mark.asyncio
     async def test_command_send_reconnect_failure_and_unexpected_response(self) -> None:
         session, writer = make_fault_session(OWNCommandSession)
@@ -283,3 +306,50 @@ class TestConnectionFaults:
         res = await session.send("*1*1*21##")
         assert res is None
         assert session._stream_writer is None
+
+    @pytest.mark.asyncio
+    async def test_connect_non_fatal_negotiation_failure(self) -> None:
+        session, writer = make_fault_session()
+        logger = MagicMock()
+        session._logger = logger
+        with (
+            patch.object(session, "_negotiate", new=AsyncMock(return_value={"Success": False, "Reason": "temporary_busy", "Message": "Busy"})),
+            patch("asyncio.open_connection", new=AsyncMock(return_value=(MagicMock(), writer))),
+            patch("asyncio.sleep", new=AsyncMock()),
+            patch("OWNd.connection.MAX_CONNECT_ATTEMPTS", 2),
+        ):
+            res = await session.connect()
+            assert res is None
+            assert session._connected is False
+            found = any("negotiation failed (Busy)" in str(call) for call in logger.warning.call_args_list)
+            assert found
+
+    @pytest.mark.asyncio
+    async def test_session_close_with_none_gateway(self) -> None:
+        session, _ = make_fault_session()
+        session._gateway = None  # type: ignore[assignment]
+        await session.close()
+        assert session._stream_writer is None
+
+    @pytest.mark.asyncio
+    async def test_event_session_get_next_reconnect_success(self) -> None:
+        session, _ = make_fault_session(OWNEventSession)
+        assert isinstance(session, OWNEventSession)
+        session._stream_reader = None
+
+        async def fake_reconnect():
+            session._stream_reader = MagicMock()
+            return {"Success": True}
+
+        session._reconnect = AsyncMock(side_effect=fake_reconnect)
+        res = await session.get_next()
+        assert res is None
+        session._reconnect.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_negotiate_exchange_sha1_method(self) -> None:
+        session, _ = make_fault_session(password="12345")
+        session._read_frame = AsyncMock(side_effect=["*#*1##", "*98*1##", "*#*0##"])
+        result = await session._negotiate_exchange()
+        assert result.get("Success") is False
+        assert result.get("Message") == "negotiation_error"

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import datetime
+from unittest.mock import patch
 import pytest
 
 from OWNd.message import (
@@ -225,6 +226,12 @@ class TestMessageExhaustiveCoverage:
         assert ev_act.is_armed_home is True
         assert ev_act.general is True
 
+        # Sensor in non-zero zone reporting (where="12" -> zone 1, sensor 2)
+        ev_sensor = OWNAlarmEvent("*5*1*12##")
+        assert ev_sensor.zone == 1
+        assert ev_sensor.sensor == 2
+        assert "Sensor 2 in zone 1 is reporting" in ev_sensor.human_readable_log
+
     def test_auxiliary_and_dry_contact(self) -> None:
         # Auxiliary (WHO 9): WHAT 1 ('ON') and WHAT 0 ('OFF')
         aux_on = OWNAuxEvent("*9*1*1##")
@@ -268,6 +275,11 @@ class TestMessageExhaustiveCoverage:
         gw_uptime = OWNGatewayEvent("*#13**19*1*2*30*45##")
         assert gw_uptime._uptime is not None
         assert gw_uptime._uptime.days == 1
+
+        # Malformed / incomplete uptime triggers (IndexError, TypeError, ValueError)
+        with patch("OWNd.message.datetime.timedelta", side_effect=ValueError("bad timedelta")):
+            gw_bad_uptime = OWNGatewayEvent("*#13**19*1*2*3*4##")
+            assert gw_bad_uptime._uptime is None
 
         # Dimension 23: Kernel version
         gw_kern = OWNGatewayEvent("*#13**23*3*10*0##")

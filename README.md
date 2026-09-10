@@ -273,8 +273,8 @@ OWNd maintains an automated unit test suite with strict line coverage tracking a
 | [`OWNd/transport/base.py`](OWNd/transport/base.py) | **100%** | Abstract transport layer and event listener notification contracts |
 | [`OWNd/transport/tcp.py`](OWNd/transport/tcp.py) | **100%** | Dual-session TCP transport linking event and command channels |
 | [`OWNd/message.py`](OWNd/message.py) | **100%** | OpenWebNet frame parsers, encoders, and WHO dimension decoders |
-| [`OWNd/connection.py`](OWNd/connection.py) | **99%** | Hardened dual-session TCP engine, SHA-1/HMAC auth, keepalives & bounded read loops |
-| [`OWNd/transport/serial.py`](OWNd/transport/serial.py) | **98%** | Async Serial/USB transport for Legrand 3578 interface with in-band demux |
+| [`OWNd/connection.py`](OWNd/connection.py) | **100%** | Hardened dual-session TCP engine, SHA-1/HMAC auth, keepalives & bounded read loops |
+| [`OWNd/transport/serial.py`](OWNd/transport/serial.py) | **100%** | Async Serial/USB transport for Legrand 3578 interface with in-band demux |
 
 <!-- END_COVERAGE_TABLE -->
 

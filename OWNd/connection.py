@@ -1347,6 +1347,15 @@ class OWNCommandSession(OWNSession):
             except asyncio.CancelledError:
                 await self.close()
                 raise
+            except TimeoutError:
+                await self.close()
+                self._logger.warning(
+                    "%s Timed out awaiting the complete response for `%s`; "
+                    "command session closed.",
+                    self._log_id,
+                    message,
+                )
+                return None
             except (
                 ConnectionResetError,
                 asyncio.IncompleteReadError,
@@ -1368,20 +1377,9 @@ class OWNCommandSession(OWNSession):
                     message,
                 )
                 return None
-            except TimeoutError:
-                await self.close()
-                self._logger.warning(
-                    "%s Timed out awaiting the complete response for `%s`; "
-                    "command session closed.",
-                    self._log_id,
-                    message,
-                )
-                return None
             except Exception:  # pylint: disable=broad-except
                 await self.close()
                 self._logger.exception(
                     "%s Command session crashed.", self._log_id
                 )
                 return None
-
-        return None
