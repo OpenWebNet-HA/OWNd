@@ -78,13 +78,124 @@ async def test_legacy_authentication_fails_closed_on_unexpected_frame() -> None:
 
 
 @pytest.mark.asyncio
-async def test_invalid_password_is_rejected_before_writing() -> None:
-    session, writer = make_session(password="not-a-number")
+async def test_non_ascii_password_is_rejected_before_writing() -> None:
+    session, writer = make_session(password="not_ascii_\u1234_pw")
 
     result = await session._negotiate()
 
     assert result == {"Success": False, "Message": "password_error"}
     assert writer.written == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_cls,expected_init_frame", [
+    (OWNCommandSession, b"*99*0##"),
+    (OWNEventSession, b"*99*1##"),
+])
+async def test_alphanumeric_password_succeeds_hmac_sha1(session_cls, expected_init_frame) -> None:
+    """Verify modern gateways (e.g. F454) accept alphanumeric passwords under HMAC-SHA1."""
+    pw = "F454_alpha_Pass_123!"
+    session, writer = make_session(session_type=session_cls, password=pw, model="F454")
+    nonce_a = "1234567890123456789012345678901234567890"
+
+    async def read_frame_side_effect(timeout: float = 0.0) -> str:
+        call_count = session._read_frame.await_count
+        if call_count == 1:
+            return "*#*1##"
+        elif call_count == 2:
+            return "*98*1##"  # SHA-1 challenge
+        elif call_count == 3:
+            return f"*#{nonce_a}##"
+        else:
+            last_written = writer.written[-1].decode()
+            parts = last_written.strip("*#").split("*")
+            rb = parts[0]
+            server_hmac = session._decode_hmac_response("sha1", pw, nonce_a, rb)
+            return f"*#{server_hmac}##"
+
+    session._read_frame = AsyncMock(side_effect=read_frame_side_effect)
+
+    result = await session._negotiate()
+
+    assert result == {"Success": True, "Message": None}
+    assert writer.written[0] == expected_init_frame
+    assert writer.written[1] == b"*#*1##"
+    assert writer.written[-1] == b"*#*1##"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_cls,expected_init_frame", [
+    (OWNCommandSession, b"*99*0##"),
+    (OWNEventSession, b"*99*1##"),
+])
+async def test_alphanumeric_password_succeeds_hmac_sha256(session_cls, expected_init_frame) -> None:
+    """Verify modern gateways accept complex alphanumeric passwords under HMAC-SHA256."""
+    pw = "MyHomeServer1_ComplexPass#2026"
+    session, writer = make_session(session_type=session_cls, password=pw, model="MyHomeServer1")
+    nonce_a = "9876543210987654321098765432109876543210"
+
+    async def read_frame_side_effect(timeout: float = 0.0) -> str:
+        call_count = session._read_frame.await_count
+        if call_count == 1:
+            return "*#*1##"
+        elif call_count == 2:
+            return "*98*2##"  # SHA-256 challenge
+        elif call_count == 3:
+            return f"*#{nonce_a}##"
+        else:
+            last_written = writer.written[-1].decode()
+            parts = last_written.strip("*#").split("*")
+            rb = parts[0]
+            server_hmac = session._decode_hmac_response("sha256", pw, nonce_a, rb)
+            return f"*#{server_hmac}##"
+
+    session._read_frame = AsyncMock(side_effect=read_frame_side_effect)
+
+    result = await session._negotiate()
+
+    assert result == {"Success": True, "Message": None}
+    assert writer.written[0] == expected_init_frame
+    assert writer.written[1] == b"*#*1##"
+    assert writer.written[-1] == b"*#*1##"
+
+
+@pytest.mark.asyncio
+async def test_alphanumeric_password_rejected_on_legacy_nonce() -> None:
+    """Verify legacy numeric gateways reject alphanumeric passwords gracefully with password_error."""
+    session, writer = make_session(session_type=OWNCommandSession, password="not-a-number", model="MH200N")
+    session._read_frame = AsyncMock(
+        side_effect=["*#*1##", "*#123456789##"]
+    )
+
+    result = await session._negotiate()
+
+    assert result == {"Success": False, "Message": "password_error"}
+    # Sent initial command session request, but stopped before sending malformed legacy password
+    assert writer.written == [b"*99*0##"]
+
+
+def test_gateway_password_normalization() -> None:
+    """Verify OWNGateway normalizes passwords across integer, string, empty, and None inputs."""
+    gw1 = OWNGateway({"address": "10.0.0.1", "password": 12345})
+    assert gw1.password == "12345"
+
+    gw2 = OWNGateway({"address": "10.0.0.1", "password": "F454Password"})
+    assert gw2.password == "F454Password"
+
+    gw3 = OWNGateway({"address": "10.0.0.1", "password": ""})
+    assert gw3.password is None
+
+    gw4 = OWNGateway({"address": "10.0.0.1", "password": None})
+    assert gw4.password is None
+
+    gw4.password = 99999
+    assert gw4.password == "99999"
+    gw4.password = "alpha_key"
+    assert gw4.password == "alpha_key"
+    gw4.password = ""
+    assert gw4.password is None
+    gw4.password = None
+    assert gw4.password is None
 
 
 @pytest.mark.asyncio

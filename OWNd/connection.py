@@ -86,7 +86,8 @@ class OWNGateway:
     def __init__(self, discovery_info: dict):
         # Attributes potentially provided by user
         self.address = discovery_info.get("address")
-        self._password = discovery_info.get("password")
+        pw = discovery_info.get("password")
+        self._password = str(pw) if pw not in (None, "") else None
         # Attributes retrieved from SSDP discovery
         self.ssdp_location = discovery_info.get("ssdp_location")
         self.ssdp_st = discovery_info.get("ssdp_st")
@@ -161,8 +162,8 @@ class OWNGateway:
         return self._password
 
     @password.setter
-    def password(self, password: str) -> None:
-        self._password = password
+    def password(self, password: str | None) -> None:
+        self._password = str(password) if password not in (None, "") else None
 
     @property
     def log_id(self) -> str:
@@ -569,10 +570,9 @@ class OWNSession:
         if self._gateway.password is not None and not (
             isinstance(self._gateway.password, str)
             and self._gateway.password.isascii()
-            and self._gateway.password.isdecimal()
         ):
             self._logger.error(
-                "%s Invalid OpenWebNet password: expected decimal digits only.",
+                "%s Invalid OpenWebNet password: expected ASCII characters only.",
                 self._log_id,
             )
             return {"Success": False, "Message": "password_error"}
@@ -742,39 +742,47 @@ class OWNSession:
                     "%s Received nonce: `%s`", self._log_id, resulting_message
                 )
                 if self._gateway.password is not None:
-                    hashed_password = f"*#{self._get_own_password(self._gateway.password, resulting_message.nonce)}##"  # pylint: disable=line-too-long
-                    self._logger.debug(
-                        "%s Sending %s session password.",
-                        self._log_id,
-                        self._type,
-                    )
-                    self._stream_writer.write(hashed_password.encode())
-                    await self._stream_writer.drain()
-                    resulting_message = await read_signaling()
-                    if resulting_message.is_nack():
+                    if not self._gateway.password.isdecimal():
                         error = True
                         error_message = "password_error"
                         self._logger.error(
-                            "%s Password error while opening %s session.",
+                            "%s Gateway requested legacy numeric authentication, but provided password is not decimal digits only.",
                             self._log_id,
-                            self._type,
-                        )
-                    elif resulting_message.is_ack():
-                        self._logger.debug(
-                            "%s %s session established successfully.",
-                            self._log_id,
-                            self._type.capitalize(),
                         )
                     else:
-                        error = True
-                        error_message = "negotiation_error"
-                        self._logger.error(
-                            "%s Unexpected response `%s` after sending the legacy password; "
-                            "closing %s session.",
+                        hashed_password = f"*#{self._get_own_password(self._gateway.password, resulting_message.nonce)}##"  # pylint: disable=line-too-long
+                        self._logger.debug(
+                            "%s Sending %s session password.",
                             self._log_id,
-                            resulting_message,
                             self._type,
                         )
+                        self._stream_writer.write(hashed_password.encode())
+                        await self._stream_writer.drain()
+                        resulting_message = await read_signaling()
+                        if resulting_message.is_nack():
+                            error = True
+                            error_message = "password_error"
+                            self._logger.error(
+                                "%s Password error while opening %s session.",
+                                self._log_id,
+                                self._type,
+                            )
+                        elif resulting_message.is_ack():
+                            self._logger.debug(
+                                "%s %s session established successfully.",
+                                self._log_id,
+                                self._type.capitalize(),
+                            )
+                        else:
+                            error = True
+                            error_message = "negotiation_error"
+                            self._logger.error(
+                                "%s Unexpected response `%s` after sending the legacy password; "
+                                "closing %s session.",
+                                self._log_id,
+                                resulting_message,
+                                self._type,
+                            )
                 else:
                     error = True
                     error_message = "password_error"
