@@ -128,15 +128,27 @@ def update_readme_and_svg() -> None:
         content = pattern.sub(replacement, content)
     else:
         # Append section if markers not yet present
-        coverage_section = f"\n\n## 📊 Code Coverage & Quality Assurance\n\nOWNd maintains an automated unit test suite with strict line coverage tracking across all core modules:\n\n{START_MARKER}\n\n{new_table_block}\n\n{END_MARKER}\n"
+        coverage_section = (
+            f"\n\n## 📊 Code Coverage & Quality Assurance\n\n"
+            f"OWNd maintains an automated unit test suite with strict line coverage tracking across all core modules:\n\n"
+            f"{START_MARKER}\n\n{new_table_block}\n\n{END_MARKER}\n\n"
+            f"> **Live Test Execution**: View detailed line-by-line coverage and test history on "
+            f"[**Codecov (OpenWebNet-HA/OWNd)**](https://app.codecov.io/gh/OpenWebNet-HA/OWNd) or "
+            f"download the interactive coverage report from the "
+            f"[**CI GitHub Actions run**](https://github.com/OpenWebNet-HA/OWNd/actions/workflows/ci.yml).\n"
+        )
         content += coverage_section
 
-    # Add coverage badge under the title if missing
+    # Add coverage and Codecov badges under the title if missing
     if "coverage.svg" not in content:
-        badge_line = "[![Coverage](coverage.svg)](coverage.svg)\n"
+        badge_lines = (
+            "[![Coverage](coverage.svg)](https://app.codecov.io/gh/OpenWebNet-HA/OWNd)\n"
+            "[![Codecov](https://codecov.io/gh/OpenWebNet-HA/OWNd/branch/master/graph/badge.svg)]"
+            "(https://app.codecov.io/gh/OpenWebNet-HA/OWNd)\n"
+        )
         content = re.sub(
             r"(\[!\[Ruff\]\(.*?\)\n)",
-            r"\g<1>" + badge_line,
+            r"\g<1>" + badge_lines,
             content,
         )
 
