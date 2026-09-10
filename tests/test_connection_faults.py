@@ -60,7 +60,10 @@ def make_fault_session(
         }
     )
     session = session_type(gateway=gateway)
-    session._stream_reader = asyncio.StreamReader()
+    try:
+        session._stream_reader = asyncio.StreamReader()
+    except RuntimeError:
+        session._stream_reader = MagicMock()
     writer = FakeWriter()
     session._stream_writer = writer  # type: ignore[assignment]
     return session, writer
@@ -75,7 +78,8 @@ class TestConnectionFaults:
             result = await OWNGateway.get_first_available_gateway()
             assert result is None
 
-    def test_on_state_change_exception_swallowed(self) -> None:
+    @pytest.mark.asyncio
+    async def test_on_state_change_exception_swallowed(self) -> None:
         session, _ = make_fault_session()
         logger = MagicMock()
         session._logger = logger
@@ -85,7 +89,8 @@ class TestConnectionFaults:
         assert session._connected is True
         logger.exception.assert_called_once()
 
-    def test_apply_tcp_keepalive_socket_none_and_oserror(self) -> None:
+    @pytest.mark.asyncio
+    async def test_apply_tcp_keepalive_socket_none_and_oserror(self) -> None:
         session, writer = make_fault_session()
         logger = MagicMock()
         session._logger = logger
