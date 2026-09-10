@@ -106,6 +106,20 @@ class F455Profile(GatewayProfile):
         )
 
 
+class F461Profile(GatewayProfile):
+    def __init__(self) -> None:
+        super().__init__(
+            model_name="F461",
+            max_command_sessions=4,
+            command_queue_delay=0.05,
+            max_queue_size=250,
+            event_keepalive_interval=90,
+            supports_hmac=True,
+            supports_native_transitions=True,
+            supports_extended_frames=True,
+        )
+
+
 class MH200NProfile(GatewayProfile):
     def __init__(self) -> None:
         super().__init__(
@@ -171,6 +185,7 @@ _GENERIC = GenericGatewayProfile()
 _PROFILES = {
     "f454": F454Profile(),
     "f455": F455Profile(),
+    "f461": F461Profile(),
     "mh200n": MH200NProfile(),
     "mh201": MH201Profile(),
     "mh202": MH202Profile(),
