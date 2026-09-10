@@ -874,6 +874,38 @@ class OWNHeatingEvent(OWNEvent):
             )
             self._human_readable_log = f"Zone {self._zone}'s target temperature is set to {self._set_temperature}°C."  # pylint: disable=line-too-long
 
+        elif self._dimension == 15:  # Probe temperature reading
+            self._type = MESSAGE_TYPE_SECONDARY_TEMPERATURE
+            if self._dimension_value:
+                if len(self._dimension_value) >= 2:
+                    try:
+                        self._sensor = int(self._dimension_value[0])
+                    except (ValueError, TypeError):
+                        pass
+                    temp_raw = self._dimension_value[1]
+                else:
+                    temp_raw = self._dimension_value[0]
+
+                try:
+                    if len(temp_raw) < 3:
+                        self._secondary_temperature = None
+                    elif temp_raw.startswith("1") and len(temp_raw) == 4 and int(temp_raw[1:]) != 0:
+                        self._secondary_temperature = -float(
+                            f"{temp_raw[1:3]}.{temp_raw[-1]}"
+                        )
+                    else:
+                        self._secondary_temperature = float(
+                            f"{temp_raw[1:3]}.{temp_raw[-1]}"
+                        )
+                except (ValueError, TypeError, IndexError):
+                    self._secondary_temperature = None
+
+            if self._secondary_temperature is not None:
+                if self._sensor is not None:
+                    self._human_readable_log = f"Zone {self._zone}'s secondary probe {self._sensor} is reporting a temperature of {self._secondary_temperature}°C."
+                else:
+                    self._human_readable_log = f"Zone {self._zone}'s temperature probe is reporting a temperature of {self._secondary_temperature}°C."
+
         elif self._dimension == 19:  # Valves status
             self._type = MESSAGE_TYPE_ACTION
             self._is_cooling = self._dimension_value[0] in _valve_active_states
@@ -1026,6 +1058,10 @@ class OWNHeatingEvent(OWNEvent):
     @property
     def secondary_temperature(self):
         return [self._sensor, self._secondary_temperature]
+
+    @property
+    def probe_temperature(self) -> float | None:
+        return self._secondary_temperature
 
     @property
     def set_temperature(self) -> float | None:
@@ -2036,6 +2072,12 @@ class OWNHeatingCommand(OWNCommand):
     def get_temperature(cls, where):
         message = cls(f"*#4*{where}*0##")
         message._human_readable_log = f"Requesting climate status update for {message._where}{message._interface_log_text}."
+        return message
+
+    @classmethod
+    def get_probe_temperature(cls, where):
+        message = cls(f"*#4*{where}*15##")
+        message._human_readable_log = f"Requesting probe temperature status update for {message._where}{message._interface_log_text}."
         return message
 
     @classmethod
