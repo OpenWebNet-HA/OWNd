@@ -436,6 +436,10 @@ class OWNLightingEvent(OWNEvent):
         self._motion: bool = False
         self._pir_sensitivity: int | None = None
         self._motion_timeout: datetime.timedelta | None = None
+        self._color_temp: int | None = None
+        self._supports_color_temp: bool | None = None
+        self._rgb: tuple[int, int, int] | None = None
+        self._supports_rgb: bool | None = None
 
         if self._what is not None and self._what != 1000:
             self._state = self._what
@@ -527,6 +531,29 @@ class OWNLightingEvent(OWNEvent):
                     seconds=int(self._dimension_value[2]),
                 )
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} has timeout set to {self._motion_timeout}."  # pylint: disable=line-too-long
+            elif self._dimension == 12:  # RGB Color
+                if len(self._dimension_value) >= 3:
+                    r, g, b = (
+                        int(self._dimension_value[0]),
+                        int(self._dimension_value[1]),
+                        int(self._dimension_value[2]),
+                    )
+                    if (r, g, b) == (511, 127, 255):
+                        self._supports_rgb = False
+                        self._human_readable_log = f"Light {self._where}{self._interface_log_text} reports RGB color is not supported."
+                    else:
+                        self._supports_rgb = True
+                        self._rgb = (r, g, b)
+                        self._human_readable_log = f"Light {self._where}{self._interface_log_text} RGB color is ({r}, {g}, {b})."
+            elif self._dimension == 14:  # Color temperature (Tunable white, mireds)
+                val = int(self._dimension_value[0])
+                if val == 1:
+                    self._supports_color_temp = False
+                    self._human_readable_log = f"Light {self._where}{self._interface_log_text} reports tunable white is not supported."
+                else:
+                    self._supports_color_temp = True
+                    self._color_temp = val
+                    self._human_readable_log = f"Light {self._where}{self._interface_log_text} color temperature is {self._color_temp} mireds."
             elif self._dimension_value:
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} has sent an unknown dimension {self._dimension}."
 
@@ -591,6 +618,22 @@ class OWNLightingEvent(OWNEvent):
     @property
     def motion_timeout(self) -> datetime.timedelta | None:
         return self._motion_timeout
+
+    @property
+    def color_temp(self) -> int | None:
+        return self._color_temp
+
+    @property
+    def supports_color_temp(self) -> bool | None:
+        return self._supports_color_temp
+
+    @property
+    def rgb(self) -> tuple[int, int, int] | None:
+        return self._rgb
+
+    @property
+    def supports_rgb(self) -> bool | None:
+        return self._supports_rgb
 
 
 class OWNAutomationEvent(OWNEvent):
@@ -1954,6 +1997,34 @@ class OWNLightingCommand(OWNCommand):
     def get_motion_timeout(cls, where):
         message = cls(f"*#1*{where}*7##")
         message._human_readable_log = f"Requesting light/motion sensor {message._where}{message._interface_log_text} motion timeout."
+        return message
+
+    @classmethod
+    def get_color_temperature(cls, where):
+        message = cls(f"*#1*{where}*14##")
+        message._human_readable_log = f"Requesting light {message._where}{message._interface_log_text} color temperature."
+        return message
+
+    @classmethod
+    def set_color_temperature(cls, where, mireds: int):
+        mireds = max(50, min(1000, int(mireds)))
+        message = cls(f"*#1*{where}*#14*{mireds}##")
+        message._human_readable_log = f"Setting light {message._where}{message._interface_log_text} color temperature to {mireds} mireds."
+        return message
+
+    @classmethod
+    def get_rgb_color(cls, where):
+        message = cls(f"*#1*{where}*12##")
+        message._human_readable_log = f"Requesting light {message._where}{message._interface_log_text} RGB color."
+        return message
+
+    @classmethod
+    def set_rgb_color(cls, where, r: int, g: int, b: int):
+        r = max(0, min(255, int(r)))
+        g = max(0, min(255, int(g)))
+        b = max(0, min(255, int(b)))
+        message = cls(f"*#1*{where}*#12*{r}*{g}*{b}##")
+        message._human_readable_log = f"Setting light {message._where}{message._interface_log_text} RGB color to ({r}, {g}, {b})."
         return message
 
     @classmethod

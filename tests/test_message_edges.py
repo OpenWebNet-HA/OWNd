@@ -1325,3 +1325,44 @@ class TestMessageAuditExhaustiveCoverage:
     def test_gateway_command_dim22_invalid_datetime(self):
         with pytest.raises(ValueError):
             OWNGatewayCommand("*#13**#22*12*00*00*01*0*01*99*2020##")
+
+def test_lighting_color_temperature_and_rgb():
+    # Valid color temperature reading (mireds)
+    msg_ct = OWNEvent.parse("*#1*25#4#02*14*153##")
+    assert isinstance(msg_ct, OWNLightingEvent)
+    assert msg_ct.color_temp == 153
+    assert msg_ct.supports_color_temp is True
+    assert "color temperature is 153 mireds" in msg_ct.human_readable_log
+
+    # Sentinel color temperature (unsupported)
+    msg_ct_unsup = OWNEvent.parse("*#1*27#4#02*14*1##")
+    assert isinstance(msg_ct_unsup, OWNLightingEvent)
+    assert msg_ct_unsup.color_temp is None
+    assert msg_ct_unsup.supports_color_temp is False
+    assert "reports tunable white is not supported" in msg_ct_unsup.human_readable_log
+
+    # Valid RGB reading
+    msg_rgb = OWNEvent.parse("*#1*25#4#02*12*255*100*50##")
+    assert isinstance(msg_rgb, OWNLightingEvent)
+    assert msg_rgb.rgb == (255, 100, 50)
+    assert msg_rgb.supports_rgb is True
+
+    # Sentinel RGB (unsupported)
+    msg_rgb_unsup = OWNEvent.parse("*#1*25#4#02*12*511*127*255##")
+    assert isinstance(msg_rgb_unsup, OWNLightingEvent)
+    assert msg_rgb_unsup.rgb is None
+    assert msg_rgb_unsup.supports_rgb is False
+
+    # Commands
+    cmd_ct_get = OWNLightingCommand.get_color_temperature("25#4#02")
+    assert cmd_ct_get._raw == "*#1*25#4#02*14##"
+
+    cmd_ct_set = OWNLightingCommand.set_color_temperature("25#4#02", 370)
+    assert cmd_ct_set._raw == "*#1*25#4#02*#14*370##"
+
+    cmd_rgb_get = OWNLightingCommand.get_rgb_color("25#4#02")
+    assert cmd_rgb_get._raw == "*#1*25#4#02*12##"
+
+    cmd_rgb_set = OWNLightingCommand.set_rgb_color("25#4#02", 255, 128, 64)
+    assert cmd_rgb_set._raw == "*#1*25#4#02*#12*255*128*64##"
+
