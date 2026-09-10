@@ -35,3 +35,21 @@ disable_error_code = [
     "union-attr",
     "var-annotated",
 ]
+
+[tool.coverage.run]
+source = ["OWNd"]
+branch = true
+omit = [
+    "OWNd/__main__.py",
+]
+
+[tool.coverage.report]
+show_missing = true
+precision = 1
+exclude_lines = [
+    "pragma: no cover",
+    "if __name__ == .__main__.:",
+    "if TYPE_CHECKING:",
+    "raise NotImplementedError",
+    "def __repr__",
+]

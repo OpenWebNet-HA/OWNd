@@ -5,6 +5,7 @@
 [![CI](https://github.com/OpenWebNet-HA/OWNd/actions/workflows/ci.yml/badge.svg)](https://github.com/OpenWebNet-HA/OWNd/actions/workflows/ci.yml)
 [![License: LGPL-3.0](https://img.shields.io/badge/License-LGPL--3.0-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
+[![Coverage](coverage.svg)](coverage.svg)
 
 **OWNd** is an asynchronous Python library and daemon for the Legrand / BTicino **OpenWebNet** home automation protocol.
 
@@ -254,3 +255,24 @@ mypy OWNd
 ## License
 
 This project is licensed under the **GNU Lesser General Public License v3.0 (LGPL-3.0-only)**. See the [LICENSE](LICENSE) file for details.
+
+
+## 📊 Code Coverage & Quality Assurance
+
+OWNd maintains an automated unit test suite with strict line coverage tracking across all core modules:
+
+<!-- START_COVERAGE_TABLE -->
+
+| Component / Module | Coverage | Notes |
+|---|:---:|---|
+| [`OWNd/__init__.py`](OWNd/__init__.py) | **100%** | Package initialization and version metadata |
+| [`OWNd/transport/__init__.py`](OWNd/transport/__init__.py) | **100%** | Transport subpackage exports |
+| [`OWNd/transport/base.py`](OWNd/transport/base.py) | **100%** | Abstract transport layer and event listener notification contracts |
+| [`OWNd/profiles.py`](OWNd/profiles.py) | **96%** | Declarative hardware gateway models (F454, MH200N, MH201, MH202, MyHomeServer1) |
+| [`OWNd/discovery.py`](OWNd/discovery.py) | **96%** | SSDP multicast and UPnP XML gateway discovery and descriptor parsing |
+| [`OWNd/transport/tcp.py`](OWNd/transport/tcp.py) | **96%** | Dual-session TCP transport linking event and command channels |
+| [`OWNd/transport/serial.py`](OWNd/transport/serial.py) | **93%** | Async Serial/USB transport for Legrand 3578 interface with in-band demux |
+| [`OWNd/connection.py`](OWNd/connection.py) | **92%** | Hardened dual-session TCP engine, SHA-1/HMAC auth, keepalives & bounded read loops |
+| [`OWNd/message.py`](OWNd/message.py) | 86% | OpenWebNet frame parsers, encoders, and WHO dimension decoders |
+
+<!-- END_COVERAGE_TABLE -->
