@@ -5,8 +5,8 @@
 [![CI](https://github.com/OpenWebNet-HA/OWNd/actions/workflows/ci.yml/badge.svg)](https://github.com/OpenWebNet-HA/OWNd/actions/workflows/ci.yml)
 [![License: LGPL-3.0](https://img.shields.io/badge/License-LGPL--3.0-blue.svg)](https://www.gnu.org/licenses/lgpl-3.0)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
-[![Coverage](coverage.svg)](https://app.codecov.io/gh/OpenWebNet-HA/OWNd)
-[![Codecov](https://codecov.io/gh/OpenWebNet-HA/OWNd/branch/master/graph/badge.svg)](https://app.codecov.io/gh/OpenWebNet-HA/OWNd)
+[![Coverage](coverage.svg)](https://app.codecov.io/github/OpenWebNet-HA/OWNd)
+[![Codecov](https://codecov.io/gh/OpenWebNet-HA/OWNd/branch/master/graph/badge.svg)](https://app.codecov.io/github/OpenWebNet-HA/OWNd)
 
 **OWNd** is an asynchronous Python library and daemon for the Legrand / BTicino **OpenWebNet** home automation protocol.
 
@@ -278,4 +278,4 @@ OWNd maintains an automated unit test suite with strict line coverage tracking a
 
 <!-- END_COVERAGE_TABLE -->
 
-> **Live Test Execution**: View detailed line-by-line coverage and test history on [**Codecov (OpenWebNet-HA/OWNd)**](https://app.codecov.io/gh/OpenWebNet-HA/OWNd) or download the interactive coverage report from the [**CI GitHub Actions run**](https://github.com/OpenWebNet-HA/OWNd/actions/workflows/ci.yml).
+> **Live Test Execution**: View detailed line-by-line coverage and test history on [**Codecov (OpenWebNet-HA/OWNd)**](https://app.codecov.io/github/OpenWebNet-HA/OWNd) or download the interactive coverage report from the [**CI GitHub Actions run**](https://github.com/OpenWebNet-HA/OWNd/actions/workflows/ci.yml).
