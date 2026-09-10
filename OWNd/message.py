@@ -1,13 +1,13 @@
-""" This module contains OpenWebNet messages definition """  # pylint: disable=too-many-lines
+"""This module contains OpenWebNet messages definition"""  # pylint: disable=too-many-lines
 
 from __future__ import annotations
 
 import datetime
 import re
-from typing import Optional
+from typing import Any
+from zoneinfo import ZoneInfo
 
 from dateutil.relativedelta import relativedelta
-import pytz
 
 MESSAGE_TYPE_ACTIVE_POWER = "active_power"
 MESSAGE_TYPE_ENERGY_TOTALIZER = "energy_totalizer"
@@ -21,7 +21,7 @@ MESSAGE_TYPE_MAIN_HUMIDITY = "main_humidity"
 MESSAGE_TYPE_SECONDARY_TEMPERATURE = "secondary_temperature"
 MESSAGE_TYPE_TARGET_TEMPERATURE = "target_temperature"
 MESSAGE_TYPE_LOCAL_OFFSET = "local_offset"
-MESSAGE_TYPE_LOCAL_TARGET_TEMPERATURE = "local_targer_temperature"
+MESSAGE_TYPE_LOCAL_TARGET_TEMPERATURE = "local_target_temperature"
 MESSAGE_TYPE_MODE = "hvac_mode"
 MESSAGE_TYPE_MODE_TARGET = "hvac_mode_target"
 MESSAGE_TYPE_ACTION = "hvac_action"
@@ -29,13 +29,53 @@ MESSAGE_TYPE_MOTION = "motion_detected"
 MESSAGE_TYPE_PIR_SENSITIVITY = "pir_sensitivity"
 MESSAGE_TYPE_ILLUMINANCE = "illuminance_value"
 MESSAGE_TYPE_MOTION_TIMEOUT = "motion_timeout"
+MESSAGE_TYPE_FAN_SPEED = "fan_speed"
 
 CLIMATE_MODE_OFF = "off"
 CLIMATE_MODE_HEAT = "heat"
 CLIMATE_MODE_COOL = "cool"
 CLIMATE_MODE_AUTO = "auto"
 
+LOCAL_CONTROL_NORMAL = "normal"
+LOCAL_CONTROL_OFFSET = "offset"
+LOCAL_CONTROL_OFF = "local_off"
+LOCAL_CONTROL_PROTECTION = "local_protection"
+LOCAL_CONTROL_OVERRIDE = "local_override"
+LOCAL_CONTROL_UNKNOWN = "unknown"
+
 PIR_SENSITIVITY_MAPPING = ["low", "medium", "high", "very high"]
+
+
+def _validate_gateway_clock_values(
+    dimension: int | None, values: list[str]
+) -> None:
+    """Reject truncated gateway clock frames before indexing their values."""
+    required = {0: 3, 1: 4, 22: 8}.get(dimension)
+    if required is not None and len(values) < required:
+        raise ValueError(
+            f"Gateway dimension {dimension} requires {required} values"
+        )
+
+
+def _gateway_timezone(values: list[str]) -> str:
+    """Decode an optional OWN timezone, preserving unspecified local time."""
+    value = values[3] if len(values) > 3 else ""
+    if not value:
+        return ""
+    if re.fullmatch(r"[01]\d{2}", value) is None:
+        raise ValueError(f"Invalid gateway timezone: {value!r}")
+    sign = "+" if value[0] == "0" else "-"
+    return f"{sign}{value[1:]}:00"
+
+
+def _integer_value(
+    values: list[str], index: int, default: int = 0
+) -> int:
+    """Read an integer field without letting an empty telemetry value crash."""
+    try:
+        return int(values[index])
+    except (IndexError, TypeError, ValueError):
+        return default
 
 
 class OWNMessage:
@@ -43,15 +83,15 @@ class OWNMessage:
     _NACK = re.compile(r"^\*#\*0##$")  #  *#*0##
     _COMMAND_SESSION = re.compile(r"^\*99\*0##$")  #  *99*0##
     _EVENT_SESSION = re.compile(r"^\*99\*1##$")  #  *99*1##
-    _NONCE = re.compile(r"^\*#(\d+)##$")  #  *#123456789##
+    _NONCE = re.compile(r"^\*#(\d{4,})##$")  #  *#123456789##
     _SHA = re.compile(r"^\*98\*(\d)##$")  #  *98*SHA##
 
     _STATUS = re.compile(
         r"^\*(?P<who>\d+)\*(?P<what>\d+)(?P<what_param>(?:#\d+)*)\*(?P<where>\*|#?\d+)(?P<where_param>(?:#\d+)*)##$"  # pylint: disable=line-too-long
     )  #  *WHO*WHAT*WHERE##
     _STATUS_REQUEST = re.compile(
-        r"^\*#(?P<who>\d+)\*(?P<where>#?\d+)(?P<where_param>(?:#\d+)*)##$"
-    )  #  *#WHO*WHERE
+        r"^\*#(?P<who>\d+)(?:\*(?P<where>#?\d+)(?P<where_param>(?:#\d+)*))?##$"
+    )  #  *#WHO*WHERE## or *#WHO##
     _DIMENSION_WRITING = re.compile(
         r"^\*#(?P<who>\d+)\*(?P<where>#?\d+)?(?P<where_param>(?:#\d+)*)?\*#(?P<dimension>\d+)(?P<dimension_param>(?:#\d+)*)?(?P<dimension_value>(?:\*\d*)+)##$"  # pylint: disable=line-too-long
     )  #  *#WHO*WHERE*#DIMENSION*VAL1*VALn##
@@ -65,97 +105,82 @@ class OWNMessage:
     """ Base class for all OWN messages """
 
     def __init__(self, data):
-        self._raw = data
-        self._human_readable_log = self._raw
-        self._family = ""
-        self._who = ""
-        self._where = ""
-        self._is_valid_message = False
+        self._raw: str = data
+        self._human_readable_log: str = self._raw
+        self._family: str = ""
+        self._message_type: str | None = None
+        self._match: re.Match[str] | None = None
+        self._is_valid_message: bool = False
+        # Explicit attribute types: every branch below only overrides what the
+        # frame actually carries; missing parts keep these defaults (empty
+        # lists instead of None, so consumers can index/iterate safely).
+        self._who: int | None = None
+        self._what: int | None = None
+        self._what_param: list[str] = []
+        self._where: str | None = None
+        self._where_param: list[str] = []
+        self._dimension: int | None = None
+        self._dimension_param: list[str] = []
+        self._dimension_value: list[str] = []
 
-        if self._STATUS.match(self._raw):
+        if match := self._STATUS.match(self._raw):
             self._is_valid_message = True
-            self._match = self._STATUS.match(self._raw)
+            self._match = match
             self._family = "EVENT"
             self._message_type = "STATUS"
-            self._who = int(self._match.group("who"))
-            self._what = int(self._match.group("what"))
+            self._who = int(match.group("who"))
+            self._what = int(match.group("what"))
             if self._what == 1000:
                 self._family = "COMMAND_TRANSLATION"
-            self._what_param = self._match.group("what_param").split("#")
-            del self._what_param[0]
-            self._where = self._match.group("where")
-            self._where_param = self._match.group("where_param").split("#")
-            del self._where_param[0]
-            self._dimension = None
-            self._dimension_param = None
-            self._dimension_value = None
+            self._what_param = match.group("what_param").split("#")[1:]
+            self._where = match.group("where")
+            self._where_param = match.group("where_param").split("#")[1:]
 
-        elif self._STATUS_REQUEST.match(self._raw):
+        elif match := self._STATUS_REQUEST.match(self._raw):
             self._is_valid_message = True
-            self._match = self._STATUS_REQUEST.match(self._raw)
+            self._match = match
             self._family = "REQUEST"
             self._message_type = "STATUS_REQUEST"
-            self._who = int(self._match.group("who"))
-            self._what = None
-            self._what_param = None
-            self._where = self._match.group("where")
-            self._where_param = self._match.group("where_param").split("#")
-            del self._where_param[0]
-            self._dimension = None
-            self._dimension_param = None
-            self._dimension_value = None
+            self._who = int(match.group("who"))
+            self._where = match.group("where")
+            self._where_param = (match.group("where_param") or "").split("#")[1:]
 
-        elif self._DIMENSION_REQUEST.match(self._raw):
+        elif match := self._DIMENSION_REQUEST.match(self._raw):
             self._is_valid_message = True
-            self._match = self._DIMENSION_REQUEST.match(self._raw)
+            self._match = match
             self._family = "REQUEST"
             self._message_type = "DIMENSION_REQUEST"
-            self._who = int(self._match.group("who"))
-            self._what = None
-            self._what_param = None
-            self._where = self._match.group("where")
-            self._where_param = self._match.group("where_param").split("#")
-            del self._where_param[0]
-            self._dimension = int(self._match.group("dimension"))
-            self._dimension_param = None
-            self._dimension_value = None
+            self._who = int(match.group("who"))
+            self._where = match.group("where") or ""
+            self._where_param = (match.group("where_param") or "").split("#")[1:]
+            self._dimension = int(match.group("dimension"))
 
-        elif self._DIMENSION_REQUEST_REPLY.match(self._raw):
+        elif match := self._DIMENSION_REQUEST_REPLY.match(self._raw):
             self._is_valid_message = True
-            self._match = self._DIMENSION_REQUEST_REPLY.match(self._raw)
+            self._match = match
             self._family = "EVENT"
             self._message_type = "DIMENSION_REQUEST_REPLY"
-            self._who = int(self._match.group("who"))
-            self._what = None
-            self._what_param = None
-            self._where = self._match.group("where")
-            self._where_param = self._match.group("where_param").split("#")
-            del self._where_param[0]
-            self._dimension = int(self._match.group("dimension"))
-            self._dimension_param = self._match.group("dimension_param").split("#")
-            del self._dimension_param[0]
-            self._dimension_value = self._match.group("dimension_value").split("*")
-            del self._dimension_value[0]
+            self._who = int(match.group("who"))
+            self._where = match.group("where") or ""
+            self._where_param = (match.group("where_param") or "").split("#")[1:]
+            self._dimension = int(match.group("dimension"))
+            self._dimension_param = (match.group("dimension_param") or "").split("#")[1:]
+            self._dimension_value = match.group("dimension_value").split("*")[1:]
 
-        elif self._DIMENSION_WRITING.match(self._raw):
+        elif match := self._DIMENSION_WRITING.match(self._raw):
             self._is_valid_message = True
-            self._match = self._DIMENSION_WRITING.match(self._raw)
+            self._match = match
             self._family = "COMMAND"
             self._message_type = "DIMENSION_WRITING"
-            self._who = int(self._match.group("who"))
-            self._what = None
-            self._what_param = None
-            self._where = self._match.group("where")
-            self._where_param = self._match.group("where_param").split("#")
-            del self._where_param[0]
-            self._dimension = int(self._match.group("dimension"))
-            self._dimension_param = self._match.group("dimension_param").split("#")
-            del self._dimension_param[0]
-            self._dimension_value = self._match.group("dimension_value").split("*")
-            del self._dimension_value[0]
+            self._who = int(match.group("who"))
+            self._where = match.group("where") or ""
+            self._where_param = (match.group("where_param") or "").split("#")[1:]
+            self._dimension = int(match.group("dimension"))
+            self._dimension_param = (match.group("dimension_param") or "").split("#")[1:]
+            self._dimension_value = match.group("dimension_value").split("*")[1:]
 
     @classmethod
-    def parse(cls, data) -> Optional[OWNMessage]:
+    def parse(cls, data) -> OWNMessage | None:
         if (
             cls._ACK.match(data)
             or cls._NACK.match(data)
@@ -165,16 +190,15 @@ class OWNMessage:
             or cls._SHA.match(data)
         ):
             return OWNSignaling(data)
-        elif cls._STATUS.match(data) or cls._DIMENSION_REQUEST_REPLY.match(data):
+        if cls._STATUS.match(data) or cls._DIMENSION_REQUEST_REPLY.match(data):
             return OWNEvent.parse(data)
-        elif (
+        if (
             cls._STATUS_REQUEST.match(data)
             or cls._DIMENSION_REQUEST.match(data)
             or cls._DIMENSION_WRITING.match(data)
         ):
             return OWNCommand.parse(data)
-        else:
-            return None
+        return None
 
     @property
     def is_event(self) -> bool:
@@ -197,29 +221,29 @@ class OWNMessage:
         return self._is_valid_message
 
     @property
-    def who(self) -> int:
+    def who(self) -> int | None:
         """The 'who' ID of the subject of this message"""
         return self._who
 
     @property
-    def where(self) -> str:
+    def where(self) -> str | None:
         """The 'where' ID of the subject of this message"""
         return self._where  # [1:] if self._where.startswith('#') else self._where
 
     @property
-    def interface(self) -> str:
+    def interface(self) -> str | None:
         """The 'where' parameter corresponding to the bus interface of the subject of this message"""
         return (
             self._where_param[1]
             if self._who in [1, 2, 15]
-            and len(self._where_param) > 0
+            and len(self._where_param) > 1
             and self._where_param[0] == "4"
             else None
         )
 
     @property
-    def dimension(self) -> str:
-        """The 'where' ID of the subject of this message"""
+    def dimension(self) -> int | None:
+        """The 'dimension' ID of this message"""
         return self._dimension
 
     @property
@@ -230,6 +254,8 @@ class OWNMessage:
     @property
     def unique_id(self) -> str:
         """The ID of the subject of this message"""
+        if self.where is None:
+            return str(self.who)
         return (
             f"{self.who}-{self.where}#4#{self.interface}"
             if self.interface is not None
@@ -237,11 +263,11 @@ class OWNMessage:
         )
 
     @property
-    def event_content(self) -> dict:
-        _event = {
+    def event_content(self) -> dict[str, Any]:
+        _event: dict[str, Any] = {
             "message": self._raw,
             "family": self._family.replace("_", " ").capitalize(),
-            "type": self._message_type.replace("_", " ").capitalize(),
+            "type": (self._message_type or "").replace("_", " ").capitalize(),
             "who": self._who,
         }
         if self._where:
@@ -252,11 +278,13 @@ class OWNMessage:
                 _event.update({"where parameters": self._where_param[2:]})
         elif self._where_param:
             _event.update({"where parameters": self._where_param})
-        if self._what:
+        # Explicit None checks: 0 is meaningful (what=0 is OFF, dimension=0
+        # is temperature) and must not be dropped from the event payload.
+        if self._what is not None:
             _event.update({"what": self._what})
         if self._what_param:
             _event.update({"what parameters": self._what_param})
-        if self._dimension:
+        if self._dimension is not None:
             _event.update({"dimension": self._dimension})
         if self._dimension_param:
             _event.update({"dimension parameters": self._dimension_param})
@@ -277,55 +305,44 @@ class OWNMessage:
     @property
     def is_general(self) -> bool:
         if self.who == 1 or self.who == 2:
-            if self._where == "0":
-                return True
-        else:
-            return False
+            return self._where == "0"
+        return False
 
     @property
     def is_group(self) -> bool:
         if self.who == 1 or self.who == 2:
-            if self._where.startswith("#"):
-                return True
-            else:
-                return False
-        else:
-            return False
+            return self._where is not None and self._where.startswith("#")
+        return False
 
     @property
     def is_area(self) -> bool:
         if self.who == 1 or self.who == 2:
             try:
-                if (
+                return (
                     self._where == "00"
                     or self._where == "100"
                     or (
-                        len(self._where) == 1
+                        self._where is not None
+                        and len(self._where) == 1
                         and int(self._where) > 0
                         and int(self._where) < 10
                     )
-                ):
-                    return True
-                else:
-                    return False
-            except ValueError:
+                )
+            except (TypeError, ValueError):
                 return False
-        else:
-            return False
+        return False
 
     @property
-    def group(self) -> int:
+    def group(self) -> int | None:
         if self.is_group:
             return int(self._where[1:])
-        else:
-            return None
+        return None
 
     @property
-    def area(self) -> int:
+    def area(self) -> int | None:
         if self.is_area:
             return 10 if self._where == "100" else int(self._where)
-        else:
-            return None
+        return None
 
     def __repr__(self) -> str:
         return self._raw
@@ -342,40 +359,47 @@ class OWNEvent(OWNMessage):
     """
 
     @classmethod
-    def parse(cls, data) -> Optional[OWNEvent]:
-        _match = re.match(r"^\*#?(?P<who>\d+)\*.+##$", data)
+    def parse(cls, data) -> OWNEvent | None:
+        _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.+)?##$", data)
 
         if _match:
             _who = int(_match.group("who"))
 
             if _who == 0:
                 return OWNScenarioEvent(data)
-            elif _who == 1:
+            if _who == 1:
                 return OWNLightingEvent(data)
-            elif _who == 2:
+            if _who == 2:
                 return OWNAutomationEvent(data)
-            elif _who == 4:
+            if _who == 4:
                 return OWNHeatingEvent(data)
-            elif _who == 5:
+            if _who == 5:
                 return OWNAlarmEvent(data)
-            elif _who == 9:
+            if _who == 9:
                 return OWNAuxEvent(data)
-            elif _who == 13:
+            if _who == 13:
                 return OWNGatewayEvent(data)
-            elif _who == 15:
+            if _who == 15:
                 return OWNCENEvent(data)
-            elif _who == 17:
+            if _who == 16:
+                return OWNSoundEvent(data)
+            if _who == 17:
                 return OWNSceneEvent(data)
-            elif _who == 18:
+            if _who == 18:
                 return OWNEnergyEvent(data)
-            elif _who == 25:
-                _where = re.match(r"^\*.+\*(?P<where>\d+)##$", data).group("where")
-                if _where.startswith("2"):
-                    return OWNCENPlusEvent(data)
-                elif _where.startswith("3"):
+            if _who == 25:
+                if data.startswith("*#"):
                     return OWNDryContactEvent(data)
-            elif _who > 1000:
-                return cls(data)
+                parts = data.strip("#").split("*")
+                what_part = parts[2] if len(parts) > 2 else ""
+                try:
+                    what_code = int(what_part.split("#")[0])
+                except ValueError:
+                    what_code = None
+                if what_code is not None and 21 <= what_code <= 28:
+                    return OWNCENPlusEvent(data)
+                return OWNDryContactEvent(data)
+            return cls(data)
 
         return None
 
@@ -401,17 +425,17 @@ class OWNLightingEvent(OWNEvent):
     def __init__(self, data):
         super().__init__(data)
 
-        self._type = None
-        self._state = None
-        self._brightness = None
-        self._brightness_preset = None
-        self._transition = None
-        self._timer = None
-        self._blinker = None
-        self._illuminance = None
-        self._motion = False
-        self._pir_sensitivity = None
-        self._motion_timeout = None
+        self._type: str | None = None
+        self._state: int | None = None
+        self._brightness: int | None = None
+        self._brightness_preset: int | None = None
+        self._transition: int | None = None
+        self._timer: float | None = None
+        self._blinker: float | None = None
+        self._illuminance: int | None = None
+        self._motion: bool = False
+        self._pir_sensitivity: int | None = None
+        self._motion_timeout: datetime.timedelta | None = None
 
         if self._what is not None and self._what != 1000:
             self._state = self._what
@@ -460,10 +484,15 @@ class OWNLightingEvent(OWNEvent):
                 self._motion = True
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} detected motion"
 
-        if self._dimension is not None:
+        if self._dimension is not None and self._dimension_value:
             if self._dimension == 1 or self._dimension == 4:  # Brightness value
                 self._brightness = int(self._dimension_value[0]) - 100
-                self._transition = int(self._dimension_value[1])
+                # Some gateways omit the transition speed in the reply.
+                self._transition = (
+                    int(self._dimension_value[1])
+                    if len(self._dimension_value) > 1
+                    else None
+                )
                 if self._brightness == 0:
                     self._state = 0
                     self._human_readable_log = f"Light {self._where}{self._interface_log_text} is switched off."
@@ -480,7 +509,12 @@ class OWNLightingEvent(OWNEvent):
             elif self._dimension == 5:  # PIR sensitivity
                 self._type = MESSAGE_TYPE_PIR_SENSITIVITY
                 self._pir_sensitivity = int(self._dimension_value[0])
-                self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} PIR sesitivity is {PIR_SENSITIVITY_MAPPING[self._pir_sensitivity]}."  # pylint: disable=line-too-long
+                _sensitivity = (
+                    PIR_SENSITIVITY_MAPPING[self._pir_sensitivity]
+                    if 0 <= self._pir_sensitivity < len(PIR_SENSITIVITY_MAPPING)
+                    else f"unknown ({self._pir_sensitivity})"
+                )
+                self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} PIR sensitivity is {_sensitivity}."  # pylint: disable=line-too-long
             elif self._dimension == 6:  # Illuminance value
                 self._type = MESSAGE_TYPE_ILLUMINANCE
                 self._illuminance = int(self._dimension_value[0])
@@ -493,10 +527,8 @@ class OWNLightingEvent(OWNEvent):
                     seconds=int(self._dimension_value[2]),
                 )
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} has timeout set to {self._motion_timeout}."  # pylint: disable=line-too-long
-            elif self._dimension_value is not None:
+            elif self._dimension_value:
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} has sent an unknown dimension {self._dimension}."
-            else:
-                pass
 
     @property
     def message_type(self):
@@ -515,8 +547,26 @@ class OWNLightingEvent(OWNEvent):
         return self._transition
 
     @property
-    def is_on(self) -> bool:
+    def is_on(self) -> bool | None:
+        """True/False when the on/off state is known, None otherwise (e.g. a
+        reply carrying only a dimension such as illuminance or a timer)."""
+        if self._state is None:
+            return None
         return 0 < self._state < 32
+
+    @property
+    def is_sensor(self) -> bool:
+        return (
+            self._state == 34
+            or (self._dimension is not None and self._dimension in (5, 6, 7))
+            or self._type
+            in (
+                MESSAGE_TYPE_MOTION,
+                MESSAGE_TYPE_ILLUMINANCE,
+                MESSAGE_TYPE_PIR_SENSITIVITY,
+                MESSAGE_TYPE_MOTION_TIMEOUT,
+            )
+        )
 
     @property
     def timer(self):
@@ -539,7 +589,7 @@ class OWNLightingEvent(OWNEvent):
         return self._pir_sensitivity
 
     @property
-    def motion_timeout(self) -> datetime.timedelta:
+    def motion_timeout(self) -> datetime.timedelta | None:
         return self._motion_timeout
 
 
@@ -558,12 +608,30 @@ class OWNAutomationEvent(OWNEvent):
         if self._what is not None and self._what != 1000:
             self._state = self._what
 
-        if self._dimension is not None:
-            if self._dimension == 10:
-                self._state = int(self._dimension_value[0])
-                self._position = int(self._dimension_value[1])
-                self._priority = int(self._dimension_value[2])
-                self._info = int(self._dimension_value[3])
+        if self._dimension == 10:
+            try:
+                self._state = (
+                    int(self._dimension_value[0])
+                    if len(self._dimension_value) > 0 and self._dimension_value[0]
+                    else None
+                )
+                self._position = (
+                    int(self._dimension_value[1])
+                    if len(self._dimension_value) > 1 and self._dimension_value[1]
+                    else None
+                )
+                self._priority = (
+                    int(self._dimension_value[2])
+                    if len(self._dimension_value) > 2 and self._dimension_value[2]
+                    else None
+                )
+                self._info = (
+                    int(self._dimension_value[3])
+                    if len(self._dimension_value) > 3 and self._dimension_value[3]
+                    else None
+                )
+            except (IndexError, TypeError, ValueError):
+                pass
 
         if self._state == 0:
             self._human_readable_log = (
@@ -582,29 +650,28 @@ class OWNAutomationEvent(OWNEvent):
             else:
                 self._human_readable_log = f"Cover {self._where}{self._interface_log_text} is opened at {self._position}%."
                 self._is_closed = False
-        else:
-            if self._state == 1:
-                self._human_readable_log = (
-                    f"Cover {self._where}{self._interface_log_text} is opening."
-                )
-                self._is_opening = True
-                self._is_closing = False
-            elif self._state == 11 or self._state == 13:
-                self._human_readable_log = f"Cover {self._where}{self._interface_log_text} is opening from initial position {self._position}."  # pylint: disable=line-too-long
-                self._is_opening = True
-                self._is_closing = False
-                self._is_closed = False
-            elif self._state == 2:
-                self._human_readable_log = (
-                    f"Cover {self._where}{self._interface_log_text} is closing."
-                )
-                self._is_closing = True
-                self._is_opening = False
-            elif self._state == 12 or self._state == 14:
-                self._human_readable_log = f"Cover {self._where}{self._interface_log_text} is closing from initial position {self._position}."  # pylint: disable=line-too-long
-                self._is_closing = True
-                self._is_opening = False
-                self._is_closed = False
+        elif self._state == 1:
+            self._human_readable_log = (
+                f"Cover {self._where}{self._interface_log_text} is opening."
+            )
+            self._is_opening = True
+            self._is_closing = False
+        elif self._state == 11 or self._state == 13:
+            self._human_readable_log = f"Cover {self._where}{self._interface_log_text} is opening from initial position {self._position}."  # pylint: disable=line-too-long
+            self._is_opening = True
+            self._is_closing = False
+            self._is_closed = False
+        elif self._state == 2:
+            self._human_readable_log = (
+                f"Cover {self._where}{self._interface_log_text} is closing."
+            )
+            self._is_closing = True
+            self._is_opening = False
+        elif self._state == 12 or self._state == 14:
+            self._human_readable_log = f"Cover {self._where}{self._interface_log_text} is closing from initial position {self._position}."  # pylint: disable=line-too-long
+            self._is_closing = True
+            self._is_opening = False
+            self._is_closed = False
 
     @property
     def state(self):
@@ -648,6 +715,8 @@ class OWNHeatingEvent(OWNEvent):
         self._mode_name = None
         self._set_temperature = None
         self._local_offset = None
+        self._local_offset_raw = None
+        self._local_control_state = None
         self._local_set_temperature = None
         self._measured_temperature = None
         self._secondary_temperature = None
@@ -745,12 +814,13 @@ class OWNHeatingEvent(OWNEvent):
                 self._human_readable_log = f"Zone {self._zone}'s secondary sensor {self._sensor} is reporting a temperature of {self._secondary_temperature}°C."  # pylint: disable=line-too-long
 
         elif self._dimension == 11:  # Fan speed
+            self._type = MESSAGE_TYPE_FAN_SPEED
             _fan_mode = int(self._dimension_value[0])
             if _fan_mode < 4:
                 self._fan_on = True
                 self._is_active = True
+                self._fan_speed = _fan_mode
                 if _fan_mode > 0:
-                    self._fan_speed = _fan_mode
                     self._human_readable_log = (
                         f"Zone {self._zone}'s fan is on at speed {self._fan_speed}."
                     )
@@ -772,23 +842,30 @@ class OWNHeatingEvent(OWNEvent):
 
         elif self._dimension == 13:  # Local offset
             self._type = MESSAGE_TYPE_LOCAL_OFFSET
-            if (
-                self._dimension_value[0] == "0"
-                or self._dimension_value[0] == "00"
-                or self._dimension_value[0] == "4"
-                or self._dimension_value[0] == "5"
-                or self._dimension_value[0] == "6"
-                or self._dimension_value[0] == "7"
-                or self._dimension_value[0] == "8"
-            ):
+            self._local_offset_raw = self._dimension_value[0]
+            if self._local_offset_raw in ("0", "00"):
                 self._local_offset = 0
-            elif self._dimension_value[0].startswith("0"):
-                self._local_offset = int(f"{self._dimension_value[0][1:]}")
+                self._local_control_state = LOCAL_CONTROL_NORMAL
+            elif self._local_offset_raw in ("01", "02", "03"):
+                self._local_offset = int(self._local_offset_raw[1:])
+                self._local_control_state = LOCAL_CONTROL_OFFSET
+            elif self._local_offset_raw in ("11", "12", "13"):
+                self._local_offset = -int(self._local_offset_raw[1:])
+                self._local_control_state = LOCAL_CONTROL_OFFSET
+            elif self._local_offset_raw == "4":
+                self._local_control_state = LOCAL_CONTROL_OFF
+            elif self._local_offset_raw == "5":
+                self._local_control_state = LOCAL_CONTROL_PROTECTION
+            elif self._local_offset_raw == "6":
+                # Observed on 3550 systems when the local/manual override is active.
+                self._local_control_state = LOCAL_CONTROL_OVERRIDE
             else:
-                self._local_offset = -int(f"{self._dimension_value[0][1:]}")
-            self._human_readable_log = (
-                f"Zone {self._zone}'s local offset is set to {self._local_offset}°C."
-            )
+                self._local_control_state = LOCAL_CONTROL_UNKNOWN
+
+            if self._local_offset is not None:
+                self._human_readable_log = f"Zone {self._zone}'s local offset is set to {self._local_offset}°C."
+            else:
+                self._human_readable_log = f"Zone {self._zone}'s local control state is '{self._local_control_state}' (raw value {self._local_offset_raw})."
 
         elif self._dimension == 14:  # Set temperature
             self._type = MESSAGE_TYPE_TARGET_TEMPERATURE
@@ -913,10 +990,9 @@ class OWNHeatingEvent(OWNEvent):
         """The ID of the subject of this message"""
         if self._zone == 0:
             return f"{self._who}-#0"
-        elif self._sensor is not None:
+        if self._sensor is not None:
             return f"{self._who}-{self._where}"
-        else:
-            return f"{self._who}-{self._zone}"
+        return f"{self._who}-{self._zone}"
 
     @property
     def message_type(self):
@@ -927,24 +1003,24 @@ class OWNHeatingEvent(OWNEvent):
         return self._zone
 
     @property
-    def mode(self) -> str:
+    def mode(self) -> str | None:
         return self._mode_name
 
-    def is_active(self) -> bool:
+    def is_active(self) -> bool | None:
         return self._is_active
 
-    def is_heating(self) -> bool:
+    def is_heating(self) -> bool | None:
         return self._is_heating
 
-    def is_cooling(self) -> bool:
+    def is_cooling(self) -> bool | None:
         return self._is_cooling
 
     @property
-    def main_temperature(self) -> float:
+    def main_temperature(self) -> float | None:
         return self._measured_temperature
 
     @property
-    def main_humidity(self) -> float:
+    def main_humidity(self) -> float | None:
         return self._measured_humidity
 
     @property
@@ -952,27 +1028,45 @@ class OWNHeatingEvent(OWNEvent):
         return [self._sensor, self._secondary_temperature]
 
     @property
-    def set_temperature(self) -> float:
+    def set_temperature(self) -> float | None:
         return self._set_temperature
 
     @property
-    def local_offset(self) -> int:
+    def local_offset(self) -> int | None:
         return self._local_offset
 
     @property
-    def local_set_temperature(self) -> float:
+    def local_offset_raw(self) -> str | None:
+        return self._local_offset_raw
+
+    @property
+    def local_control_state(self) -> str | None:
+        return self._local_control_state
+
+    @property
+    def local_set_temperature(self) -> float | None:
         return self._local_set_temperature
+
+    @property
+    def fan_speed(self):
+        return self._fan_speed
+
+    @property
+    def fan_on(self):
+        return self._fan_on
 
 
 class OWNAlarmEvent(OWNEvent):
     def __init__(self, data):
         super().__init__(data)
 
-        self._state_code = int(self._what)
-        self._state = None
+        # Dimension replies carry no WHAT: never crash the constructor on it.
+        self._state_code = int(self._what) if self._what is not None else -1
+        self._state: str | None = None
         self._system = False
-        self._zone = None
-        self._sensor = None
+        # Zone may be a letter ("c", "f"), a number, or None (system-wide).
+        self._zone: str | int | None = None
+        self._sensor: int | None = None
 
         if self._where == "*":
             self._system = True
@@ -1067,6 +1161,26 @@ class OWNAlarmEvent(OWNEvent):
         return self._state_code == 8
 
     @property
+    def is_disarmed(self):
+        return self._state_code in (0, 2, 9)
+
+    @property
+    def is_armed_away(self):
+        return self._state_code in (1, 8)
+
+    @property
+    def is_armed_home(self):
+        return self._state_code == 11
+
+    @property
+    def state_name(self):
+        return self._state
+
+    @property
+    def state_code(self):
+        return self._state_code
+
+    @property
     def is_alarm(self):
         return (
             self._state_code == 12
@@ -1086,47 +1200,47 @@ class OWNAuxEvent(OWNEvent):
         self._state = self._what
         if self._state == 0:
             self._human_readable_log = (
-                f"Auxilliary channel {self._channel} is set to 'OFF'."
+                f"Auxiliary channel {self._channel} is set to 'OFF'."
             )
         elif self._state == 1:
             self._human_readable_log = (
-                f"Auxilliary channel {self._channel} is set to 'ON'."
+                f"Auxiliary channel {self._channel} is set to 'ON'."
             )
         elif self._state == 2:
             self._human_readable_log = (
-                f"Auxilliary channel {self._channel} is set to 'TOGGLE'."
+                f"Auxiliary channel {self._channel} is set to 'TOGGLE'."
             )
         elif self._state == 3:
             self._human_readable_log = (
-                f"Auxilliary channel {self._channel} is set to 'STOP'."
+                f"Auxiliary channel {self._channel} is set to 'STOP'."
             )
         elif self._state == 4:
             self._human_readable_log = (
-                f"Auxilliary channel {self._channel} is set to 'UP'."
+                f"Auxiliary channel {self._channel} is set to 'UP'."
             )
         elif self._state == 5:
             self._human_readable_log = (
-                f"Auxilliary channel {self._channel} is set to 'DOWN'."
+                f"Auxiliary channel {self._channel} is set to 'DOWN'."
             )
         elif self._state == 6:
             self._human_readable_log = (
-                f"Auxilliary channel {self._channel} is set to 'ENABLED'."
+                f"Auxiliary channel {self._channel} is set to 'ENABLED'."
             )
         elif self._state == 7:
             self._human_readable_log = (
-                f"Auxilliary channel {self._channel} is set to 'DISABLED'."
+                f"Auxiliary channel {self._channel} is set to 'DISABLED'."
             )
         elif self._state == 8:
             self._human_readable_log = (
-                f"Auxilliary channel {self._channel} is set to 'RESET_GEN'."
+                f"Auxiliary channel {self._channel} is set to 'RESET_GEN'."
             )
         elif self._state == 9:
             self._human_readable_log = (
-                f"Auxilliary channel {self._channel} is set to 'RESET_BI'."
+                f"Auxiliary channel {self._channel} is set to 'RESET_BI'."
             )
         elif self._state == 10:
             self._human_readable_log = (
-                f"Auxilliary channel {self._channel} is set to 'RESET_TRI'."
+                f"Auxiliary channel {self._channel} is set to 'RESET_TRI'."
             )
 
     @property
@@ -1170,20 +1284,19 @@ class OWNGatewayEvent(OWNEvent):
         self._kernel_version = None
         self._distribution_version = None
 
+        _validate_gateway_clock_values(self._dimension, self._dimension_value)
+
         if self._dimension == 0:
             self._hour = self._dimension_value[0]
             self._minute = self._dimension_value[1]
             self._second = self._dimension_value[2]
-            # Timezone is sometimes missing from messages, assuming UTC
-            if self._dimension_value[3] != "":
-                self._timezone = (
-                    f"+{self._dimension_value[3][1:]}:00"
-                    if self._dimension_value[3][0] == "0"
-                    else f"-{self._dimension_value[3][1:]}:00"
-                )
-            else:
-                self._timezone = ""
-            self._human_readable_log = f"Gateway's internal time is: {self._hour}:{self._minute}:{self._second} UTC {self._timezone}."  # pylint: disable=line-too-long
+            self._timezone = _gateway_timezone(self._dimension_value)
+            self._time = datetime.time.fromisoformat(
+                f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
+            )
+            self._human_readable_log = (
+                f"Gateway's internal time is: {self._time}."
+            )
 
         elif self._dimension == 1:
             self._year = self._dimension_value[3]
@@ -1193,22 +1306,24 @@ class OWNGatewayEvent(OWNEvent):
                 year=int(self._year), month=int(self._month), day=int(self._day)
             )
             self._human_readable_log = (
-                f"Gateway's internal date is: {self._year}-{self._month}-{self._day}."
+                f"Gateway's internal date is: {self._date}."
             )
-
-        elif self._dimension == 10:
+        elif self._dimension == 10 and len(self._dimension_value) >= 4:
             self._ip_address = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}.{self._dimension_value[3]}"  # pylint: disable=line-too-long
             self._human_readable_log = f"Gateway's IP address is: {self._ip_address}."
 
-        elif self._dimension == 11:
+        elif self._dimension == 11 and len(self._dimension_value) >= 4:
             self._netmask = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}.{self._dimension_value[3]}"  # pylint: disable=line-too-long
             self._human_readable_log = f"Gateway's netmask is: {self._netmask}."
 
-        elif self._dimension == 12:
-            self._mac_address = f"{int(self._dimension_value[0]):02x}:{int(self._dimension_value[1]):02x}:{int(self._dimension_value[2]):02x}:{int(self._dimension_value[3]):02x}:{int(self._dimension_value[4]):02x}:{int(self._dimension_value[5]):02x}"  # pylint: disable=line-too-long
-            self._human_readable_log = f"Gateway's MAC address is: {self._mac_address}."
+        elif self._dimension == 12 and len(self._dimension_value) >= 6:
+            try:
+                self._mac_address = f"{int(self._dimension_value[0]):02x}:{int(self._dimension_value[1]):02x}:{int(self._dimension_value[2]):02x}:{int(self._dimension_value[3]):02x}:{int(self._dimension_value[4]):02x}:{int(self._dimension_value[5]):02x}"  # pylint: disable=line-too-long
+                self._human_readable_log = f"Gateway's MAC address is: {self._mac_address}."
+            except (IndexError, TypeError, ValueError):
+                pass
 
-        elif self._dimension == 15:
+        elif self._dimension == 15 and self._dimension_value:
             if self._dimension_value[0] == "2":
                 self._device_type = "MHServer"
             elif self._dimension_value[0] == "4":
@@ -1227,51 +1342,49 @@ class OWNGatewayEvent(OWNEvent):
                 self._device_type = f"Unknown ({self._dimension_value[0]})"
             self._human_readable_log = f"Gateway device type is: {self._device_type}."
 
-        elif self._dimension == 16:
+        elif self._dimension == 16 and len(self._dimension_value) >= 3:
             self._firmware_version = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}"  # pylint: disable=line-too-long
             self._human_readable_log = (
                 f"Gateway's firmware version is: {self._firmware_version}."
             )
 
-        elif self._dimension == 19:
-            self._uptime = datetime.timedelta(
-                days=int(self._dimension_value[0]),
-                hours=int(self._dimension_value[1]),
-                minutes=int(self._dimension_value[2]),
-                seconds=int(self._dimension_value[3]),
-            )
-            self._human_readable_log = f"Gateway's uptime is: {self._uptime}."
+        elif (
+            self._dimension == 19
+            and len(self._dimension_value) >= 4
+            and all(self._dimension_value[:4])
+        ):
+            try:
+                self._uptime = datetime.timedelta(
+                    days=int(self._dimension_value[0]),
+                    hours=int(self._dimension_value[1]),
+                    minutes=int(self._dimension_value[2]),
+                    seconds=int(self._dimension_value[3]),
+                )
+                self._human_readable_log = f"Gateway's uptime is: {self._uptime}."
+            except (IndexError, TypeError, ValueError):
+                pass
 
         elif self._dimension == 22:
             self._hour = self._dimension_value[0]
             self._minute = self._dimension_value[1]
             self._second = self._dimension_value[2]
-            # Timezone is sometimes missing from messages, assuming UTC
-            if self._dimension_value[3] != "":
-                self._timezone = (
-                    f"+{self._dimension_value[3][1:]}:00"
-                    if self._dimension_value[3][0] == "0"
-                    else f"-{self._dimension_value[3][1:]}:00"
-                )
-            else:
-                self._timezone = ""
+            self._timezone = _gateway_timezone(self._dimension_value)
             self._day = self._dimension_value[5]
             self._month = self._dimension_value[6]
             self._year = self._dimension_value[7]
             self._datetime = datetime.datetime.fromisoformat(
-                f"{self._year}-{self._month}-{self._day}*{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
+                f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
             )
             self._human_readable_log = (
                 f"Gateway's internal datetime is: {self._datetime}."
             )
-
-        elif self._dimension == 23:
+        elif self._dimension == 23 and len(self._dimension_value) >= 3:
             self._kernel_version = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}"  # pylint: disable=line-too-long
             self._human_readable_log = (
                 f"Gateway's kernel version is: {self._kernel_version}."
             )
 
-        elif self._dimension == 24:
+        elif self._dimension == 24 and len(self._dimension_value) >= 3:
             self._distribution_version = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}"  # pylint: disable=line-too-long
             self._human_readable_log = (
                 f"Gateway's distribution version is: {self._distribution_version}."
@@ -1282,10 +1395,7 @@ class OWNCENEvent(OWNEvent):
     def __init__(self, data):
         super().__init__(data)
 
-        try:
-            self._state = self._what_param[0]
-        except IndexError:
-            self._state = None
+        self._state: str | None = self._what_param[0] if self._what_param else None
         self.push_button = self._what
         self.object = self._where
 
@@ -1304,15 +1414,15 @@ class OWNCENEvent(OWNEvent):
 
     @property
     def is_held(self):
-        return int(self._state) == 3
+        return self._state is not None and int(self._state) == 3
 
     @property
     def is_released_after_short_press(self):
-        return int(self._state) == 1
+        return self._state is not None and int(self._state) == 1
 
     @property
     def is_released_after_long_press(self):
-        return int(self._state) == 2
+        return self._state is not None and int(self._state) == 2
 
 
 class OWNSceneEvent(OWNEvent):
@@ -1325,13 +1435,13 @@ class OWNSceneEvent(OWNEvent):
         if self._state == 1:
             _status = "started"
         elif self._state == 2:
-            _status = "stoped"
+            _status = "stopped"
         elif self._state == 3:
             _status = "enabled"
         elif self._state == 4:
             _status = "disabled"
         else:
-            _status = f"unknonwn ({self._state})"
+            _status = f"unknown ({self._state})"
 
         self._human_readable_log = f"Scene {self._scene} is {_status}."
 
@@ -1347,51 +1457,51 @@ class OWNSceneEvent(OWNEvent):
     def is_on(self):
         if self._state == 1:
             return True
-        elif self._state == 2:
+        if self._state == 2:
             return False
-        else:
-            return None
+        return None
 
     @property
     def is_enabled(self):
         if self._state == 3:
             return True
-        elif self._state == 4:
+        if self._state == 4:
             return False
-        else:
-            return None
+        return None
 
 
 class OWNEnergyEvent(OWNEvent):
     def __init__(self, data):
         super().__init__(data)
 
-        if not self._where.startswith("5") and not self._where.startswith("7"):
-            return None
-
-        self._type = None
-        self._sensor = self._where[1:]
+        self._type: str | None = None
+        where = self._where or ""
+        self._sensor = where[1:] if len(where) > 1 else where
         self._active_power = 0
         self._total_consumption = 0
-        self._hourly_consumption = dict()
-        self._daily_consumption = dict()
+        # Values are heterogeneous: dates, hours (int) and Wh readings (int).
+        self._hourly_consumption: dict[str, Any] = {}
+        self._daily_consumption: dict[str, Any] = {}
         self._current_day_partial_consumption = 0
-        self._monthly_consumption = dict()
+        self._monthly_consumption: dict[str, Any] = {}
         self._current_month_partial_consumption = 0
+
+        if not where.startswith(("1", "5", "7")):
+            return
 
         if self._dimension is not None:
             if self._dimension == 113:
                 self._type = MESSAGE_TYPE_ACTIVE_POWER
-                self._active_power = int(self._dimension_value[0])
+                self._active_power = _integer_value(self._dimension_value, 0)
                 self._human_readable_log = f"Sensor {self._sensor} is reporting an active power draw of {self._active_power} W."  # pylint: disable=line-too-long
             elif self._dimension == 511:
                 _now = datetime.date.today()
-                _raw_message_date = datetime.date(
-                    _now.year,
-                    int(self._dimension_param[0]),
-                    int(self._dimension_param[1]),
-                )
                 try:
+                    _raw_message_date = datetime.date(
+                        _now.year,
+                        int(self._dimension_param[0]),
+                        int(self._dimension_param[1]),
+                    )
                     if _raw_message_date > _now:
                         _message_date = datetime.date(
                             _now.year - 1,
@@ -1399,14 +1509,16 @@ class OWNEnergyEvent(OWNEvent):
                             int(self._dimension_param[1]),
                         )
                     else:
-                        _message_date = datetime.date(
-                            _now.year,
-                            int(self._dimension_param[0]),
-                            int(self._dimension_param[1]),
-                        )
-                except ValueError:
-                    return None
+                        _message_date = _raw_message_date
+                except (ValueError, IndexError):
+                    # Invalid date for the current year (e.g. Feb 29) or
+                    # missing parameters: drop the sample, keep the session.
+                    return
 
+                if len(self._dimension_value) < 2 or not all(
+                    self._dimension_value[:2]
+                ):
+                    return
                 if int(self._dimension_value[0]) != 25:
                     self._type = MESSAGE_TYPE_HOURLY_CONSUMPTION
                     self._hourly_consumption["date"] = _message_date
@@ -1419,11 +1531,15 @@ class OWNEnergyEvent(OWNEvent):
                     self._daily_consumption["value"] = int(self._dimension_value[1])
                     self._human_readable_log = f"Sensor {self._sensor} is reporting a power consumption of {self._daily_consumption['value']} Wh for {self._daily_consumption['date']}."  # pylint: disable=line-too-long
             elif self._dimension == 513 or self._dimension == 514:
+                if len(self._dimension_value) < 2 or not all(
+                    self._dimension_value[:2]
+                ):
+                    return
                 _now = datetime.date.today()
-                _raw_message_date = datetime.date(
-                    _now.year, int(self._dimension_param[0]), 1
-                )
                 try:
+                    _raw_message_date = datetime.date(
+                        _now.year, int(self._dimension_param[0]), 1
+                    )
                     if self._dimension == 513 and _raw_message_date > _now:
                         _message_date = datetime.date(
                             _now.year - 1,
@@ -1449,36 +1565,53 @@ class OWNEnergyEvent(OWNEvent):
                             int(self._dimension_param[0]),
                             int(self._dimension_value[0]),
                         )
-                except ValueError:
-                    return None
+                except (ValueError, IndexError):
+                    return
                 self._type = MESSAGE_TYPE_DAILY_CONSUMPTION
                 self._daily_consumption["date"] = _message_date
                 self._daily_consumption["value"] = int(self._dimension_value[1])
                 self._human_readable_log = f"Sensor {self._sensor} is reporting a power consumption of {self._daily_consumption['value']} Wh for {self._daily_consumption['date']}."  # pylint: disable=line-too-long
             elif self._dimension == 51:
                 self._type = MESSAGE_TYPE_ENERGY_TOTALIZER
-                self._total_consumption = int(self._dimension_value[0])
+                self._total_consumption = _integer_value(self._dimension_value, 0)
                 self._human_readable_log = f"Sensor {self._sensor} is reporting a total power consumption of {self._total_consumption} Wh."  # pylint: disable=line-too-long
             elif self._dimension == 54:
                 self._type = MESSAGE_TYPE_CURRENT_DAY_CONSUMPTION
-                self._current_day_partial_consumption = int(self._dimension_value[0])
+                self._current_day_partial_consumption = _integer_value(
+                    self._dimension_value, 0
+                )
                 self._human_readable_log = f"Sensor {self._sensor} is reporting a power consumption of {self._current_day_partial_consumption} Wh up to now today."  # pylint: disable=line-too-long
             elif self._dimension == 52:
                 self._type = MESSAGE_TYPE_MONTHLY_CONSUMPTION
-                _message_date = datetime.date(
-                    int(f"20{self._dimension_param[0]}"), self._dimension_param[1], 1
-                )
+                try:
+                    # The month must be converted to int: passing the raw
+                    # string to datetime.date raises TypeError.
+                    _message_date = datetime.date(
+                        int(f"20{self._dimension_param[0]}"),
+                        int(self._dimension_param[1]),
+                        1,
+                    )
+                except (ValueError, IndexError):
+                    return
                 self._monthly_consumption["date"] = _message_date
-                self._monthly_consumption["value"] = int(self._dimension_value[0])
+                self._monthly_consumption["value"] = _integer_value(
+                    self._dimension_value, 0
+                )
                 self._human_readable_log = f"Sensor {self._sensor} is reporting a power consumption of {self._monthly_consumption['value']} Wh for {self._monthly_consumption['date'].strftime('%B %Y')}."  # pylint: disable=line-too-long
             elif self._dimension == 53:
                 self._type = MESSAGE_TYPE_CURRENT_MONTH_CONSUMPTION
-                self._current_month_partial_consumption = int(self._dimension_value[0])
+                self._current_month_partial_consumption = _integer_value(
+                    self._dimension_value, 0
+                )
                 self._human_readable_log = f"Sensor {self._sensor} is reporting a power consumption of {self._current_month_partial_consumption} Wh up to now this month."  # pylint: disable=line-too-long
 
     @property
     def message_type(self):
         return self._type
+
+    @property
+    def sensor(self):
+        return self._sensor
 
     @property
     def active_power(self):
@@ -1518,8 +1651,14 @@ class OWNDryContactEvent(OWNEvent):
         super().__init__(data)
 
         self._state = 1 if self._what == 31 else 0
-        self._detection = int(self._what_param[0])
-        self._sensor = self._where[1:]
+        try:
+            self._detection = int(self._what_param[0]) if self._what_param else 1
+        except (IndexError, TypeError, ValueError):
+            self._detection = 1
+        where = self._where or ""
+        self._sensor = (
+            where[1:] if len(where) > 1 and where.startswith("3") else where
+        )
 
         if self._detection == 1:
             self._human_readable_log = (
@@ -1535,6 +1674,10 @@ class OWNDryContactEvent(OWNEvent):
         return self._state == 1
 
     @property
+    def sensor(self):
+        return self._sensor
+
+    @property
     def is_detection(self):
         return self._detection == 1
 
@@ -1548,8 +1691,13 @@ class OWNCENPlusEvent(OWNEvent):
         super().__init__(data)
 
         self._state = self._what
-        self.push_button = int(self._what_param[0])
-        self.object = self._where[1:]
+        try:
+            push_button = int(self._what_param[0]) if self._what_param else 0
+            self.push_button = push_button if 0 <= push_button <= 31 else 0
+        except (IndexError, TypeError, ValueError):
+            self.push_button = 0
+        where = self._where or ""
+        self.object = where[1:] if len(where) > 1 and where.startswith("2") else where
 
         if self._state == 21:
             self._human_readable_log = f"Button {self.push_button} of CEN+ object {self.object} has been pressed"  # pylint: disable=line-too-long
@@ -1567,6 +1715,8 @@ class OWNCENPlusEvent(OWNEvent):
             self._human_readable_log = f"Button {self.push_button} of CEN+ object {self.object} has been slowly rotated counter-clockwise"  # pylint: disable=line-too-long
         elif self._state == 28:
             self._human_readable_log = f"Button {self.push_button} of CEN+ object {self.object} has been quickly rotated counter-clockwise"  # pylint: disable=line-too-long
+        else:
+            self._human_readable_log = f"Button {self.push_button} of CEN+ object {self.object} state is {self._state}."  # pylint: disable=line-too-long
 
     @property
     def is_short_pressed(self):
@@ -1605,6 +1755,69 @@ class OWNCENPlusEvent(OWNEvent):
         return self._human_readable_log
 
 
+class OWNSoundEvent(OWNEvent):
+    """State reported by a WHO 16 sound source or amplifier zone."""
+
+    def __init__(self, data):
+        super().__init__(data)
+
+        self._state = self._what
+        self._zone = self._where
+        self._is_source_event = (
+            len(self._zone) == 3
+            and self._zone.startswith("10")
+            and self._zone != "100"
+        )
+        self._source_id = (
+            str(int(self._zone) - 100) if self._is_source_event else None
+        )
+        self._volume: int | None = None
+
+        subject = (
+            f"Audio Source {self._source_id}"
+            if self._is_source_event
+            else f"Audio Zone {self._zone}"
+        )
+        if self._state in (0, 3):
+            self._human_readable_log = f"{subject} is switched ON."
+        elif self._state in (10, 13):
+            self._human_readable_log = f"{subject} is switched OFF."
+        elif self._state is not None:
+            self._human_readable_log = f"{subject} received command: {self._state}."
+        elif self._dimension == 1 and self._dimension_value:
+            try:
+                self._volume = int(self._dimension_value[0])
+            except ValueError:
+                return
+            self._human_readable_log = (
+                f"Audio zone {self._zone} volume is set to {self._volume}."
+            )
+
+    @property
+    def is_on(self) -> bool:
+        return self._state in (0, 3)
+
+    @property
+    def is_off(self) -> bool:
+        return self._state in (10, 13)
+
+    @property
+    def is_source_event(self) -> bool:
+        return self._is_source_event
+
+    @property
+    def source_id(self) -> str | None:
+        return self._source_id
+
+    @property
+    def zone(self) -> str:
+        return self._zone
+
+    @property
+    def volume(self) -> int | None:
+        return self._volume
+
+
 class OWNCommand(OWNMessage):
     """
     This class is a subclass of messages.
@@ -1613,56 +1826,73 @@ class OWNCommand(OWNMessage):
     """
 
     @classmethod
-    def parse(cls, data) -> Optional[OWNCommand]:
-        _match = re.match(r"^\*#?(?P<who>\d+)\*.+##$", data)
+    def parse(cls, data) -> OWNCommand | None:
+        _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.+)?##$", data)
 
         if _match:
             _who = int(_match.group("who"))
 
             if _who == 0:
                 return cls(data)
-            elif _who == 1:
+            if _who == 1:
                 return OWNLightingCommand(data)
-            elif _who == 2:
+            if _who == 2:
                 return OWNAutomationCommand(data)
-            elif _who == 3:  # Charges / Loads ?
+            if _who == 3:  # Charges / Loads ?
                 return cls(data)
-            elif _who == 4:
+            if _who == 4:
                 return OWNHeatingCommand(data)
-            elif _who == 5:
-                return cls(data)
-            elif _who == 6:  # VDES
-                return cls(data)
-            elif _who == 7:
-                return cls(data)
-            elif _who == 9:
-                return cls(data)
-            elif _who == 13:
+            if _who == 5:
+                return OWNAlarmCommand(data)
+            if _who == 6 or _who == 7 or _who == 9:
+                return (
+                    OWNStatusRequest(data)
+                    if cls._STATUS_REQUEST.match(data)
+                    else cls(data)
+                )
+            if _who == 13:
                 return OWNGatewayCommand(data)
-            elif _who == 14:
+            if _who == 14 or _who == 15 or _who == 17:
                 return cls(data)
-            elif _who == 15:
-                return cls(data)
-            elif _who == 16:
-                return cls(data)
-            elif _who == 17:
-                return cls(data)
-            elif _who == 18:
+            if _who == 16:
+                return OWNSoundCommand(data)
+            if _who == 18:
                 return OWNEnergyCommand(data)
-            elif _who == 22:
+            if _who == 22 or _who == 24:
                 return cls(data)
-            elif _who == 24:
-                return cls(data)
-            elif _who == 25:
-                _where = re.match(r"^\*.+\*(?P<where>\d+)##$", data).group("where")
-                if _where.startswith("2"):
-                    return cls(data)
-                elif _where.startswith("3"):
+            if _who == 25:
+                if data.startswith("*#"):
                     return OWNDryContactCommand(data)
+                parts = data.strip("#").split("*")
+                what_part = parts[2] if len(parts) > 2 else ""
+                try:
+                    what_code = int(what_part.split("#")[0])
+                except ValueError:
+                    what_code = None
+                if what_code is not None and 21 <= what_code <= 28:
+                    return cls(data)
+                return OWNDryContactCommand(data)
             elif _who > 1000:
                 return cls(data)
 
         return None
+
+
+class OWNStatusRequest(OWNCommand):
+    """A status request that may target a whole subsystem."""
+
+    def __init__(self, data):
+        super().__init__(data)
+        if self._where:
+            self._human_readable_log = (
+                f"Requesting status for WHO={self._who} WHERE={self._where}."
+            )
+        else:
+            self._human_readable_log = f"Requesting global status for WHO={self._who}."
+
+    @classmethod
+    def request(cls, who: int, where: str | None = None):
+        return cls(f"*#{who}*{where}##" if where else f"*#{who}##")
 
 
 class OWNLightingCommand(OWNCommand):
@@ -1697,14 +1927,17 @@ class OWNLightingCommand(OWNCommand):
         return message
 
     @classmethod
-    def flash(cls, where, _freqency=0.5):
-        if _freqency is not None and _freqency >= 0.5 and _freqency <= 5:
-            _freqency = round(_freqency * 2) / 2
+    def flash(cls, where, _frequency=0.5, _freqency=None):
+        # Compatibility with the misspelled keyword exposed by bundled V2.
+        if _freqency is not None:
+            _frequency = _freqency
+        if _frequency is not None and _frequency >= 0.5 and _frequency <= 5:
+            _frequency = round(_frequency * 2) / 2
         else:
-            _freqency = 0.5
-        _what = int((_freqency / 0.5) + 19)
+            _frequency = 0.5
+        _what = int((_frequency / 0.5) + 19)
         message = cls(f"*1*{_what}*{where}##")
-        message._human_readable_log = f"Flashing light {message._where}{message._interface_log_text} every {_freqency}s."
+        message._human_readable_log = f"Flashing light {message._where}{message._interface_log_text} every {_frequency}s."
         return message
 
     @classmethod
@@ -1750,6 +1983,12 @@ class OWNAutomationCommand(OWNCommand):
         return message
 
     @classmethod
+    def get_shutter_status(cls, where):
+        message = cls(f"*#2*{where}*10##")
+        message._human_readable_log = f"Requesting shutter {message._where}{message._interface_log_text} advanced status (dimension 10)."
+        return message
+
+    @classmethod
     def raise_shutter(cls, where):
         message = cls(f"*2*1*{where}##")
         message._human_readable_log = (
@@ -1769,7 +2008,7 @@ class OWNAutomationCommand(OWNCommand):
     def stop_shutter(cls, where):
         message = cls(f"*2*0*{where}##")
         message._human_readable_log = (
-            f"Stoping shutter {message._where}{message._interface_log_text}."
+            f"Stopping shutter {message._where}{message._interface_log_text}."
         )
         return message
 
@@ -1788,6 +2027,12 @@ class OWNHeatingCommand(OWNCommand):
         return message
 
     @classmethod
+    def valves_status(cls, where):
+        message = cls(f"*#4*{where}*19##")
+        message._human_readable_log = f"Requesting climate valve status update for {message._where}{message._interface_log_text}."
+        return message
+
+    @classmethod
     def get_temperature(cls, where):
         message = cls(f"*#4*{where}*0##")
         message._human_readable_log = f"Requesting climate status update for {message._where}{message._interface_log_text}."
@@ -1796,27 +2041,30 @@ class OWNHeatingCommand(OWNCommand):
     @classmethod
     def set_mode(cls, where, mode: str, standalone=False):
         central_local = re.compile(r"^#0#\d+$")
+        zone: str
         if central_local.match(str(where)):
             zone = where
             zone_name = f"zone {int(where.split('#')[-1])}"
         else:
-            zone = int(where.split("#")[-1]) if where.startswith("#") else int(where)
-            zone_name = f"zone {zone}" if zone > 0 else "general"
+            zone_number = (
+                int(where.split("#")[-1]) if where.startswith("#") else int(where)
+            )
+            zone_name = f"zone {zone_number}" if zone_number > 0 else "general"
 
             if standalone:
-                zone = f"#{zone}" if zone == 0 else str(zone)
+                zone = f"#{zone_number}" if zone_number == 0 else str(zone_number)
             else:
-                zone = f"#{zone}"
+                zone = f"#{zone_number}"
 
         mode_name = mode
         if mode == CLIMATE_MODE_OFF:
-            mode = 303
+            mode_code = 303
         elif mode == CLIMATE_MODE_AUTO:
-            mode = 311
+            mode_code = 311
         else:
             return None
 
-        message = cls(f"*4*{mode}*{zone}##")
+        message = cls(f"*4*{mode_code}*{zone}##")
         message._human_readable_log = f"Setting {zone_name} mode to '{mode_name}'."
         return message
 
@@ -1827,17 +2075,20 @@ class OWNHeatingCommand(OWNCommand):
     @classmethod
     def set_temperature(cls, where, temperature: float, mode: str, standalone=False):
         central_local = re.compile(r"^#0#\d+$")
+        zone: str
         if central_local.match(str(where)):
             zone = where
             zone_name = f"zone {int(where.split('#')[-1])}"
         else:
-            zone = int(where.split("#")[-1]) if where.startswith("#") else int(where)
-            zone_name = f"zone {zone}" if zone > 0 else "general"
+            zone_number = (
+                int(where.split("#")[-1]) if where.startswith("#") else int(where)
+            )
+            zone_name = f"zone {zone_number}" if zone_number > 0 else "general"
 
             if standalone:
-                zone = f"#{zone}" if zone == 0 else str(zone)
+                zone = f"#{zone_number}" if zone_number == 0 else str(zone_number)
             else:
-                zone = f"#{zone}"
+                zone = f"#{zone_number}"
 
         temperature = round(temperature * 2) / 2
         if temperature < 5.0:
@@ -1845,21 +2096,99 @@ class OWNHeatingCommand(OWNCommand):
         elif temperature > 40.0:
             temperature = 40.0
         temperature_print = f"{temperature}"
-        temperature = int(temperature * 10)
+        temperature_code = int(temperature * 10)
 
         mode_name = mode
+        mode_code = 3
         if mode == CLIMATE_MODE_HEAT:
-            mode = 1
+            mode_code = 1
         elif mode == CLIMATE_MODE_COOL:
-            mode = 2
-        elif mode == CLIMATE_MODE_AUTO:
-            mode = 3
+            mode_code = 2
 
-        message = cls(f"*#4*{zone}*#14*{temperature:04d}*{mode}##")
+        message = cls(f"*#4*{zone}*#14*{temperature_code:04d}*{mode_code}##")
         message._human_readable_log = (
             f"Setting {zone_name} to {temperature_print}°C in mode '{mode_name}'."
         )
         return message
+
+    @classmethod
+    def set_fan_speed(cls, where, speed: int, standalone=False):
+        central_local = re.compile(r"^#0#\d+$")
+        if central_local.match(str(where)):
+            zone = where
+            zone_name = f"zone {int(where.split('#')[-1])}"
+        else:
+            zone_number = (
+                int(where.split("#")[-1]) if where.startswith("#") else int(where)
+            )
+            zone_name = f"zone {zone_number}" if zone_number > 0 else "general"
+            if standalone:
+                zone = f"#{zone_number}" if zone_number == 0 else str(zone_number)
+            else:
+                zone = f"#{zone_number}"
+
+        speed_code = int(speed)
+        message = cls(f"*#4*{zone}*#11*{speed_code}##")
+        message._human_readable_log = (
+            f"Setting {zone_name} fan speed to {speed_code}."
+        )
+        return message
+
+
+class OWNAlarmCommand(OWNCommand):
+    @classmethod
+    def status(cls, where="0"):
+        if where is None or where == "":
+            message = cls("*#5##")
+            message._human_readable_log = "Querying burglar alarm central status."
+            return message
+
+        where_str = str(where)
+        if where_str == "0":
+            message = cls("*#5*0##")
+            message._human_readable_log = "Querying burglar alarm central status."
+            return message
+
+        target = where_str if where_str.startswith("#") else f"#{where_str}"
+        message = cls(f"*#5*{target}##")
+        message._human_readable_log = (
+            f"Querying burglar alarm status for zone {where}."
+        )
+        return message
+
+    @classmethod
+    def disarm(cls, where="0"):
+        message = cls(f"*5*2*{where}##")
+        message._human_readable_log = f"Disarming burglar alarm for zone {where}."
+        return message
+
+    @classmethod
+    def arm_away(cls, where="0"):
+        message = cls(f"*5*1*{where}##")
+        message._human_readable_log = (
+            f"Arming burglar alarm (away) for zone {where}."
+        )
+        return message
+
+    @classmethod
+    def arm_home(cls, where="0"):
+        message = cls(f"*5*1*{where}##")
+        message._human_readable_log = (
+            f"Arming burglar alarm (home) for zone {where}."
+        )
+        return message
+
+    @classmethod
+    def trigger(cls, where="0"):
+        message = cls(f"*5*17*{where}##")
+        message._human_readable_log = (
+            f"Triggering panic burglar alarm for zone {where}."
+        )
+        return message
+
+    @classmethod
+    def panic(cls, where="0"):
+        return cls.trigger(where=where)
 
 
 class OWNAVCommand(OWNCommand):
@@ -1900,19 +2229,17 @@ class OWNGatewayCommand(OWNCommand):
         self._date = None
         self._datetime = None
 
+        # Dimension requests carry no values and are valid as-is.
+        if self.is_request:
+            return
+
+        _validate_gateway_clock_values(self._dimension, self._dimension_value)
+
         if self._dimension == 0:
             self._hour = self._dimension_value[0]
             self._minute = self._dimension_value[1]
             self._second = self._dimension_value[2]
-            # Timezone is sometimes missing from messages, assuming UTC
-            if self._dimension_value[3] != "":
-                self._timezone = (
-                    f"+{self._dimension_value[3][1:]}:00"
-                    if self._dimension_value[3][0] == "0"
-                    else f"-{self._dimension_value[3][1:]}:00"
-                )
-            else:
-                self._timezone = ""
+            self._timezone = _gateway_timezone(self._dimension_value)
             self._time = datetime.time.fromisoformat(
                 f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
             )
@@ -1935,20 +2262,12 @@ class OWNGatewayCommand(OWNCommand):
             self._hour = self._dimension_value[0]
             self._minute = self._dimension_value[1]
             self._second = self._dimension_value[2]
-            # Timezone is sometimes missing from messages, assuming UTC
-            if self._dimension_value[3] != "":
-                self._timezone = (
-                    f"+{self._dimension_value[3][1:]}:00"
-                    if self._dimension_value[3][0] == "0"
-                    else f"-{self._dimension_value[3][1:]}:00"
-                )
-            else:
-                self._timezone = ""
+            self._timezone = _gateway_timezone(self._dimension_value)
             self._day = self._dimension_value[5]
             self._month = self._dimension_value[6]
             self._year = self._dimension_value[7]
             self._datetime = datetime.datetime.fromisoformat(
-                f"{self._year}-{self._month}-{self._day}*{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
+                f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
             )
             self._human_readable_log = (
                 f"Gateway broadcasting internal datetime: {self._datetime}."
@@ -1956,8 +2275,8 @@ class OWNGatewayCommand(OWNCommand):
 
     @classmethod
     def set_datetime_to_now(cls, time_zone: str):
-        timezone = pytz.timezone(time_zone)
-        now = timezone.localize(datetime.datetime.now())
+        timezone = ZoneInfo(time_zone)
+        now = datetime.datetime.now(timezone)
         timezone_offset = (
             f"0{now.strftime('%z')[1:3]}"
             if now.strftime("%z")[0] == "+"
@@ -1971,22 +2290,22 @@ class OWNGatewayCommand(OWNCommand):
 
     @classmethod
     def set_date_to_today(cls, time_zone: str):
-        timezone = pytz.timezone(time_zone)
-        now = timezone.localize(datetime.datetime.now())
+        timezone = ZoneInfo(time_zone)
+        now = datetime.datetime.now(timezone)
         message = cls(f"*#13**#1*0{now.strftime('%w*%d*%m*%Y##')}")
         message._human_readable_log = f"Setting gateway date to: {message._date}."
         return message
 
     @classmethod
     def set_time_to_now(cls, time_zone: str):
-        timezone = pytz.timezone(time_zone)
-        now = timezone.localize(datetime.datetime.now())
+        timezone = ZoneInfo(time_zone)
+        now = datetime.datetime.now(timezone)
         timezone_offset = (
             f"0{now.strftime('%z')[1:3]}"
             if now.strftime("%z")[0] == "+"
             else f"1{now.strftime('%z')[1:3]}"
         )
-        message = cls(f"*#13**#0*{now.strftime('%H*%M*%S')}*{timezone_offset}*##")
+        message = cls(f"*#13**#0*{now.strftime('%H*%M*%S')}*{timezone_offset}##")
         message._human_readable_log = f"Setting gateway time to: {message._time}."
         return message
 
@@ -2004,9 +2323,7 @@ class OWNEnergyCommand(OWNCommand):
     def get_hourly_consumption(cls, where, date: datetime.date):
         where = f"{where}#0" if str(where).startswith("7") else str(where)
         today = datetime.date.today()
-        one_year_ago = datetime.date(
-            year=today.year - 1, month=today.month, day=today.day
-        )
+        one_year_ago = today - relativedelta(years=1)
         if date < one_year_ago:
             return None
         message = cls(f"*#18*{where}*511#{date.month}#{date.day}##")
@@ -2033,7 +2350,7 @@ class OWNEnergyCommand(OWNCommand):
         target = datetime.date(year=year, month=month, day=1)
         if target > today:
             return None
-        elif target > one_year_ago:
+        if target > one_year_ago:
             message = cls(f"*18*59#{month}*{where}##")
         elif target > two_year_ago:
             message = cls(f"*18*510#{month}*{where}##")
@@ -2068,6 +2385,77 @@ class OWNEnergyCommand(OWNCommand):
         return message
 
 
+class OWNSoundCommand(OWNCommand):
+    """WHO 16 commands for sound sources and amplifier zones."""
+
+    @classmethod
+    def status(cls, where):
+        message = cls(f"*#16*{where}##")
+        message._human_readable_log = f"Requesting audio zone {where} status."
+        return message
+
+    @classmethod
+    def turn_on(cls, where):
+        message = cls(f"*16*3*{where}##")
+        message._human_readable_log = f"Turning on audio zone {where}."
+        return message
+
+    @classmethod
+    def turn_off(cls, where):
+        message = cls(f"*16*13*{where}##")
+        message._human_readable_log = f"Turning off audio zone {where}."
+        return message
+
+    @classmethod
+    def select_source(cls, where, source_id):
+        source = int(source_id)
+        if not 1 <= source <= 9:
+            raise ValueError("source_id must be between 1 and 9")
+        zone = str(where)
+        if not zone:
+            raise ValueError("where must identify an audio zone")
+
+        source_address = 100 + source
+        activate = cls(f"*16*3*{source_address}##")
+        activate._human_readable_log = f"Activating audio source {source}."
+
+        route_address = f"{10 + source}{zone[-1]}"
+        route = cls(f"*16*3*{route_address}##")
+        route._human_readable_log = (
+            f"Routing audio zone {where} to source {source}."
+        )
+        return [activate, route]
+
+    @classmethod
+    def source_cycle(cls):
+        message = cls("*16*23*100##")
+        message._human_readable_log = "Cycling to the next audio source."
+        return message
+
+    @classmethod
+    def volume_up(cls, where):
+        message = cls(f"*16*1001*{where}##")
+        message._human_readable_log = f"Increasing audio zone {where} volume."
+        return message
+
+    @classmethod
+    def volume_down(cls, where):
+        message = cls(f"*16*1000*{where}##")
+        message._human_readable_log = f"Decreasing audio zone {where} volume."
+        return message
+
+    @classmethod
+    def set_volume(cls, where, volume):
+        level = int(volume)
+        if not 0 <= level <= 100:
+            raise ValueError("volume must be between 0 and 100")
+        message = cls(f"*#16*{where}*#1*{level}##")
+        message._human_readable_log = (
+            f"Setting audio zone {where} volume to {level}."
+        )
+        return message
+
+
 class OWNDryContactCommand(OWNCommand):
     @classmethod
     def status(cls, where):
@@ -2084,39 +2472,40 @@ class OWNSignaling(OWNMessage):
 
     def __init__(self, data):  # pylint: disable=super-init-not-called
         self._raw = data
-        self._family = None
+        self._family = ""
+        self._match: re.Match[str] | None = None
         self._type = "UNKNOWN"
         self._human_readable_log = data
 
-        if self._ACK.match(self._raw):
-            self._match = self._ACK.match(self._raw)
+        if match := self._ACK.match(self._raw):
+            self._match = match
             self._family = "SIGNALING"
             self._type = "ACK"
             self._human_readable_log = "ACK."
-        elif self._NACK.match(self._raw):
-            self._match = self._NACK.match(self._raw)
+        elif match := self._NACK.match(self._raw):
+            self._match = match
             self._family = "SIGNALING"
             self._type = "NACK"
             self._human_readable_log = "NACK."
-        elif self._NONCE.match(self._raw):
-            self._match = self._NONCE.match(self._raw)
+        elif match := self._NONCE.match(self._raw):
+            self._match = match
             self._family = "SIGNALING"
             self._type = "NONCE"
             self._human_readable_log = (
                 f"Nonce challenge received: {self._match.group(1)}."
             )
-        elif self._SHA.match(self._raw):
-            self._match = self._SHA.match(self._raw)
+        elif match := self._SHA.match(self._raw):
+            self._match = match
             self._family = "SIGNALING"
             self._type = f"SHA{'-1' if self._match.group(1) == '1' else '-256'}"
             self._human_readable_log = f"SHA{'-1' if self._match.group(1) == '1' else '-256'} challenge received."  # pylint: disable=line-too-long
-        elif self._COMMAND_SESSION.match(self._raw):
-            self._match = self._COMMAND_SESSION.match(self._raw)
+        elif match := self._COMMAND_SESSION.match(self._raw):
+            self._match = match
             self._family = "SIGNALING"
             self._type = "COMMAND_SESSION"
             self._human_readable_log = "Command session requested."
-        elif self._EVENT_SESSION.match(self._raw):
-            self._match = self._EVENT_SESSION.match(self._raw)
+        elif match := self._EVENT_SESSION.match(self._raw):
+            self._match = match
             self._family = "SIGNALING"
             self._type = "EVENT_SESSION"
             self._human_readable_log = "Event session requested."
@@ -2124,18 +2513,18 @@ class OWNSignaling(OWNMessage):
     @property
     def nonce(self):
         """Return the authentication nonce IF the message is a nonce message"""
-        if self.is_nonce:  # pylint: disable=using-constant-test
+        # NB: is_nonce is a method — referencing it without calling it was
+        # always truthy, making this guard ineffective.
+        if self.is_nonce() and self._match is not None:
             return self._match.group(1)
-        else:
-            return None
+        return None
 
     @property
     def sha_version(self):
         """Return the authentication SHA version IF the message is a SHA challenge message"""
-        if self.is_sha:  # pylint: disable=using-constant-test
+        if self.is_sha() and self._match is not None:
             return self._match.group(1)
-        else:
-            return None
+        return None
 
     def is_ack(self) -> bool:
         return self._type == "ACK"

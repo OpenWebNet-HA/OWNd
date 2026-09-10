@@ -1,12 +1,11 @@
 """Package metadata regression tests."""
 
 import re
-
 from importlib.metadata import version
 
-import OWNd
 from packaging.version import Version
 
+import OWNd
 
 SEMVER_PATTERN = re.compile(
     r"^(0|[1-9]\d*)\."

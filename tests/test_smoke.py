@@ -8,7 +8,7 @@ def test_ack_frame_is_parsed_as_signaling() -> None:
     message = OWNMessage.parse("*#*1##")
 
     assert isinstance(message, OWNSignaling)
-    assert message.is_ack
+    assert message.is_ack()
 
 
 def test_lighting_frame_is_parsed_as_event() -> None:
