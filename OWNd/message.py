@@ -399,8 +399,7 @@ class OWNEvent(OWNMessage):
                 if what_code is not None and 21 <= what_code <= 28:
                     return OWNCENPlusEvent(data)
                 return OWNDryContactEvent(data)
-            elif _who > 1000:
-                return cls(data)
+            return cls(data)
 
         return None
 

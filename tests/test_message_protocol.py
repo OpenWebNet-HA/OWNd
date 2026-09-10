@@ -36,6 +36,17 @@ def test_invalid_message_has_defensive_defaults() -> None:
     assert message.dimension is None
 
 
+@pytest.mark.parametrize(
+    "frame",
+    ["*8*1#1#4*11##", "*8*9#1#4*20##", "*6*9**##"],
+)
+def test_unspecialized_who_event_returns_generic_event(frame: str) -> None:
+    message = OWNEvent.parse(frame)
+
+    assert isinstance(message, OWNEvent)
+    assert isinstance(message, OWNMessage)
+
+
 def test_who25_routes_by_what_instead_of_where_prefix() -> None:
     dry_contact = OWNEvent.parse("*25*31*21##")
     cen_plus = OWNEvent.parse("*25*21#1*21##")

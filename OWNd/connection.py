@@ -100,7 +100,15 @@ class OWNGateway:
         self.model_name = discovery_info.get("modelName", "Unknown model")
         self.model = self.model_name
         self.profile: GatewayProfile = get_gateway_profile(self.model_name)
-        self.model_number = discovery_info.get("modelNumber")
+        model_number = discovery_info.get("modelNumber")
+        if isinstance(model_number, (list, tuple)):
+            self.model_number = (
+                ".".join(str(part) for part in model_number) if model_number else None
+            )
+        elif model_number is None:
+            self.model_number = None
+        else:
+            self.model_number = str(model_number)
         # self.presentationURL = discovery_info.get("presentationURL")
         self.serial_number = discovery_info.get("serialNumber")
         self.udn = discovery_info.get("UDN")
@@ -130,8 +138,15 @@ class OWNGateway:
         return self.model_number
 
     @firmware.setter
-    def firmware(self, firmware: str) -> None:
-        self.model_number = firmware
+    def firmware(self, firmware: object) -> None:
+        if isinstance(firmware, (list, tuple)):
+            self.model_number = (
+                ".".join(str(part) for part in firmware) if firmware else None
+            )
+        elif firmware is None:
+            self.model_number = None
+        else:
+            self.model_number = str(firmware)
 
     @property
     def serial(self) -> str | None:
@@ -1299,11 +1314,19 @@ class OWNCommandSession(OWNSession):
                     # A NACK after response data terminates that transaction;
                     # replaying it would duplicate the already returned sweep.
                     if collected or attempt == max_attempts:
-                        self._logger.error(
-                            "%s Could not send message `%s`. No more retries.",
-                            self._log_id,
-                            message,
-                        )
+                        if is_status_request:
+                            self._logger.debug(
+                                "%s Gateway rejected status request %s (NACK, %s response(s)). Subsystem or device may not be present.",
+                                self._log_id,
+                                message,
+                                len(collected),
+                            )
+                        else:
+                            self._logger.error(
+                                "%s Could not send message `%s`. No more retries.",
+                                self._log_id,
+                                message,
+                            )
                         return None
                     self._logger.error(
                         "%s Could not send message `%s`. Retrying (%d)...",

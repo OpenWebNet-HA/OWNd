@@ -1,7 +1,7 @@
 """Regression tests for session negotiation and command responses."""
 
 import asyncio
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -49,6 +49,20 @@ def make_session(
     writer = FakeWriter()
     session._stream_writer = writer
     return session, writer
+
+
+def test_gateway_normalizes_firmware_sequences() -> None:
+    gateway = OWNGateway(
+        {"address": "192.0.2.1", "modelNumber": ["2", 1, "0"]}
+    )
+
+    assert gateway.firmware == "2.1.0"
+
+    gateway.firmware = ("3", 4)
+    assert gateway.firmware == "3.4"
+
+    gateway.firmware = []
+    assert gateway.firmware is None
 
 
 @pytest.mark.asyncio
@@ -232,6 +246,26 @@ async def test_partial_response_followed_by_nack_is_not_retried() -> None:
 
     assert result is None
     assert writer.written == [b"*#1*0##"]
+
+
+@pytest.mark.asyncio
+async def test_rejected_status_request_is_logged_at_debug() -> None:
+    session, writer = make_session(OWNCommandSession)
+    assert isinstance(session, OWNCommandSession)
+    logger = MagicMock()
+    session._logger = logger
+    session._read_frame = AsyncMock(side_effect=["*#*0##", "*#*0##"])
+
+    result = await session.send("*#16*0##", is_status_request=True)
+
+    assert result is None
+    assert writer.written == [b"*#16*0##", b"*#16*0##"]
+    logger.debug.assert_any_call(
+        "%s Gateway rejected status request %s (NACK, %s response(s)). Subsystem or device may not be present.",
+        session._log_id,
+        "*#16*0##",
+        0,
+    )
 
 
 @pytest.mark.asyncio
