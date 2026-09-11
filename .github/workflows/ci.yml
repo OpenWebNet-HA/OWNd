@@ -64,6 +64,8 @@ jobs:
         run: ruff check OWNd tests setup.py scripts
       - name: Run mypy
         run: mypy OWNd
+      - name: Enforce PyPI library standards & clean decoupling
+        run: python scripts/verify_library_standards.py
 
   package:
     name: Build package
