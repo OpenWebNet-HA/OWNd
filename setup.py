@@ -40,7 +40,13 @@ setuptools.setup(
     install_requires=["aiohttp", "defusedxml", "pytz", "python-dateutil"],
     extras_require={
         "serial": ["pyserial-asyncio>=0.6"],
-        "test": ["pytest<9", "pytest-asyncio>=0.23", "pytest-cov>=4.0"],
+        "test": [
+            "pytest<9",
+            "pytest-asyncio>=0.23",
+            "pytest-cov>=4.0",
+            "pyyaml>=6.0",
+            "jsonschema>=4.0",
+        ],
     },
     python_requires=">=3.11",
 )
