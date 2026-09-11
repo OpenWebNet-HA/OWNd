@@ -70,7 +70,7 @@ def normalize_coverage_filename(fn: str) -> str:
     return fn
 
 
-def verify_all_coverage(xml_path: str = COVERAGE_XML, min_threshold: float = 90.0) -> int:
+def verify_all_coverage(xml_path: str = COVERAGE_XML, min_threshold: float = 100.0) -> int:
     """Validate that OWNd modules satisfy coverage requirements."""
     if not os.path.exists(xml_path):
         print(f"[ERROR] Coverage report '{xml_path}' not found. Run pytest with --cov-report=xml first.")
@@ -120,8 +120,8 @@ def verify_all_coverage(xml_path: str = COVERAGE_XML, min_threshold: float = 90.
         ranges = collapse_line_ranges(uncovered)
         report_rows.append((rel, stmts, len(uncovered), f"{rate:.1f}%", ranges))
 
-        if rate < min_threshold:
-            errors.append((rel, stmts, rate, uncovered, f"[FAIL] {rel}: {rate:.1f}% coverage (below {min_threshold}%, missing: {ranges})"))
+        if rate < min_threshold or uncovered:
+            errors.append((rel, stmts, rate, uncovered, f"[FAIL] {rel}: {rate:.1f}% coverage (Missing {len(uncovered)} line(s): {ranges})"))
         else:
             print(f"  [OK] {rel}: {rate:.1f}% coverage ({stmts - len(uncovered)}/{stmts} statements)")
 
@@ -183,5 +183,6 @@ def verify_all_coverage(xml_path: str = COVERAGE_XML, min_threshold: float = 90.
 
 if __name__ == "__main__":
     coverage_file = sys.argv[1] if len(sys.argv) > 1 else COVERAGE_XML
-    threshold = float(sys.argv[2]) if len(sys.argv) > 2 else 50.0
+    # Enforce strict 100.0% line coverage across all OWNd modules
+    threshold = 100.0
     sys.exit(verify_all_coverage(coverage_file, min_threshold=threshold))

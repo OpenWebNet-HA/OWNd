@@ -1366,3 +1366,19 @@ def test_lighting_color_temperature_and_rgb():
     cmd_rgb_set = OWNLightingCommand.set_rgb_color("25#4#02", 255, 128, 64)
     assert cmd_rgb_set._raw == "*#1*25#4#02*#12*255*128*64##"
 
+
+def test_phase2_coverage_edges():
+    """Verify edges in Phase 2 commands for 100% test coverage."""
+    import pytest
+    from OWNd.message import OWNCenPlusCommand, OWNHeatingCommand
+
+    # OWNCenPlusCommand.still_held
+    cmd = OWNCenPlusCommand.still_held("12", 1)
+    assert str(cmd) == "*25*23#1*12##"
+    assert "still held" in cmd.human_readable_log
+
+    # Unsupported central unit mode ValueError
+    with pytest.raises(ValueError, match="Unsupported central unit mode"):
+        OWNHeatingCommand.set_central_mode("#0", "invalid_mode")
+
+
