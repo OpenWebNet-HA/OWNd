@@ -416,7 +416,7 @@
     "_file": "who01_lighting.yaml"
   },
   {
-    "id": "light.req.rgb.ptp",
+    "id": "light.req.hsv.ptp",
     "frame": "*#1*25#4#02*12##",
     "direction": "status_request",
     "who": 1,
@@ -426,11 +426,11 @@
     "dimension": 12,
     "source": "community-plant-capture",
     "mcp_valid": true,
-    "mcp_notes": "Lighting: Query RGB color status for DALI ballast 25 on interface 02",
+    "mcp_notes": "Lighting: Query HSV color status for DALI ballast 25 on interface 02",
     "roundtrip": true,
     "builder": {
       "class": "OWNLightingCommand",
-      "method": "get_rgb_color",
+      "method": "get_hsv_color",
       "args": [
         "25#4#02"
       ]
@@ -438,7 +438,7 @@
     "_file": "who01_lighting.yaml"
   },
   {
-    "id": "light.dim.reply.rgb.valid",
+    "id": "light.dim.reply.hsv.valid",
     "frame": "*#1*25#4#02*12*255*100*50##",
     "direction": "dimension_response",
     "who": 1,
@@ -453,12 +453,12 @@
     ],
     "source": "community-plant-capture",
     "mcp_valid": true,
-    "mcp_notes": "Lighting: RGB color reading (255, 100, 50)",
+    "mcp_notes": "Lighting: HSV color reading (Hue 255\u00b0, Sat 100%, Val 50%)",
     "roundtrip": true,
     "_file": "who01_lighting.yaml"
   },
   {
-    "id": "light.dim.reply.rgb.unsupported_sentinel",
+    "id": "light.dim.reply.hsv.unsupported_sentinel",
     "frame": "*#1*25#4#02*12*511*127*255##",
     "direction": "dimension_response",
     "who": 1,
@@ -473,13 +473,13 @@
     ],
     "source": "community-plant-capture",
     "mcp_valid": true,
-    "mcp_notes": "Lighting: Sentinel values (511, 127, 255) indicating RGB unsupported",
+    "mcp_notes": "Lighting: Sentinel values (511, 127, 255) indicating HSV color unsupported",
     "roundtrip": true,
     "_file": "who01_lighting.yaml"
   },
   {
-    "id": "light.dim.write.rgb",
-    "frame": "*#1*25#4#02*#12*255*128*64##",
+    "id": "light.dim.write.hsv",
+    "frame": "*#1*25#4#02*#12*255*100*50##",
     "direction": "dimension_write",
     "who": 1,
     "what": null,
@@ -488,21 +488,21 @@
     "dimension": 12,
     "dimension_values": [
       "255",
-      "128",
-      "64"
+      "100",
+      "50"
     ],
     "source": "community-plant-capture",
     "mcp_valid": true,
-    "mcp_notes": "Lighting: Set RGB color to (255, 128, 64)",
+    "mcp_notes": "Lighting: Set HSV color to (255\u00b0, 100%, 50%)",
     "roundtrip": true,
     "builder": {
       "class": "OWNLightingCommand",
-      "method": "set_rgb_color",
+      "method": "set_hsv_color",
       "args": [
         "25#4#02",
         255,
-        128,
-        64
+        100,
+        50
       ]
     },
     "_file": "who01_lighting.yaml"
