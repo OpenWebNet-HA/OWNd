@@ -163,3 +163,155 @@
   mcp_valid: true
   mcp_notes: "Lighting dimension write: Level 50% with speed 5"
   roundtrip: true
+
+- id: light.req.color_temp.all
+  frame: "*#1*0*14##"
+  direction: status_request
+  who: 1
+  what: null
+  where: "0"
+  dimension: 14
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Lighting: Query color temperature status across all ballasts"
+  roundtrip: true
+
+- id: light.req.color_temp.ptp
+  frame: "*#1*25#4#02*14##"
+  direction: status_request
+  who: 1
+  what: null
+  where: "25"
+  interface: "02"
+  dimension: 14
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Lighting: Query color temperature for DALI ballast 25 on interface 02"
+  roundtrip: true
+  builder:
+    class: OWNLightingCommand
+    method: get_color_temperature
+    args: ["25#4#02"]
+
+- id: light.dim.reply.color_temp.cool
+  frame: "*#1*25#4#02*14*153##"
+  direction: dimension_response
+  who: 1
+  what: null
+  where: "25"
+  interface: "02"
+  dimension: 14
+  dimension_values: ["153"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Lighting: Color temperature reading 153 mireds (~6535 K cool white)"
+  roundtrip: true
+
+- id: light.dim.reply.color_temp.warm
+  frame: "*#1*25#4#02*14*370##"
+  direction: dimension_response
+  who: 1
+  what: null
+  where: "25"
+  interface: "02"
+  dimension: 14
+  dimension_values: ["370"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Lighting: Color temperature reading 370 mireds (~2700 K warm white)"
+  roundtrip: true
+
+- id: light.dim.reply.color_temp.unsupported_sentinel
+  frame: "*#1*27#4#02*14*1##"
+  direction: dimension_response
+  who: 1
+  what: null
+  where: "27"
+  interface: "02"
+  dimension: 14
+  dimension_values: ["1"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Lighting: Sentinel value 1 indicating color temperature unsupported"
+  roundtrip: true
+
+- id: light.dim.write.color_temp.370
+  frame: "*#1*25#4#02*#14*370##"
+  direction: dimension_write
+  who: 1
+  what: null
+  where: "25"
+  interface: "02"
+  dimension: 14
+  dimension_values: ["370"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Lighting: Set color temperature to 370 mireds (~2700 K)"
+  roundtrip: true
+  builder:
+    class: OWNLightingCommand
+    method: set_color_temperature
+    args: ["25#4#02", 370]
+
+- id: light.req.hsv.ptp
+  frame: "*#1*25#4#02*12##"
+  direction: status_request
+  who: 1
+  what: null
+  where: "25"
+  interface: "02"
+  dimension: 12
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Lighting: Query HSV color status for DALI ballast 25 on interface 02"
+  roundtrip: true
+  builder:
+    class: OWNLightingCommand
+    method: get_hsv_color
+    args: ["25#4#02"]
+
+- id: light.dim.reply.hsv.valid
+  frame: "*#1*25#4#02*12*255*100*50##"
+  direction: dimension_response
+  who: 1
+  what: null
+  where: "25"
+  interface: "02"
+  dimension: 12
+  dimension_values: ["255", "100", "50"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Lighting: HSV color reading (Hue 255°, Sat 100%, Val 50%)"
+  roundtrip: true
+
+- id: light.dim.reply.hsv.unsupported_sentinel
+  frame: "*#1*25#4#02*12*511*127*255##"
+  direction: dimension_response
+  who: 1
+  what: null
+  where: "25"
+  interface: "02"
+  dimension: 12
+  dimension_values: ["511", "127", "255"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Lighting: Sentinel values (511, 127, 255) indicating HSV color unsupported"
+  roundtrip: true
+
+- id: light.dim.write.hsv
+  frame: "*#1*25#4#02*#12*255*100*50##"
+  direction: dimension_write
+  who: 1
+  what: null
+  where: "25"
+  interface: "02"
+  dimension: 12
+  dimension_values: ["255", "100", "50"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Lighting: Set HSV color to (255°, 100%, 50%)"
+  roundtrip: true
+  builder:
+    class: OWNLightingCommand
+    method: set_hsv_color
+    args: ["25#4#02", 255, 100, 50]

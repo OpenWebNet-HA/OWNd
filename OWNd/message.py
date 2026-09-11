@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import colorsys
 import datetime
 import re
 from typing import Any
@@ -438,6 +439,12 @@ class OWNLightingEvent(OWNEvent):
         self._motion_timeout: datetime.timedelta | None = None
         self._color_temp: int | None = None
         self._supports_color_temp: bool | None = None
+        self._hue: int | None = None
+        self._saturation: int | None = None
+        self._value: int | None = None
+        self._hs: tuple[int, int] | None = None
+        self._hsv: tuple[int, int, int] | None = None
+        self._supports_hsv: bool | None = None
         self._rgb: tuple[int, int, int] | None = None
         self._supports_rgb: bool | None = None
 
@@ -531,20 +538,28 @@ class OWNLightingEvent(OWNEvent):
                     seconds=int(self._dimension_value[2]),
                 )
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} has timeout set to {self._motion_timeout}."  # pylint: disable=line-too-long
-            elif self._dimension == 12:  # RGB Color
+            elif self._dimension == 12:  # HSV Color (BTicino F429 DALI)
                 if len(self._dimension_value) >= 3:
-                    r, g, b = (
+                    h, s, v = (
                         int(self._dimension_value[0]),
                         int(self._dimension_value[1]),
                         int(self._dimension_value[2]),
                     )
-                    if (r, g, b) == (511, 127, 255):
+                    if (h, s, v) == (511, 127, 255):
+                        self._supports_hsv = False
                         self._supports_rgb = False
-                        self._human_readable_log = f"Light {self._where}{self._interface_log_text} reports RGB color is not supported."
+                        self._human_readable_log = f"Light {self._where}{self._interface_log_text} reports HSV color is not supported."
                     else:
+                        self._supports_hsv = True
                         self._supports_rgb = True
-                        self._rgb = (r, g, b)
-                        self._human_readable_log = f"Light {self._where}{self._interface_log_text} RGB color is ({r}, {g}, {b})."
+                        self._hue = h
+                        self._saturation = s
+                        self._value = v
+                        self._hs = (h, s)
+                        self._hsv = (h, s, v)
+                        r, g, b = colorsys.hsv_to_rgb(h / 360.0, s / 100.0, v / 100.0)
+                        self._rgb = (round(r * 255), round(g * 255), round(b * 255))
+                        self._human_readable_log = f"Light {self._where}{self._interface_log_text} HSV color is ({h}°, {s}%, {v}%)."
             elif self._dimension == 14:  # Color temperature (Tunable white, mireds)
                 val = int(self._dimension_value[0])
                 if val == 1:
@@ -626,6 +641,30 @@ class OWNLightingEvent(OWNEvent):
     @property
     def supports_color_temp(self) -> bool | None:
         return self._supports_color_temp
+
+    @property
+    def hue(self) -> int | None:
+        return self._hue
+
+    @property
+    def saturation(self) -> int | None:
+        return self._saturation
+
+    @property
+    def value(self) -> int | None:
+        return self._value
+
+    @property
+    def hs(self) -> tuple[int, int] | None:
+        return self._hs
+
+    @property
+    def hsv(self) -> tuple[int, int, int] | None:
+        return self._hsv
+
+    @property
+    def supports_hsv(self) -> bool | None:
+        return self._supports_hsv
 
     @property
     def rgb(self) -> tuple[int, int, int] | None:
@@ -1925,8 +1964,10 @@ class OWNCommand(OWNMessage):
                 )
             if _who == 13:
                 return OWNGatewayCommand(data)
-            if _who == 14 or _who == 15 or _who == 17:
+            if _who == 14 or _who == 17:
                 return cls(data)
+            if _who == 15:
+                return OWNCenCommand(data)
             if _who == 16:
                 return OWNSoundCommand(data)
             if _who == 18:
@@ -1943,7 +1984,7 @@ class OWNCommand(OWNMessage):
                 except ValueError:
                     what_code = None
                 if what_code is not None and 21 <= what_code <= 28:
-                    return cls(data)
+                    return OWNCenPlusCommand(data)
                 return OWNDryContactCommand(data)
             elif _who > 1000:
                 return cls(data)
@@ -2013,19 +2054,34 @@ class OWNLightingCommand(OWNCommand):
         return message
 
     @classmethod
-    def get_rgb_color(cls, where):
+    def get_hsv_color(cls, where):
         message = cls(f"*#1*{where}*12##")
-        message._human_readable_log = f"Requesting light {message._where}{message._interface_log_text} RGB color."
+        message._human_readable_log = f"Requesting light {message._where}{message._interface_log_text} HSV color."
         return message
+
+    @classmethod
+    def set_hsv_color(cls, where, h: int, s: int, v: int):
+        h = max(0, min(359, int(h)))
+        s = max(0, min(100, int(s)))
+        v = max(0, min(100, int(v)))
+        message = cls(f"*#1*{where}*#12*{h}*{s}*{v}##")
+        message._human_readable_log = f"Setting light {message._where}{message._interface_log_text} HSV color to ({h}°, {s}%, {v}%)."
+        return message
+
+    @classmethod
+    def get_rgb_color(cls, where):
+        return cls.get_hsv_color(where)
 
     @classmethod
     def set_rgb_color(cls, where, r: int, g: int, b: int):
         r = max(0, min(255, int(r)))
         g = max(0, min(255, int(g)))
         b = max(0, min(255, int(b)))
-        message = cls(f"*#1*{where}*#12*{r}*{g}*{b}##")
-        message._human_readable_log = f"Setting light {message._where}{message._interface_log_text} RGB color to ({r}, {g}, {b})."
-        return message
+        h_ratio, s_ratio, v_ratio = colorsys.rgb_to_hsv(r / 255.0, g / 255.0, b / 255.0)
+        h = int(round(h_ratio * 360)) % 360
+        s = int(round(s_ratio * 100))
+        v = int(round(v_ratio * 100))
+        return cls.set_hsv_color(where, h, s, v)
 
     @classmethod
     def flash(cls, where, _frequency=0.5, _freqency=None):
@@ -2239,6 +2295,48 @@ class OWNHeatingCommand(OWNCommand):
         message._human_readable_log = (
             f"Setting {zone_name} fan speed to {speed_code}."
         )
+        return message
+
+    @classmethod
+    def set_central_mode(cls, where: str = "#0", mode: str = CLIMATE_MODE_HEAT):
+        """Set operation mode for Central Unit (3550 99-zone or 4695 4-zone)."""
+        mode_map = {
+            CLIMATE_MODE_OFF: 100,
+            CLIMATE_MODE_HEAT: 101,
+            CLIMATE_MODE_COOL: 102,
+            CLIMATE_MODE_AUTO: 103,
+            "antifreeze": 110,
+            "protection": 111,
+        }
+        mode_code = mode_map.get(mode)
+        if mode_code is None:
+            raise ValueError(f"Unsupported central unit mode: {mode}")
+        message = cls(f"*4*{mode_code}*{where}##")
+        message._human_readable_log = (
+            f"Setting Central Unit {where} mode to '{mode}' (code {mode_code})."
+        )
+        return message
+
+    @classmethod
+    def set_central_temperature(
+        cls, where: str = "#0", temperature: float = 20.0, mode: str = CLIMATE_MODE_HEAT
+    ):
+        """Set master setpoint temperature on Central Unit."""
+        temperature = round(temperature * 2) / 2
+        temperature = max(5.0, min(40.0, temperature))
+        temp_code = int(temperature * 10)
+        mode_code = 1 if mode == CLIMATE_MODE_HEAT else 2
+        message = cls(f"*#4*{where}*#14*{temp_code:04d}*{mode_code}##")
+        message._human_readable_log = (
+            f"Setting Central Unit {where} setpoint to {temperature}°C in mode '{mode}'."
+        )
+        return message
+
+    @classmethod
+    def central_status(cls, where: str = "#0"):
+        """Query Central Unit status."""
+        message = cls(f"*#4*{where}*14##")
+        message._human_readable_log = f"Requesting Central Unit {where} status."
         return message
 
 
@@ -2568,6 +2666,80 @@ class OWNDryContactCommand(OWNCommand):
     def status(cls, where):
         message = cls(f"*#25*{where}##")
         message._human_readable_log = f"Requesting dry contact {where} status."
+        return message
+
+
+class OWNCenCommand(OWNCommand):
+    """Command builder for WHO=15 CEN scenario pushbuttons."""
+
+    @classmethod
+    def press(cls, where: str, button: int | str = 1) -> OWNCenCommand:
+        """Short pressure on CEN button (*15*1*<where>#<button>##)."""
+        target = f"{where}#{button}" if button is not None and "#" not in str(where) else str(where)
+        message = cls(f"*15*1*{target}##")
+        message._human_readable_log = (
+            f"Short press on button {button} of CEN object {where}."
+        )
+        return message
+
+    @classmethod
+    def start_long_press(cls, where: str, button: int | str = 1) -> OWNCenCommand:
+        """Start of long pressure on CEN button (*15*0*<where>#<button>##)."""
+        target = f"{where}#{button}" if button is not None and "#" not in str(where) else str(where)
+        message = cls(f"*15*0*{target}##")
+        message._human_readable_log = (
+            f"Start long press on button {button} of CEN object {where}."
+        )
+        return message
+
+    @classmethod
+    def release(cls, where: str, button: int | str = 1) -> OWNCenCommand:
+        """Release after long pressure on CEN button (*15*2*<where>#<button>##)."""
+        target = f"{where}#{button}" if button is not None and "#" not in str(where) else str(where)
+        message = cls(f"*15*2*{target}##")
+        message._human_readable_log = (
+            f"Release button {button} of CEN object {where}."
+        )
+        return message
+
+
+class OWNCenPlusCommand(OWNCommand):
+    """Command builder for WHO=25 CEN+ scenario pushbuttons."""
+
+    @classmethod
+    def press(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
+        """CEN+ short press event (*25*21#<button>*<where>##)."""
+        message = cls(f"*25*21#{button}*{where}##")
+        message._human_readable_log = (
+            f"CEN+ short press on button {button} of module {where}."
+        )
+        return message
+
+    @classmethod
+    def start_long_press(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
+        """CEN+ start long press event (*25*22#<button>*<where>##)."""
+        message = cls(f"*25*22#{button}*{where}##")
+        message._human_readable_log = (
+            f"CEN+ start long press on button {button} of module {where}."
+        )
+        return message
+
+    @classmethod
+    def release(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
+        """CEN+ release after long press (*25*24#<button>*<where>##)."""
+        message = cls(f"*25*24#{button}*{where}##")
+        message._human_readable_log = (
+            f"CEN+ release button {button} of module {where}."
+        )
+        return message
+
+    @classmethod
+    def still_held(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
+        """CEN+ heartbeat while still held (*25*23#<button>*<where>##)."""
+        message = cls(f"*25*23#{button}*{where}##")
+        message._human_readable_log = (
+            f"CEN+ button {button} of module {where} still held."
+        )
         return message
 
 

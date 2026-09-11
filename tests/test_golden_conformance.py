@@ -8,7 +8,15 @@ from pathlib import Path
 from typing import Any, Dict, List
 
 import pytest
-from OWNd.message import OWNAutomationCommand, OWNLightingCommand, OWNMessage, OWNSignaling
+from OWNd.message import (
+    OWNAutomationCommand,
+    OWNCenCommand,
+    OWNCenPlusCommand,
+    OWNHeatingCommand,
+    OWNLightingCommand,
+    OWNMessage,
+    OWNSignaling,
+)
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GOLDEN_DIR = REPO_ROOT / "tests" / "golden"
@@ -142,6 +150,9 @@ def test_golden_frame_builder_parity(fixture: Dict[str, Any]):
     class_map = {
         "OWNLightingCommand": OWNLightingCommand,
         "OWNAutomationCommand": OWNAutomationCommand,
+        "OWNCenCommand": OWNCenCommand,
+        "OWNCenPlusCommand": OWNCenPlusCommand,
+        "OWNHeatingCommand": OWNHeatingCommand,
     }
     cls = class_map.get(builder["class"])
     assert cls is not None, f"Unknown builder class {builder['class']}"

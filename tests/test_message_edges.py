@@ -1341,17 +1341,31 @@ def test_lighting_color_temperature_and_rgb():
     assert msg_ct_unsup.supports_color_temp is False
     assert "reports tunable white is not supported" in msg_ct_unsup.human_readable_log
 
-    # Valid RGB reading
-    msg_rgb = OWNEvent.parse("*#1*25#4#02*12*255*100*50##")
-    assert isinstance(msg_rgb, OWNLightingEvent)
-    assert msg_rgb.rgb == (255, 100, 50)
-    assert msg_rgb.supports_rgb is True
+    # Valid HSV reading (Dimension 12: Hue=255, Saturation=100%, Value=50%)
+    msg_hsv = OWNEvent.parse("*#1*25#4#02*12*255*100*50##")
+    assert isinstance(msg_hsv, OWNLightingEvent)
+    assert msg_hsv.hue == 255
+    assert msg_hsv.saturation == 100
+    assert msg_hsv.value == 50
+    assert msg_hsv.hs == (255, 100)
+    assert msg_hsv.hsv == (255, 100, 50)
+    assert msg_hsv.supports_hsv is True
+    assert msg_hsv.supports_rgb is True
+    assert msg_hsv.rgb == (32, 0, 128)
+    assert "HSV color is (255°, 100%, 50%)" in msg_hsv.human_readable_log
 
-    # Sentinel RGB (unsupported)
-    msg_rgb_unsup = OWNEvent.parse("*#1*25#4#02*12*511*127*255##")
-    assert isinstance(msg_rgb_unsup, OWNLightingEvent)
-    assert msg_rgb_unsup.rgb is None
-    assert msg_rgb_unsup.supports_rgb is False
+    # Sentinel HSV (unsupported: 511, 127, 255)
+    msg_hsv_unsup = OWNEvent.parse("*#1*25#4#02*12*511*127*255##")
+    assert isinstance(msg_hsv_unsup, OWNLightingEvent)
+    assert msg_hsv_unsup.hue is None
+    assert msg_hsv_unsup.saturation is None
+    assert msg_hsv_unsup.value is None
+    assert msg_hsv_unsup.hs is None
+    assert msg_hsv_unsup.hsv is None
+    assert msg_hsv_unsup.rgb is None
+    assert msg_hsv_unsup.supports_hsv is False
+    assert msg_hsv_unsup.supports_rgb is False
+    assert "reports HSV color is not supported" in msg_hsv_unsup.human_readable_log
 
     # Commands
     cmd_ct_get = OWNLightingCommand.get_color_temperature("25#4#02")
@@ -1360,9 +1374,31 @@ def test_lighting_color_temperature_and_rgb():
     cmd_ct_set = OWNLightingCommand.set_color_temperature("25#4#02", 370)
     assert cmd_ct_set._raw == "*#1*25#4#02*#14*370##"
 
+    cmd_hsv_get = OWNLightingCommand.get_hsv_color("25#4#02")
+    assert cmd_hsv_get._raw == "*#1*25#4#02*12##"
+
+    cmd_hsv_set = OWNLightingCommand.set_hsv_color("25#4#02", 255, 100, 50)
+    assert cmd_hsv_set._raw == "*#1*25#4#02*#12*255*100*50##"
+
     cmd_rgb_get = OWNLightingCommand.get_rgb_color("25#4#02")
     assert cmd_rgb_get._raw == "*#1*25#4#02*12##"
 
-    cmd_rgb_set = OWNLightingCommand.set_rgb_color("25#4#02", 255, 128, 64)
-    assert cmd_rgb_set._raw == "*#1*25#4#02*#12*255*128*64##"
+    cmd_rgb_set = OWNLightingCommand.set_rgb_color("25#4#02", 255, 0, 0)
+    assert cmd_rgb_set._raw == "*#1*25#4#02*#12*0*100*100##"
+
+
+def test_phase2_coverage_edges():
+    """Verify edges in Phase 2 commands for 100% test coverage."""
+    import pytest
+    from OWNd.message import OWNCenPlusCommand, OWNHeatingCommand
+
+    # OWNCenPlusCommand.still_held
+    cmd = OWNCenPlusCommand.still_held("12", 1)
+    assert str(cmd) == "*25*23#1*12##"
+    assert "still held" in cmd.human_readable_log
+
+    # Unsupported central unit mode ValueError
+    with pytest.raises(ValueError, match="Unsupported central unit mode"):
+        OWNHeatingCommand.set_central_mode("#0", "invalid_mode")
+
 
