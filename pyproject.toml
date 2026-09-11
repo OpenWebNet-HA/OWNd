@@ -2,9 +2,6 @@
 requires = ["setuptools>=84.0.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
-[tool.setuptools.package-data]
-"OWNd" = ["py.typed"]
-
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-p no:homeassistant"
