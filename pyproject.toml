@@ -4,6 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-p no:homeassistant"
 
 [tool.ruff]
 target-version = "py311"
