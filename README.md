@@ -12,6 +12,9 @@
 
 It powers the [Home Assistant MyHOME integration](https://github.com/OpenWebNet-HA/MyHOME) and serves as a standalone Python client for discovering, monitoring, and controlling OpenWebNet bus devices over TCP/IP gateways and serial USB interfaces.
 
+> [!TIP]
+> **🚀 V2 Phase 2 Architecture Now Live**: Phase 2 architecture is active across **OWNd** and **MyHOME**! Featuring strongly typed CEN / CEN+ scenario command builders and device triggers (**P2**), Thermoregulation Central Unit (3550 / 4695) master mode and zone coordination (**P4**), Multi-Gateway routing and plant isolation (**P6**), DALI Tunable White support, and 100.0% test coverage verified against the OpenWebNet Golden Corpus.
+
 ---
 
 ## Key Features
@@ -19,6 +22,7 @@ It powers the [Home Assistant MyHOME integration](https://github.com/OpenWebNet-
 - **Hardened Dual-Session Architecture**: Decouples real-time bus event monitoring (`OWNEventSession`) from command and query execution (`OWNCommandSession`), preventing command bursts from interrupting event monitoring.
 - **Strongly Typed CEN / CEN+ Command Builders (P2)**: Dedicated fluent builders (`OWNCenCommand`, `OWNCenPlusCommand`) with strict OpenWebNet golden corpus frame parity for short press, start pressure, still held, and release actions across pushbuttons and rotary encoders.
 - **Thermoregulation Central Unit Coordination (P4)**: Dedicated builder support for 3550 (`#0`) and 4695 (`#0#1`) central units (`OWNHeatingCommand.set_central_mode`, `set_central_temperature`, `set_central_antifreeze`, `set_central_thermal_protection`, `set_central_off`), enabling master heating/cooling state distribution.
+- **DALI Tunable White & Color Temperature**: Built-in support for DALI DT8 ballasts (F429 / F461) with Dimension 14 color temperature encoding and bidirectional Kelvin/mireds conversion.
 - **OpenWebNet Golden Corpus Validation**: Cross-checked and validated against the community OpenWebNet Golden Corpus (75+ real-world captured frame scenarios) ensuring exact frame encodings, dimensions, and edge cases.
 - **Serial & USB Dongle Support**: Built-in single-channel serial transport (`AsyncSerialTransport`) for the Legrand 3578 USB/ZigBee interface with in-band event and command-reply demultiplexing.
 - **Connection Resilience**:
@@ -65,7 +69,7 @@ OWNd parses OpenWebNet frames and dispatches typed commands and events across th
 
 | WHO | Subsystem | Description & Capabilities | Event / Command Classes |
 |:---:|:---|:---|:---|
-| **1** | Lighting | On/off switching, dimming level (0–100%), status queries | `OWNLightingCommand`, `OWNLightingEvent` |
+| **1** | Lighting | On/off switching, dimming level (0–100%), DALI Tunable White (Dimension 14, 2000K–6535K / mireds), status queries | `OWNLightingCommand`, `OWNLightingEvent` |
 | **2** | Automation | Shutters, blinds, motorized curtains, tilt angles, short & full replies | `OWNAutomationCommand`, `OWNAutomationEvent` |
 | **3** | Load Control | Load shedding status, circuit priority management | `OWNCommand`, `OWNEvent` |
 | **4** | Thermoregulation / Climate | Multi-zone temperature readouts, target adjustments, HVAC modes (Heat/Cool/Auto/Off), local offsets, fan coil speeds, valve states, Central Unit 3550/4695 master coordination | `OWNHeatingCommand`, `OWNHeatingEvent` |
