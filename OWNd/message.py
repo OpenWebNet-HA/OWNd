@@ -1925,8 +1925,10 @@ class OWNCommand(OWNMessage):
                 )
             if _who == 13:
                 return OWNGatewayCommand(data)
-            if _who == 14 or _who == 15 or _who == 17:
+            if _who == 14 or _who == 17:
                 return cls(data)
+            if _who == 15:
+                return OWNCenCommand(data)
             if _who == 16:
                 return OWNSoundCommand(data)
             if _who == 18:
@@ -1943,7 +1945,7 @@ class OWNCommand(OWNMessage):
                 except ValueError:
                     what_code = None
                 if what_code is not None and 21 <= what_code <= 28:
-                    return cls(data)
+                    return OWNCenPlusCommand(data)
                 return OWNDryContactCommand(data)
             elif _who > 1000:
                 return cls(data)
@@ -2239,6 +2241,48 @@ class OWNHeatingCommand(OWNCommand):
         message._human_readable_log = (
             f"Setting {zone_name} fan speed to {speed_code}."
         )
+        return message
+
+    @classmethod
+    def set_central_mode(cls, where: str = "#0", mode: str = CLIMATE_MODE_HEAT):
+        """Set operation mode for Central Unit (3550 99-zone or 4695 4-zone)."""
+        mode_map = {
+            CLIMATE_MODE_OFF: 100,
+            CLIMATE_MODE_HEAT: 101,
+            CLIMATE_MODE_COOL: 102,
+            CLIMATE_MODE_AUTO: 103,
+            "antifreeze": 110,
+            "protection": 111,
+        }
+        mode_code = mode_map.get(mode)
+        if mode_code is None:
+            raise ValueError(f"Unsupported central unit mode: {mode}")
+        message = cls(f"*4*{mode_code}*{where}##")
+        message._human_readable_log = (
+            f"Setting Central Unit {where} mode to '{mode}' (code {mode_code})."
+        )
+        return message
+
+    @classmethod
+    def set_central_temperature(
+        cls, where: str = "#0", temperature: float = 20.0, mode: str = CLIMATE_MODE_HEAT
+    ):
+        """Set master setpoint temperature on Central Unit."""
+        temperature = round(temperature * 2) / 2
+        temperature = max(5.0, min(40.0, temperature))
+        temp_code = int(temperature * 10)
+        mode_code = 1 if mode == CLIMATE_MODE_HEAT else 2
+        message = cls(f"*#4*{where}*#14*{temp_code:04d}*{mode_code}##")
+        message._human_readable_log = (
+            f"Setting Central Unit {where} setpoint to {temperature}°C in mode '{mode}'."
+        )
+        return message
+
+    @classmethod
+    def central_status(cls, where: str = "#0"):
+        """Query Central Unit status."""
+        message = cls(f"*#4*{where}*14##")
+        message._human_readable_log = f"Requesting Central Unit {where} status."
         return message
 
 
@@ -2568,6 +2612,80 @@ class OWNDryContactCommand(OWNCommand):
     def status(cls, where):
         message = cls(f"*#25*{where}##")
         message._human_readable_log = f"Requesting dry contact {where} status."
+        return message
+
+
+class OWNCenCommand(OWNCommand):
+    """Command builder for WHO=15 CEN scenario pushbuttons."""
+
+    @classmethod
+    def press(cls, where: str, button: int | str = 1) -> OWNCenCommand:
+        """Short pressure on CEN button (*15*1*<where>#<button>##)."""
+        target = f"{where}#{button}" if button is not None and "#" not in str(where) else str(where)
+        message = cls(f"*15*1*{target}##")
+        message._human_readable_log = (
+            f"Short press on button {button} of CEN object {where}."
+        )
+        return message
+
+    @classmethod
+    def start_long_press(cls, where: str, button: int | str = 1) -> OWNCenCommand:
+        """Start of long pressure on CEN button (*15*0*<where>#<button>##)."""
+        target = f"{where}#{button}" if button is not None and "#" not in str(where) else str(where)
+        message = cls(f"*15*0*{target}##")
+        message._human_readable_log = (
+            f"Start long press on button {button} of CEN object {where}."
+        )
+        return message
+
+    @classmethod
+    def release(cls, where: str, button: int | str = 1) -> OWNCenCommand:
+        """Release after long pressure on CEN button (*15*2*<where>#<button>##)."""
+        target = f"{where}#{button}" if button is not None and "#" not in str(where) else str(where)
+        message = cls(f"*15*2*{target}##")
+        message._human_readable_log = (
+            f"Release button {button} of CEN object {where}."
+        )
+        return message
+
+
+class OWNCenPlusCommand(OWNCommand):
+    """Command builder for WHO=25 CEN+ scenario pushbuttons."""
+
+    @classmethod
+    def press(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
+        """CEN+ short press event (*25*21#<button>*<where>##)."""
+        message = cls(f"*25*21#{button}*{where}##")
+        message._human_readable_log = (
+            f"CEN+ short press on button {button} of module {where}."
+        )
+        return message
+
+    @classmethod
+    def start_long_press(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
+        """CEN+ start long press event (*25*22#<button>*<where>##)."""
+        message = cls(f"*25*22#{button}*{where}##")
+        message._human_readable_log = (
+            f"CEN+ start long press on button {button} of module {where}."
+        )
+        return message
+
+    @classmethod
+    def release(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
+        """CEN+ release after long press (*25*24#<button>*<where>##)."""
+        message = cls(f"*25*24#{button}*{where}##")
+        message._human_readable_log = (
+            f"CEN+ release button {button} of module {where}."
+        )
+        return message
+
+    @classmethod
+    def still_held(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
+        """CEN+ heartbeat while still held (*25*23#<button>*<where>##)."""
+        message = cls(f"*25*23#{button}*{where}##")
+        message._human_readable_log = (
+            f"CEN+ button {button} of module {where} still held."
+        )
         return message
 
 
