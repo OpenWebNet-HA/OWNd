@@ -1134,6 +1134,19 @@ class TestProtocolFixesAudit:
         assert evt_time_no_tz._minute == "30"
         assert evt_time_no_tz._second == "45"
 
+        # F454 broadcast with unset timezone 999 sentinel
+        evt_f454_999 = OWNGatewayEvent("*#13**0*21*06*40*999##")
+        assert evt_f454_999._hour == "21"
+        assert evt_f454_999._minute == "06"
+        assert evt_f454_999._second == "40"
+        assert evt_f454_999._timezone == ""
+        assert evt_f454_999._time == datetime.time(21, 6, 40)
+
+        cmd_f454_999 = OWNGatewayCommand("*#13**0*21*06*40*999##")
+        assert cmd_f454_999._hour == "21"
+        assert cmd_f454_999._timezone == ""
+        assert cmd_f454_999._time == datetime.time(21, 6, 40)
+
         # OWNGatewayCommand dimension 0, 1, 22 bounds safety
         cmd_dim0 = OWNGatewayCommand("*#13**#0*12*00*00##")
         assert cmd_dim0._hour == "12"
