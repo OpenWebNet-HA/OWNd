@@ -61,7 +61,7 @@ def _validate_gateway_clock_values(
 def _gateway_timezone(values: list[str]) -> str:
     """Decode an optional OWN timezone, preserving unspecified local time."""
     value = values[3] if len(values) > 3 else ""
-    if not value:
+    if not value or value == "999":
         return ""
     if re.fullmatch(r"[01]\d{2}", value) is None:
         raise ValueError(f"Invalid gateway timezone: {value!r}")
