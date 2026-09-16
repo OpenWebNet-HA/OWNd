@@ -10,7 +10,8 @@ import logging
 import secrets
 import socket
 import string
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
+from typing import Any
 from urllib.parse import urlparse
 
 from .discovery import find_gateways, get_gateway, get_port
@@ -73,7 +74,7 @@ RECONNECT_PAUSE = 10
 RECONNECT_PAUSE_FATAL = 60
 
 
-def _first_scalar(value, default=None):
+def _first_scalar(value: Any, default: Any = None) -> Any:
     """Return a scalar from legacy tuple/list discovery values."""
     while isinstance(value, (list, tuple)):
         if not value:
@@ -83,7 +84,7 @@ def _first_scalar(value, default=None):
 
 
 class OWNGateway:
-    def __init__(self, discovery_info: dict):
+    def __init__(self, discovery_info: Mapping[str, Any] | dict[str, Any]) -> None:
         # Attributes potentially provided by user
         self.address = discovery_info.get("address")
         pw = discovery_info.get("password")
@@ -174,7 +175,9 @@ class OWNGateway:
         self._log_id = value
 
     @classmethod
-    async def get_first_available_gateway(cls, password: str | None = None):
+    async def get_first_available_gateway(
+        cls, password: str | None = None
+    ) -> OWNGateway | None:
         local_gateways = await find_gateways()
         if not local_gateways:
             return None
@@ -182,14 +185,16 @@ class OWNGateway:
         return cls(local_gateways[0])
 
     @classmethod
-    async def find_from_address(cls, address: str):
+    async def find_from_address(cls, address: str | None) -> OWNGateway | None:
         if address is not None:
             gateway = await get_gateway(address)
             return cls(gateway) if gateway is not None else None
         return await cls.get_first_available_gateway()
 
     @classmethod
-    async def build_from_discovery_info(cls, discovery_info: dict):
+    async def build_from_discovery_info(
+        cls, discovery_info: Mapping[str, Any] | dict[str, Any]
+    ) -> OWNGateway:
         # Work on our own copy: never mutate the caller's dict.
         discovery_info = dict(discovery_info)
         if (
@@ -379,11 +384,11 @@ class OWNSession:
         self._type = connection_type.lower()
 
     @classmethod
-    async def test_gateway(cls, gateway: OWNGateway) -> dict:
+    async def test_gateway(cls, gateway: OWNGateway) -> dict[str, Any]:
         connection = cls(gateway)
         return await connection.test_connection()
 
-    async def test_connection(self) -> dict:
+    async def test_connection(self) -> dict[str, Any]:
         assert self._gateway is not None
         retry_count = 0
         retry_timer = 1
@@ -450,7 +455,7 @@ class OWNSession:
             with contextlib.suppress(Exception):
                 await self.close()
 
-    async def connect(self):
+    async def connect(self) -> dict[str, Any] | None:
         assert self._gateway is not None
         self._logger.debug("%s Opening %s session.", self._log_id, self._type)
 
@@ -529,7 +534,7 @@ class OWNSession:
             )
             await asyncio.sleep(wait)
 
-    async def _reconnect(self) -> dict | None:
+    async def _reconnect(self) -> dict[str, Any] | None:
         """Tear down a (likely broken) connection and open a fresh one.
 
         Connection state is intentionally NOT flipped to False here: a routine
@@ -573,7 +578,7 @@ class OWNSession:
                 "%s %s session closed.", self._log_id, self._type.capitalize()
             )
 
-    async def _negotiate(self) -> dict:
+    async def _negotiate(self) -> dict[str, Any]:
         """Negotiate one session within an absolute deadline."""
         try:
             async with asyncio.timeout(NEGOTIATION_TOTAL_TIMEOUT):
@@ -587,7 +592,7 @@ class OWNSession:
             )
             return {"Success": False, "Message": "negotiation_timeout"}
 
-    async def _negotiate_exchange(self) -> dict:
+    async def _negotiate_exchange(self) -> dict[str, Any]:
         """Perform the bounded frame exchange for session negotiation."""
         # Programming-error guards (and mypy narrowing): negotiation is only
         # ever entered right after a successful open_connection() on a
@@ -722,8 +727,12 @@ class OWNSession:
                             )
                             # Constant-time comparison: never leak through
                             # timing how much of the digest matched.
-                            if expected_response is not None and hmac.compare_digest(
-                                hmac_response, expected_response
+                            if (
+                                expected_response is not None
+                                and hmac_response is not None
+                                and hmac.compare_digest(
+                                    hmac_response, expected_response
+                                )
                             ):
                                 self._stream_writer.write(b"*#*1##")
                                 await self._stream_writer.drain()
@@ -858,7 +867,9 @@ class OWNSession:
 
         return {"Success": not error, "Message": error_message}
 
-    def _get_own_password(self, password, nonce, test: bool = False):
+    def _get_own_password(
+        self, password: str | int, nonce: str, test: bool = False
+    ) -> int:
         # Retained for compatibility with the previously vendored implementation.
         # Do not print password-derived intermediate values even in test mode.
         del test
@@ -913,7 +924,7 @@ class OWNSession:
 
     def _encode_hmac_password(
         self, method: str, password: str, nonce_a: str, nonce_b: str
-    ):
+    ) -> str | None:
         # SHA-1 here is mandated by the OpenWebNet protocol: the gateway
         # selects the digest, the client cannot opt out. See nosec below.
         if method == "sha1":
@@ -942,7 +953,7 @@ class OWNSession:
 
     def _decode_hmac_response(
         self, method: str, password: str, nonce_a: str, nonce_b: str
-    ):
+    ) -> str | None:
         # SHA-1 here is mandated by the OpenWebNet protocol: the gateway
         # selects the digest, the client cannot opt out. See nosec below.
         if method == "sha1":
@@ -1003,7 +1014,7 @@ class OWNEventSession(OWNSession):
         )
         self._keepalive_task: asyncio.Task[None] | None = None
 
-    async def connect(self):
+    async def connect(self) -> dict[str, Any] | None:
         await self._stop_keepalive()
         result = await super().connect()
         if result is not None and result.get("Success"):
@@ -1050,7 +1061,9 @@ class OWNEventSession(OWNSession):
         await super()._close_streams()
 
     @classmethod
-    async def connect_to_gateway(cls, gateway: OWNGateway):
+    async def connect_to_gateway(
+        cls, gateway: OWNGateway
+    ) -> dict[str, Any] | None:
         connection = cls(gateway)
         try:
             return await connection.connect()
@@ -1167,7 +1180,9 @@ class OWNCommandSession(OWNSession):
         self._send_lock = asyncio.Lock()
 
     @classmethod
-    async def send_to_gateway(cls, message: str, gateway: OWNGateway):
+    async def send_to_gateway(
+        cls, message: str, gateway: OWNGateway
+    ) -> list[OWNMessage | str] | bool | None:
         connection = cls(gateway)
         try:
             await connection.connect()
@@ -1177,7 +1192,9 @@ class OWNCommandSession(OWNSession):
                 await connection.close()
 
     @classmethod
-    async def connect_to_gateway(cls, gateway: OWNGateway):
+    async def connect_to_gateway(
+        cls, gateway: OWNGateway
+    ) -> dict[str, Any] | None:
         connection = cls(gateway)
         try:
             return await connection.connect()
@@ -1285,7 +1302,7 @@ class OWNCommandSession(OWNSession):
         return signaling
 
     async def send(
-        self, message, is_status_request: bool = False
+        self, message: str, is_status_request: bool = False
     ) -> list[OWNMessage | str] | bool | None:
         """Send the attached message on an existing 'command' connection,
         actively reconnecting it if it had been reset.
@@ -1302,7 +1319,7 @@ class OWNCommandSession(OWNSession):
             return await self._locked_send(message, is_status_request)
 
     async def _locked_send(
-        self, message, is_status_request: bool = False
+        self, message: str, is_status_request: bool = False
     ) -> list[OWNMessage | str] | bool | None:
         # One retry is enough for an immediate NACK or for a connection that
         # was already unavailable.  More importantly, never replay a command

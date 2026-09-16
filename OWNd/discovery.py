@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import AsyncIterator, Iterable, Mapping
+from contextlib import asynccontextmanager, suppress
 import email.parser
 import socket
-from contextlib import asynccontextmanager, suppress
 from typing import Any
 from urllib.parse import urlparse
 from xml.parsers.expat import ExpatError
@@ -35,7 +36,7 @@ GATEWAY_USN_PREFIXES = (
 )
 
 
-def _node_text(xml, tag: str, default: str | None = None) -> str | None:
+def _node_text(xml: Any, tag: str, default: str | None = None) -> str | None:
     """Text of the first <tag> element, or default if missing/empty.
 
     Guards against malformed or non-conforming XML (and HTML error pages):
@@ -44,26 +45,34 @@ def _node_text(xml, tag: str, default: str | None = None) -> str | None:
     nodes = xml.getElementsByTagName(tag)
     if not nodes or not nodes[0].childNodes:
         return default
-    return nodes[0].childNodes[0].data
+    val = nodes[0].childNodes[0].data
+    return str(val) if val is not None else default
 
 
 class SSDPMessage:
     """Simplified HTTP message to serve as a SSDP message."""
 
-    def __init__(self, version="HTTP/1.1", headers=None):
+    def __init__(
+        self,
+        version: str = "HTTP/1.1",
+        headers: Iterable[tuple[str, str]] | Mapping[str, str] | None = None,
+    ) -> None:
+        raw_headers: Iterable[tuple[str, str]]
         if headers is None:
-            headers = []
-        elif isinstance(headers, dict):
-            headers = headers.items()
+            raw_headers = []
+        elif isinstance(headers, Mapping):
+            raw_headers = headers.items()
+        else:
+            raw_headers = headers
 
         self.version = version
-        self.headers = list(headers)
+        self.headers: list[tuple[str, str]] = list(raw_headers)
         self.headers_dictionary: dict[str, str] = {}
         for header in self.headers:
             self.headers_dictionary.setdefault(header[0], header[1])
 
     @classmethod
-    def parse(cls, msg):
+    def parse(cls, msg: str) -> SSDPMessage:
         """
         Parse message a string into a :class:`SSDPMessage` instance.
         Args:
@@ -74,7 +83,7 @@ class SSDPMessage:
         raise NotImplementedError()
 
     @classmethod
-    def parse_headers(cls, msg):
+    def parse_headers(cls, msg: str) -> list[tuple[str, str]]:
         """
         Parse HTTP headers.
         Args:
@@ -84,11 +93,11 @@ class SSDPMessage:
         """
         return list(email.parser.Parser().parsestr(msg).items())
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Return full HTTP message."""
         raise NotImplementedError()
 
-    def __bytes__(self):
+    def __bytes__(self) -> bytes:
         """Return full HTTP message as bytes."""
         return self.__str__().encode().replace(b"\n", b"\r\n") + b"\r\n\r\n"
 
@@ -96,13 +105,18 @@ class SSDPMessage:
 class SSDPResponse(SSDPMessage):
     """Simple Service Discovery Protocol (SSDP) response."""
 
-    def __init__(self, status_code, reason, **kwargs):
+    def __init__(
+        self,
+        status_code: int | str,
+        reason: str,
+        **kwargs: Any,
+    ) -> None:
         self.status_code = int(status_code)
         self.reason = reason
         super().__init__(**kwargs)
 
     @classmethod
-    def parse(cls, msg):
+    def parse(cls, msg: str) -> SSDPResponse:
         """Parse message string to response object."""
         lines = msg.splitlines()
         version, status_code, reason = lines[0].split()
@@ -111,7 +125,7 @@ class SSDPResponse(SSDPMessage):
             version=version, status_code=status_code, reason=reason, headers=headers
         )
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Return complete SSDP response."""
         lines = []
         lines.append(" ".join([self.version, str(self.status_code), self.reason]))
@@ -123,20 +137,26 @@ class SSDPResponse(SSDPMessage):
 class SSDPRequest(SSDPMessage):
     """Simple Service Discovery Protocol (SSDP) request."""
 
-    def __init__(self, method, uri="*", version="HTTP/1.1", headers=None):
+    def __init__(
+        self,
+        method: str,
+        uri: str = "*",
+        version: str = "HTTP/1.1",
+        headers: Iterable[tuple[str, str]] | Mapping[str, str] | None = None,
+    ) -> None:
         self.method = method
         self.uri = uri
         super().__init__(version=version, headers=headers)
 
     @classmethod
-    def parse(cls, msg):
+    def parse(cls, msg: str) -> SSDPRequest:
         """Parse message string to request object."""
         lines = msg.splitlines()
         method, uri, version = lines[0].split()
         headers = cls.parse_headers("\r\n".join(lines[1:]))
         return cls(version=version, uri=uri, method=method, headers=headers)
 
-    def __str__(self):
+    def __str__(self) -> str:
         """Return complete SSDP request."""
         lines = []
         lines.append(" ".join([self.method, self.uri, self.version]))
@@ -152,7 +172,11 @@ class SimpleServiceDiscoveryProtocol(asyncio.DatagramProtocol):
     https://en.wikipedia.org/wiki/Simple_Service_Discovery_Protocol
     """
 
-    def __init__(self, recvq, excq):
+    def __init__(
+        self,
+        recvq: asyncio.Queue[dict[str, Any]],
+        excq: asyncio.Queue[Exception],
+    ) -> None:
         """
         @param recvq    - asyncio.Queue for new datagrams
         @param excq     - asyncio.Queue for exceptions
@@ -161,25 +185,25 @@ class SimpleServiceDiscoveryProtocol(asyncio.DatagramProtocol):
         self._excq = excq
 
         # Transports are connected at the time a connection is made.
-        self._transport = None
+        self._transport: asyncio.BaseTransport | None = None
 
-    def connection_made(self, transport):
+    def connection_made(self, transport: asyncio.BaseTransport) -> None:
         self._transport = transport
 
-    def datagram_received(self, data, addr):
+    def datagram_received(self, data: bytes, addr: tuple[str, int]) -> None:
         # Anything on the network may answer an M-SEARCH: treat every datagram
         # as untrusted and never raise from this callback (an exception here
         # is only swallowed and logged by the event loop as an error).
         try:
-            data = data.decode()
+            decoded_data = data.decode()
         except UnicodeDecodeError:
             return
 
-        if not data.startswith("HTTP/"):
+        if not decoded_data.startswith("HTTP/"):
             return
 
         try:
-            response = SSDPResponse.parse(data)
+            response = SSDPResponse.parse(decoded_data)
         except (ValueError, IndexError):
             # Malformed status line or headers: not a usable SSDP response.
             return
@@ -201,10 +225,10 @@ class SimpleServiceDiscoveryProtocol(asyncio.DatagramProtocol):
                 }
             )
 
-    def error_received(self, exc):
+    def error_received(self, exc: Exception) -> None:
         self._excq.put_nowait(exc)
 
-    def connection_lost(self, exc):
+    def connection_lost(self, exc: Exception | None) -> None:
         if exc is not None:
             self._excq.put_nowait(exc)
 
@@ -214,7 +238,9 @@ class SimpleServiceDiscoveryProtocol(asyncio.DatagramProtocol):
 
 
 @asynccontextmanager
-async def _client_session(session: aiohttp.ClientSession | None):
+async def _client_session(
+    session: aiohttp.ClientSession | None,
+) -> AsyncIterator[aiohttp.ClientSession]:
     """Yield the caller-provided aiohttp session, or a short-lived one.
 
     Passing in Home Assistant's shared session avoids spinning up (and tearing
@@ -291,7 +317,7 @@ async def get_port(
 
 async def _get_scpd_details(
     scpd_location: str, session: aiohttp.ClientSession | None = None
-) -> dict:
+) -> dict[str, Any]:
 
     discovery_info: dict[str, Any] = {}
 
@@ -320,9 +346,11 @@ async def _get_scpd_details(
     return discovery_info
 
 
-async def find_gateways(session: aiohttp.ClientSession | None = None) -> list[dict]:
+async def find_gateways(
+    session: aiohttp.ClientSession | None = None,
+) -> list[dict[str, Any]]:
 
-    return_list = []
+    return_list: list[dict[str, Any]] = []
 
     # Start the asyncio loop.
     loop = asyncio.get_running_loop()
@@ -380,7 +408,7 @@ async def find_gateways(session: aiohttp.ClientSession | None = None) -> list[di
 
 async def get_gateway(
     address: str, session: aiohttp.ClientSession | None = None
-) -> dict | None:
+) -> dict[str, Any] | None:
     # Prefer a direct descriptor lookup. SSDP multicast is commonly blocked
     # at container and VM boundaries even when the gateway itself is reachable.
     for port in (49153, 80):

@@ -4,13 +4,14 @@
 import argparse
 import asyncio
 import logging
+from typing import Any
 
 from .message import OWNMessage
 
 from .connection import OWNEventSession, OWNGateway
 
 
-async def main(arguments: dict, connection: OWNEventSession) -> None:
+async def main(arguments: dict[str, Any], connection: OWNEventSession) -> None:
     """Package entry point!"""
 
     address = (
@@ -33,11 +34,8 @@ async def main(arguments: dict, connection: OWNEventSession) -> None:
         if "serialNumber" in arguments and isinstance(arguments["serialNumber"], str)
         else None
     )
-    logger = (
-        arguments["logger"]
-        if "logger" in arguments and isinstance(arguments["logger"], logging.Logger)
-        else None
-    )
+    raw_logger = arguments.get("logger")
+    logger = raw_logger if isinstance(raw_logger, logging.Logger) else logging.getLogger("OWNd")
 
     logger.info("Starting discovery of a supported gateway via SSDP")
     gateway = await OWNGateway.build_from_discovery_info(

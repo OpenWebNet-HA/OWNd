@@ -2749,7 +2749,7 @@ class OWNSignaling(OWNMessage):
     It is dedicated to signaling messages such as ACK or Authentication negotiation
     """
 
-    def __init__(self, data):  # pylint: disable=super-init-not-called
+    def __init__(self, data: str) -> None:  # pylint: disable=super-init-not-called
         self._raw = data
         self._family = ""
         self._match: re.Match[str] | None = None
@@ -2790,7 +2790,7 @@ class OWNSignaling(OWNMessage):
             self._human_readable_log = "Event session requested."
 
     @property
-    def nonce(self):
+    def nonce(self) -> str | None:
         """Return the authentication nonce IF the message is a nonce message"""
         # NB: is_nonce is a method — referencing it without calling it was
         # always truthy, making this guard ineffective.
@@ -2799,7 +2799,7 @@ class OWNSignaling(OWNMessage):
         return None
 
     @property
-    def sha_version(self):
+    def sha_version(self) -> str | None:
         """Return the authentication SHA version IF the message is a SHA challenge message"""
         if self.is_sha() and self._match is not None:
             return self._match.group(1)
