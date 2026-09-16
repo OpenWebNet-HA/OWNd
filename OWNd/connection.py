@@ -194,7 +194,7 @@ class OWNGateway:
     @classmethod
     async def build_from_discovery_info(
         cls, discovery_info: Mapping[str, Any] | dict[str, Any]
-    ) -> OWNGateway:
+    ) -> OWNGateway | None:
         # Work on our own copy: never mutate the caller's dict.
         discovery_info = dict(discovery_info)
         if (
@@ -364,7 +364,7 @@ class OWNSession:
         return self._gateway
 
     @gateway.setter
-    def gateway(self, gateway: OWNGateway) -> None:
+    def gateway(self, gateway: OWNGateway | None) -> None:
         self._gateway = gateway
 
     @property
@@ -693,7 +693,10 @@ class OWNSession:
                     self._stream_writer.write(b"*#*1##")
                     await self._stream_writer.drain()
                     resulting_message = await read_signaling()
-                    if resulting_message.is_nonce():
+                    if (
+                        resulting_message.is_nonce()
+                        and resulting_message.nonce is not None
+                    ):
                         server_random_string_ra = resulting_message.nonce
                         # Rb must be unpredictable: use a CSPRNG (not `random`).
                         key = "".join(secrets.choice(string.digits) for _ in range(56))
@@ -774,10 +777,14 @@ class OWNSession:
                             resulting_message,
                             self._type,
                         )
-            elif resulting_message.is_nonce():
+            elif (
+                resulting_message.is_nonce()
+                and resulting_message.nonce is not None
+            ):
                 self._logger.debug(
                     "%s Received nonce: `%s`", self._log_id, resulting_message
                 )
+                nonce = resulting_message.nonce
                 if self._gateway.password is not None:
                     if not self._gateway.password.isdecimal():
                         error = True
@@ -787,7 +794,7 @@ class OWNSession:
                             self._log_id,
                         )
                     else:
-                        hashed_password = f"*#{self._get_own_password(self._gateway.password, resulting_message.nonce)}##"  # pylint: disable=line-too-long
+                        hashed_password = f"*#{self._get_own_password(self._gateway.password, nonce)}##"  # pylint: disable=line-too-long
                         self._logger.debug(
                             "%s Sending %s session password.",
                             self._log_id,
@@ -1443,3 +1450,5 @@ class OWNCommandSession(OWNSession):
                     "%s Command session crashed.", self._log_id
                 )
                 return None
+
+        return None
