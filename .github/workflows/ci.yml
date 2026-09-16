@@ -62,8 +62,8 @@ jobs:
           python -m pip install -e . ruff mypy types-python-dateutil types-pytz
       - name: Run Ruff
         run: ruff check OWNd tests setup.py scripts
-      - name: Run mypy
-        run: mypy OWNd
+      - name: Run mypy (library, and the consumer typing contract in tests/typing)
+        run: mypy OWNd tests/typing
       - name: Enforce PyPI library standards & clean decoupling
         run: python scripts/verify_library_standards.py
 

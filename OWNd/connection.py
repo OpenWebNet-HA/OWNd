@@ -1188,7 +1188,7 @@ class OWNCommandSession(OWNSession):
 
     @classmethod
     async def send_to_gateway(
-        cls, message: str, gateway: OWNGateway
+        cls, message: str | OWNMessage, gateway: OWNGateway
     ) -> list[OWNMessage | str] | bool | None:
         connection = cls(gateway)
         try:
@@ -1309,10 +1309,15 @@ class OWNCommandSession(OWNSession):
         return signaling
 
     async def send(
-        self, message: str, is_status_request: bool = False
+        self, message: str | OWNMessage, is_status_request: bool = False
     ) -> list[OWNMessage | str] | bool | None:
         """Send the attached message on an existing 'command' connection,
         actively reconnecting it if it had been reset.
+
+        ``message`` is a raw frame (``"*1*1*11##"``) or any ``OWNMessage`` -
+        typically a command built by ``OWNLightingCommand.switch_on("11")``
+        or parsed by ``OWNCommand.parse()``; it goes on the wire as
+        ``str(message)``.
 
         Concurrency-safe: an internal lock serializes callers sharing this
         session (e.g. ``run_keepalive`` alongside regular commands), so the
@@ -1326,7 +1331,7 @@ class OWNCommandSession(OWNSession):
             return await self._locked_send(message, is_status_request)
 
     async def _locked_send(
-        self, message: str, is_status_request: bool = False
+        self, message: str | OWNMessage, is_status_request: bool = False
     ) -> list[OWNMessage | str] | bool | None:
         # One retry is enough for an immediate NACK or for a connection that
         # was already unavailable.  More importantly, never replay a command
