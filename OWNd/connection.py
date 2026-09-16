@@ -1451,4 +1451,4 @@ class OWNCommandSession(OWNSession):
                 )
                 return None
 
-        return None
+        return None  # pragma: no cover
