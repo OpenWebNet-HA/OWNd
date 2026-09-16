@@ -18,24 +18,16 @@ select = ["E9", "F63", "F7", "F82"]
 [tool.mypy]
 # Keep static analysis aligned with the oldest supported runtime.
 python_version = "3.11"
-check_untyped_defs = true
-ignore_missing_imports = true
-implicit_optional = true
+strict = true
 warn_unused_configs = true
 
-# Existing typing debt is recorded explicitly so new classes of errors fail CI.
-# These exclusions should be removed as the affected modules are modernised.
-disable_error_code = [
-    "arg-type",
-    "assignment",
-    "index",
-    "operator",
-    "return",
-    "return-value",
-    "truthy-function",
-    "union-attr",
-    "var-annotated",
+[[tool.mypy.overrides]]
+module = [
+    "dateutil.*",
+    "defusedxml.*",
+    "serial_asyncio.*",
 ]
+ignore_missing_imports = true
 
 [tool.coverage.run]
 source = ["OWNd"]

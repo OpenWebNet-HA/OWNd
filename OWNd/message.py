@@ -51,6 +51,8 @@ def _validate_gateway_clock_values(
     dimension: int | None, values: list[str]
 ) -> None:
     """Reject truncated gateway clock frames before indexing their values."""
+    if dimension is None:
+        return
     required = {0: 3, 1: 4, 22: 8}.get(dimension)
     if required is not None and len(values) < required:
         raise ValueError(
@@ -105,7 +107,7 @@ class OWNMessage:
 
     """ Base class for all OWN messages """
 
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         self._raw: str = data
         self._human_readable_log: str = self._raw
         self._family: str = ""
@@ -181,7 +183,7 @@ class OWNMessage:
             self._dimension_value = match.group("dimension_value").split("*")[1:]
 
     @classmethod
-    def parse(cls, data) -> OWNMessage | None:
+    def parse(cls, data: str) -> OWNMessage | None:
         if (
             cls._ACK.match(data)
             or cls._NACK.match(data)
@@ -335,13 +337,13 @@ class OWNMessage:
 
     @property
     def group(self) -> int | None:
-        if self.is_group:
+        if self.is_group and self._where is not None:
             return int(self._where[1:])
         return None
 
     @property
     def area(self) -> int | None:
-        if self.is_area:
+        if self.is_area and self._where is not None:
             return 10 if self._where == "100" else int(self._where)
         return None
 
@@ -360,7 +362,7 @@ class OWNEvent(OWNMessage):
     """
 
     @classmethod
-    def parse(cls, data) -> OWNEvent | None:
+    def parse(cls, data: str) -> OWNEvent | None:
         _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.+)?##$", data)
 
         if _match:
@@ -406,7 +408,7 @@ class OWNEvent(OWNMessage):
 
 
 class OWNScenarioEvent(OWNEvent):
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._scenario = self._what
@@ -414,16 +416,16 @@ class OWNScenarioEvent(OWNEvent):
         self._human_readable_log = f"Scenario {self._scenario} from control panel {self._control_panel} has been launched."  # pylint: disable=line-too-long
 
     @property
-    def scenario(self):
+    def scenario(self) -> int | None:
         return self._scenario
 
     @property
-    def control_panel(self):
+    def control_panel(self) -> str | None:
         return self._control_panel
 
 
 class OWNLightingEvent(OWNEvent):
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._type: str | None = None
@@ -573,19 +575,19 @@ class OWNLightingEvent(OWNEvent):
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} has sent an unknown dimension {self._dimension}."
 
     @property
-    def message_type(self):
+    def message_type(self) -> str | None:
         return self._type
 
     @property
-    def brightness_preset(self):
+    def brightness_preset(self) -> int | None:
         return self._brightness_preset
 
     @property
-    def brightness(self):
+    def brightness(self) -> int | None:
         return self._brightness
 
     @property
-    def transition(self):
+    def transition(self) -> int | None:
         return self._transition
 
     @property
@@ -611,15 +613,15 @@ class OWNLightingEvent(OWNEvent):
         )
 
     @property
-    def timer(self):
+    def timer(self) -> float | None:
         return self._timer
 
     @property
-    def blinker(self):
+    def blinker(self) -> float | None:
         return self._blinker
 
     @property
-    def illuminance(self):
+    def illuminance(self) -> int | None:
         return self._illuminance
 
     @property
@@ -627,7 +629,7 @@ class OWNLightingEvent(OWNEvent):
         return self._motion
 
     @property
-    def pir_sensitivity(self):
+    def pir_sensitivity(self) -> int | None:
         return self._pir_sensitivity
 
     @property
@@ -676,7 +678,7 @@ class OWNLightingEvent(OWNEvent):
 
 
 class OWNAutomationEvent(OWNEvent):
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._state = None
@@ -756,34 +758,35 @@ class OWNAutomationEvent(OWNEvent):
             self._is_closed = False
 
     @property
-    def state(self):
+    def state(self) -> int | None:
         return self._state
 
     @property
-    def is_opening(self):
+    def is_opening(self) -> bool | None:
         return self._is_opening
 
     @property
-    def is_closing(self):
+    def is_closing(self) -> bool | None:
         return self._is_closing
 
     @property
-    def is_closed(self):
+    def is_closed(self) -> bool | None:
         return self._is_closed
 
     @property
-    def current_position(self):
+    def current_position(self) -> int | None:
         return self._position
 
 
 class OWNHeatingEvent(OWNEvent):
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._type = None
 
+        where = self._where or "0"
         self._zone = (
-            int(self._where[1:]) if self._where.startswith("#") else int(self._where)
+            int(where[1:]) if where.startswith("#") else int(where)
         )
         if self._zone == 0 and self._where_param:
             self._zone = int(self._where_param[0])
@@ -1103,7 +1106,7 @@ class OWNHeatingEvent(OWNEvent):
         return f"{self._who}-{self._zone}"
 
     @property
-    def message_type(self):
+    def message_type(self) -> str | None:
         return self._type
 
     @property
@@ -1132,7 +1135,7 @@ class OWNHeatingEvent(OWNEvent):
         return self._measured_humidity
 
     @property
-    def secondary_temperature(self):
+    def secondary_temperature(self) -> list[int | float | None]:
         return [self._sensor, self._secondary_temperature]
 
     @property
@@ -1160,16 +1163,16 @@ class OWNHeatingEvent(OWNEvent):
         return self._local_set_temperature
 
     @property
-    def fan_speed(self):
+    def fan_speed(self) -> int | None:
         return self._fan_speed
 
     @property
-    def fan_on(self):
+    def fan_on(self) -> bool | None:
         return self._fan_on
 
 
 class OWNAlarmEvent(OWNEvent):
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         # Dimension replies carry no WHAT: never crash the constructor on it.
@@ -1180,19 +1183,20 @@ class OWNAlarmEvent(OWNEvent):
         self._zone: str | int | None = None
         self._sensor: int | None = None
 
-        if self._where == "*":
+        where = self._where or ""
+        if where == "*":
             self._system = True
             self._human_readable_log = "System is reporting: "
-        elif self._where.startswith("#"):
-            self._zone = self._where[1:]
+        elif where.startswith("#"):
+            self._zone = where[1:]
             if self._zone == "12":
                 self._zone = "c"
             elif self._zone == "15":
                 self._zone = "f"
             self._human_readable_log = f"Zone {self._zone} is reporting: "
-        elif len(self._where) > 1:
-            self._zone = int(self._where[0])
-            self._sensor = int(self._where[1:])
+        elif len(where) > 1:
+            self._zone = int(where[0])
+            self._sensor = int(where[1:])
             if self._zone == 0:
                 self._human_readable_log = (
                     f"Device {self._sensor} in input zone is reporting: "
@@ -1253,47 +1257,47 @@ class OWNAlarmEvent(OWNEvent):
         self._human_readable_log = f"{self._human_readable_log}'{self._state}'."
 
     @property
-    def general(self):
+    def general(self) -> bool:
         return self._system
 
     @property
-    def zone(self):
+    def zone(self) -> str | int | None:
         return self._zone
 
     @property
-    def sensor(self):
+    def sensor(self) -> int | None:
         return self._sensor
 
     @property
-    def is_active(self):
+    def is_active(self) -> bool:
         return self._state_code == 1 or self._state_code == 11
 
     @property
-    def is_engaged(self):
+    def is_engaged(self) -> bool:
         return self._state_code == 8
 
     @property
-    def is_disarmed(self):
+    def is_disarmed(self) -> bool:
         return self._state_code in (0, 2, 9)
 
     @property
-    def is_armed_away(self):
+    def is_armed_away(self) -> bool:
         return self._state_code in (1, 8)
 
     @property
-    def is_armed_home(self):
+    def is_armed_home(self) -> bool:
         return self._state_code == 11
 
     @property
-    def state_name(self):
+    def state_name(self) -> str | None:
         return self._state
 
     @property
-    def state_code(self):
+    def state_code(self) -> int:
         return self._state_code
 
     @property
-    def is_alarm(self):
+    def is_alarm(self) -> bool:
         return (
             self._state_code == 12
             or self._state_code == 15
@@ -1304,7 +1308,7 @@ class OWNAlarmEvent(OWNEvent):
 
 
 class OWNAuxEvent(OWNEvent):
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._channel = self._where
@@ -1356,20 +1360,20 @@ class OWNAuxEvent(OWNEvent):
             )
 
     @property
-    def channel(self):
+    def channel(self) -> str | None:
         return self._channel
 
     @property
-    def state_code(self):
+    def state_code(self) -> int | None:
         return self._state
 
     @property
-    def is_on(self):
+    def is_on(self) -> bool:
         return self._state == 1
 
 
 class OWNGatewayEvent(OWNEvent):
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._year = None
@@ -1504,7 +1508,7 @@ class OWNGatewayEvent(OWNEvent):
 
 
 class OWNCENEvent(OWNEvent):
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._state: str | None = self._what_param[0] if self._what_param else None
@@ -1521,24 +1525,24 @@ class OWNCENEvent(OWNEvent):
             self._human_readable_log = f"Button {self.push_button} of CEN object {self.object}{self._interface_log_text} has been released after a long press."  # pylint: disable=line-too-long
 
     @property
-    def is_pressed(self):
+    def is_pressed(self) -> bool:
         return self._state is None
 
     @property
-    def is_held(self):
+    def is_held(self) -> bool:
         return self._state is not None and int(self._state) == 3
 
     @property
-    def is_released_after_short_press(self):
+    def is_released_after_short_press(self) -> bool:
         return self._state is not None and int(self._state) == 1
 
     @property
-    def is_released_after_long_press(self):
+    def is_released_after_long_press(self) -> bool:
         return self._state is not None and int(self._state) == 2
 
 
 class OWNSceneEvent(OWNEvent):
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._scene = self._where
@@ -1558,15 +1562,15 @@ class OWNSceneEvent(OWNEvent):
         self._human_readable_log = f"Scene {self._scene} is {_status}."
 
     @property
-    def scenario(self):
+    def scenario(self) -> str | None:
         return self._scene
 
     @property
-    def state(self):
+    def state(self) -> int | None:
         return self._state
 
     @property
-    def is_on(self):
+    def is_on(self) -> bool | None:
         if self._state == 1:
             return True
         if self._state == 2:
@@ -1574,7 +1578,7 @@ class OWNSceneEvent(OWNEvent):
         return None
 
     @property
-    def is_enabled(self):
+    def is_enabled(self) -> bool | None:
         if self._state == 3:
             return True
         if self._state == 4:
@@ -1583,7 +1587,7 @@ class OWNSceneEvent(OWNEvent):
 
 
 class OWNEnergyEvent(OWNEvent):
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._type: str | None = None
@@ -1718,48 +1722,48 @@ class OWNEnergyEvent(OWNEvent):
                 self._human_readable_log = f"Sensor {self._sensor} is reporting a power consumption of {self._current_month_partial_consumption} Wh up to now this month."  # pylint: disable=line-too-long
 
     @property
-    def message_type(self):
+    def message_type(self) -> str | None:
         return self._type
 
     @property
-    def sensor(self):
+    def sensor(self) -> str:
         return self._sensor
 
     @property
-    def active_power(self):
+    def active_power(self) -> int:
         return self._active_power
 
     @property
-    def total_consumption(self):
+    def total_consumption(self) -> int:
         return self._total_consumption
 
     @property
-    def hourly_consumption(self):
+    def hourly_consumption(self) -> dict[str, Any]:
         return self._hourly_consumption
 
     @property
-    def daily_consumption(self):
+    def daily_consumption(self) -> dict[str, Any]:
         return self._daily_consumption
 
     @property
-    def current_day_partial_consumption(self):
+    def current_day_partial_consumption(self) -> int:
         return self._current_day_partial_consumption
 
     @property
-    def monthly_consumption(self):
+    def monthly_consumption(self) -> dict[str, Any]:
         return self._monthly_consumption
 
     @property
-    def current_month_partial_consumption(self):
+    def current_month_partial_consumption(self) -> int:
         return self._current_month_partial_consumption
 
     @property
-    def human_readable_log(self):
+    def human_readable_log(self) -> str:
         return self._human_readable_log
 
 
 class OWNDryContactEvent(OWNEvent):
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._state = 1 if self._what == 31 else 0
@@ -1782,24 +1786,24 @@ class OWNDryContactEvent(OWNEvent):
             )
 
     @property
-    def is_on(self):
+    def is_on(self) -> bool:
         return self._state == 1
 
     @property
-    def sensor(self):
+    def sensor(self) -> str:
         return self._sensor
 
     @property
-    def is_detection(self):
+    def is_detection(self) -> bool:
         return self._detection == 1
 
     @property
-    def human_readable_log(self):
+    def human_readable_log(self) -> str:
         return self._human_readable_log
 
 
 class OWNCENPlusEvent(OWNEvent):
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._state = self._what
@@ -1831,50 +1835,50 @@ class OWNCENPlusEvent(OWNEvent):
             self._human_readable_log = f"Button {self.push_button} of CEN+ object {self.object} state is {self._state}."  # pylint: disable=line-too-long
 
     @property
-    def is_short_pressed(self):
+    def is_short_pressed(self) -> bool:
         return self._state == 21
 
     @property
-    def is_held(self):
+    def is_held(self) -> bool:
         return self._state == 22
 
     @property
-    def is_still_held(self):
+    def is_still_held(self) -> bool:
         return self._state == 23
 
     @property
-    def is_released(self):
+    def is_released(self) -> bool:
         return self._state == 24
 
     @property
-    def is_slowly_turned_cw(self):
+    def is_slowly_turned_cw(self) -> bool:
         return self._state == 25
 
     @property
-    def is_quickly_turned_cw(self):
+    def is_quickly_turned_cw(self) -> bool:
         return self._state == 26
 
     @property
-    def is_slowly_turned_ccw(self):
+    def is_slowly_turned_ccw(self) -> bool:
         return self._state == 27
 
     @property
-    def is_quickly_turned_ccw(self):
+    def is_quickly_turned_ccw(self) -> bool:
         return self._state == 28
 
     @property
-    def human_readable_log(self):
+    def human_readable_log(self) -> str:
         return self._human_readable_log
 
 
 class OWNSoundEvent(OWNEvent):
     """State reported by a WHO 16 sound source or amplifier zone."""
 
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._state = self._what
-        self._zone = self._where
+        self._zone = self._where or ""
         self._is_source_event = (
             len(self._zone) == 3
             and self._zone.startswith("10")
@@ -1938,7 +1942,7 @@ class OWNCommand(OWNMessage):
     """
 
     @classmethod
-    def parse(cls, data) -> OWNCommand | None:
+    def parse(cls, data: str) -> OWNCommand | None:
         _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.+)?##$", data)
 
         if _match:
@@ -1995,7 +1999,7 @@ class OWNCommand(OWNMessage):
 class OWNStatusRequest(OWNCommand):
     """A status request that may target a whole subsystem."""
 
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
         if self._where:
             self._human_readable_log = (
@@ -2005,62 +2009,62 @@ class OWNStatusRequest(OWNCommand):
             self._human_readable_log = f"Requesting global status for WHO={self._who}."
 
     @classmethod
-    def request(cls, who: int, where: str | None = None):
+    def request(cls, who: int, where: str | None = None) -> OWNStatusRequest:
         return cls(f"*#{who}*{where}##" if where else f"*#{who}##")
 
 
 class OWNLightingCommand(OWNCommand):
     @classmethod
-    def status(cls, where):
+    def status(cls, where: str | int) -> OWNLightingCommand:
         message = cls(f"*#1*{where}##")
         message._human_readable_log = f"Requesting light or switch {message._where}{message._interface_log_text} status."
         return message
 
     @classmethod
-    def get_brightness(cls, where):
+    def get_brightness(cls, where: str | int) -> OWNLightingCommand:
         message = cls(f"*#1*{where}*1##")
         message._human_readable_log = f"Requesting light {message._where}{message._interface_log_text} brightness."
         return message
 
     @classmethod
-    def get_pir_sensitivity(cls, where):
+    def get_pir_sensitivity(cls, where: str | int) -> OWNLightingCommand:
         message = cls(f"*#1*{where}*5##")
         message._human_readable_log = f"Requesting light/motion sensor {message._where}{message._interface_log_text} PIR sensitivity."
         return message
 
     @classmethod
-    def get_illuminance(cls, where):
+    def get_illuminance(cls, where: str | int) -> OWNLightingCommand:
         message = cls(f"*#1*{where}*6##")
         message._human_readable_log = f"Requesting light/motion sensor {message._where}{message._interface_log_text} illuminance."
         return message
 
     @classmethod
-    def get_motion_timeout(cls, where):
+    def get_motion_timeout(cls, where: str | int) -> OWNLightingCommand:
         message = cls(f"*#1*{where}*7##")
         message._human_readable_log = f"Requesting light/motion sensor {message._where}{message._interface_log_text} motion timeout."
         return message
 
     @classmethod
-    def get_color_temperature(cls, where):
+    def get_color_temperature(cls, where: str | int) -> OWNLightingCommand:
         message = cls(f"*#1*{where}*14##")
         message._human_readable_log = f"Requesting light {message._where}{message._interface_log_text} color temperature."
         return message
 
     @classmethod
-    def set_color_temperature(cls, where, mireds: int):
+    def set_color_temperature(cls, where: str | int, mireds: int) -> OWNLightingCommand:
         mireds = max(50, min(1000, int(mireds)))
         message = cls(f"*#1*{where}*#14*{mireds}##")
         message._human_readable_log = f"Setting light {message._where}{message._interface_log_text} color temperature to {mireds} mireds."
         return message
 
     @classmethod
-    def get_hsv_color(cls, where):
+    def get_hsv_color(cls, where: str | int) -> OWNLightingCommand:
         message = cls(f"*#1*{where}*12##")
         message._human_readable_log = f"Requesting light {message._where}{message._interface_log_text} HSV color."
         return message
 
     @classmethod
-    def set_hsv_color(cls, where, h: int, s: int, v: int):
+    def set_hsv_color(cls, where: str | int, h: int, s: int, v: int) -> OWNLightingCommand:
         h = max(0, min(359, int(h)))
         s = max(0, min(100, int(s)))
         v = max(0, min(100, int(v)))
@@ -2069,11 +2073,11 @@ class OWNLightingCommand(OWNCommand):
         return message
 
     @classmethod
-    def get_rgb_color(cls, where):
+    def get_rgb_color(cls, where: str | int) -> OWNLightingCommand:
         return cls.get_hsv_color(where)
 
     @classmethod
-    def set_rgb_color(cls, where, r: int, g: int, b: int):
+    def set_rgb_color(cls, where: str | int, r: int, g: int, b: int) -> OWNLightingCommand:
         r = max(0, min(255, int(r)))
         g = max(0, min(255, int(g)))
         b = max(0, min(255, int(b)))
@@ -2084,7 +2088,12 @@ class OWNLightingCommand(OWNCommand):
         return cls.set_hsv_color(where, h, s, v)
 
     @classmethod
-    def flash(cls, where, _frequency=0.5, _freqency=None):
+    def flash(
+        cls,
+        where: str | int,
+        _frequency: float | None = 0.5,
+        _freqency: float | None = None,
+    ) -> OWNLightingCommand:
         # Compatibility with the misspelled keyword exposed by bundled V2.
         if _freqency is not None:
             _frequency = _freqency
@@ -2098,7 +2107,7 @@ class OWNLightingCommand(OWNCommand):
         return message
 
     @classmethod
-    def switch_on(cls, where, _transition=None):
+    def switch_on(cls, where: str | int, _transition: int | None = None) -> OWNLightingCommand:
         if _transition is not None and _transition >= 0 and _transition <= 255:
             message = cls(f"*1*1#{_transition}*{where}##")
             message._human_readable_log = f"Switching ON light {message._where}{message._interface_log_text} with transition speed {_transition}."
@@ -2108,7 +2117,7 @@ class OWNLightingCommand(OWNCommand):
         return message
 
     @classmethod
-    def switch_off(cls, where, _transition=None):
+    def switch_off(cls, where: str | int, _transition: int | None = None) -> OWNLightingCommand:
         if _transition is not None and _transition >= 0 and _transition <= 255:
             message = cls(f"*1*0#{_transition}*{where}##")
             message._human_readable_log = f"Switching OFF light {message._where}{message._interface_log_text} with transition speed {_transition}."
@@ -2118,7 +2127,9 @@ class OWNLightingCommand(OWNCommand):
         return message
 
     @classmethod
-    def set_brightness(cls, where, _level=30, _transition=0):
+    def set_brightness(
+        cls, where: str | int, _level: int = 30, _transition: int = 0
+    ) -> OWNLightingCommand:
         command_level = int(_level) + 100
         transition_speed = _transition if _transition >= 0 and _transition <= 255 else 0
         message = cls(f"*#1*{where}*#1*{command_level}*{transition_speed}##")
@@ -2132,7 +2143,7 @@ class OWNLightingCommand(OWNCommand):
 
 class OWNAutomationCommand(OWNCommand):
     @classmethod
-    def status(cls, where):
+    def status(cls, where: str | int) -> OWNAutomationCommand:
         message = cls(f"*#2*{where}##")
         message._human_readable_log = (
             f"Requesting shutter {message._where}{message._interface_log_text} status."
@@ -2140,13 +2151,13 @@ class OWNAutomationCommand(OWNCommand):
         return message
 
     @classmethod
-    def get_shutter_status(cls, where):
+    def get_shutter_status(cls, where: str | int) -> OWNAutomationCommand:
         message = cls(f"*#2*{where}*10##")
         message._human_readable_log = f"Requesting shutter {message._where}{message._interface_log_text} advanced status (dimension 10)."
         return message
 
     @classmethod
-    def raise_shutter(cls, where):
+    def raise_shutter(cls, where: str | int) -> OWNAutomationCommand:
         message = cls(f"*2*1*{where}##")
         message._human_readable_log = (
             f"Raising shutter {message._where}{message._interface_log_text}."
@@ -2154,7 +2165,7 @@ class OWNAutomationCommand(OWNCommand):
         return message
 
     @classmethod
-    def lower_shutter(cls, where):
+    def lower_shutter(cls, where: str | int) -> OWNAutomationCommand:
         message = cls(f"*2*2*{where}##")
         message._human_readable_log = (
             f"Lowering shutter {message._where}{message._interface_log_text}."
@@ -2162,7 +2173,7 @@ class OWNAutomationCommand(OWNCommand):
         return message
 
     @classmethod
-    def stop_shutter(cls, where):
+    def stop_shutter(cls, where: str | int) -> OWNAutomationCommand:
         message = cls(f"*2*0*{where}##")
         message._human_readable_log = (
             f"Stopping shutter {message._where}{message._interface_log_text}."
@@ -2170,7 +2181,7 @@ class OWNAutomationCommand(OWNCommand):
         return message
 
     @classmethod
-    def set_shutter_level(cls, where, level=30):
+    def set_shutter_level(cls, where: str | int, level: int = 30) -> OWNAutomationCommand:
         message = cls(f"*#2*{where}*#11#001*{level}##")
         message._human_readable_log = f"Setting shutter {message._where}{message._interface_log_text} position to {level}%."
         return message
@@ -2178,39 +2189,41 @@ class OWNAutomationCommand(OWNCommand):
 
 class OWNHeatingCommand(OWNCommand):
     @classmethod
-    def status(cls, where):
+    def status(cls, where: str | int) -> OWNHeatingCommand:
         message = cls(f"*#4*{where}##")
         message._human_readable_log = f"Requesting climate status update for {message._where}{message._interface_log_text}."
         return message
 
     @classmethod
-    def valves_status(cls, where):
+    def valves_status(cls, where: str | int) -> OWNHeatingCommand:
         message = cls(f"*#4*{where}*19##")
         message._human_readable_log = f"Requesting climate valve status update for {message._where}{message._interface_log_text}."
         return message
 
     @classmethod
-    def get_temperature(cls, where):
+    def get_temperature(cls, where: str | int) -> OWNHeatingCommand:
         message = cls(f"*#4*{where}*0##")
         message._human_readable_log = f"Requesting climate status update for {message._where}{message._interface_log_text}."
         return message
 
     @classmethod
-    def get_probe_temperature(cls, where):
+    def get_probe_temperature(cls, where: str | int) -> OWNHeatingCommand:
         message = cls(f"*#4*{where}*15##")
         message._human_readable_log = f"Requesting probe temperature status update for {message._where}{message._interface_log_text}."
         return message
 
     @classmethod
-    def set_mode(cls, where, mode: str, standalone=False):
+    def set_mode(
+        cls, where: str | int, mode: str, standalone: bool = False
+    ) -> OWNHeatingCommand | None:
         central_local = re.compile(r"^#0#\d+$")
         zone: str
         if central_local.match(str(where)):
-            zone = where
-            zone_name = f"zone {int(where.split('#')[-1])}"
+            zone = str(where)
+            zone_name = f"zone {int(str(where).split('#')[-1])}"
         else:
             zone_number = (
-                int(where.split("#")[-1]) if where.startswith("#") else int(where)
+                int(str(where).split("#")[-1]) if str(where).startswith("#") else int(where)
             )
             zone_name = f"zone {zone_number}" if zone_number > 0 else "general"
 
@@ -2232,19 +2245,23 @@ class OWNHeatingCommand(OWNCommand):
         return message
 
     @classmethod
-    def turn_off(cls, where, standalone=False):
+    def turn_off(
+        cls, where: str | int, standalone: bool = False
+    ) -> OWNHeatingCommand | None:
         return cls.set_mode(where=where, mode=CLIMATE_MODE_OFF, standalone=standalone)
 
     @classmethod
-    def set_temperature(cls, where, temperature: float, mode: str, standalone=False):
+    def set_temperature(
+        cls, where: str | int, temperature: float, mode: str, standalone: bool = False
+    ) -> OWNHeatingCommand:
         central_local = re.compile(r"^#0#\d+$")
         zone: str
         if central_local.match(str(where)):
-            zone = where
-            zone_name = f"zone {int(where.split('#')[-1])}"
+            zone = str(where)
+            zone_name = f"zone {int(str(where).split('#')[-1])}"
         else:
             zone_number = (
-                int(where.split("#")[-1]) if where.startswith("#") else int(where)
+                int(str(where).split("#")[-1]) if str(where).startswith("#") else int(where)
             )
             zone_name = f"zone {zone_number}" if zone_number > 0 else "general"
 
@@ -2275,14 +2292,16 @@ class OWNHeatingCommand(OWNCommand):
         return message
 
     @classmethod
-    def set_fan_speed(cls, where, speed: int, standalone=False):
+    def set_fan_speed(
+        cls, where: str | int, speed: int, standalone: bool = False
+    ) -> OWNHeatingCommand:
         central_local = re.compile(r"^#0#\d+$")
         if central_local.match(str(where)):
-            zone = where
-            zone_name = f"zone {int(where.split('#')[-1])}"
+            zone = str(where)
+            zone_name = f"zone {int(str(where).split('#')[-1])}"
         else:
             zone_number = (
-                int(where.split("#")[-1]) if where.startswith("#") else int(where)
+                int(str(where).split("#")[-1]) if str(where).startswith("#") else int(where)
             )
             zone_name = f"zone {zone_number}" if zone_number > 0 else "general"
             if standalone:
@@ -2298,7 +2317,9 @@ class OWNHeatingCommand(OWNCommand):
         return message
 
     @classmethod
-    def set_central_mode(cls, where: str = "#0", mode: str = CLIMATE_MODE_HEAT):
+    def set_central_mode(
+        cls, where: str = "#0", mode: str = CLIMATE_MODE_HEAT
+    ) -> OWNHeatingCommand:
         """Set operation mode for Central Unit (3550 99-zone or 4695 4-zone)."""
         mode_map = {
             CLIMATE_MODE_OFF: 100,
@@ -2320,7 +2341,7 @@ class OWNHeatingCommand(OWNCommand):
     @classmethod
     def set_central_temperature(
         cls, where: str = "#0", temperature: float = 20.0, mode: str = CLIMATE_MODE_HEAT
-    ):
+    ) -> OWNHeatingCommand:
         """Set master setpoint temperature on Central Unit."""
         temperature = round(temperature * 2) / 2
         temperature = max(5.0, min(40.0, temperature))
@@ -2333,7 +2354,7 @@ class OWNHeatingCommand(OWNCommand):
         return message
 
     @classmethod
-    def central_status(cls, where: str = "#0"):
+    def central_status(cls, where: str = "#0") -> OWNHeatingCommand:
         """Query Central Unit status."""
         message = cls(f"*#4*{where}*14##")
         message._human_readable_log = f"Requesting Central Unit {where} status."
@@ -2342,7 +2363,7 @@ class OWNHeatingCommand(OWNCommand):
 
 class OWNAlarmCommand(OWNCommand):
     @classmethod
-    def status(cls, where="0"):
+    def status(cls, where: str | int | None = "0") -> OWNAlarmCommand:
         if where is None or where == "":
             message = cls("*#5##")
             message._human_readable_log = "Querying burglar alarm central status."
@@ -2362,13 +2383,13 @@ class OWNAlarmCommand(OWNCommand):
         return message
 
     @classmethod
-    def disarm(cls, where="0"):
+    def disarm(cls, where: str | int = "0") -> OWNAlarmCommand:
         message = cls(f"*5*2*{where}##")
         message._human_readable_log = f"Disarming burglar alarm for zone {where}."
         return message
 
     @classmethod
-    def arm_away(cls, where="0"):
+    def arm_away(cls, where: str | int = "0") -> OWNAlarmCommand:
         message = cls(f"*5*1*{where}##")
         message._human_readable_log = (
             f"Arming burglar alarm (away) for zone {where}."
@@ -2376,7 +2397,7 @@ class OWNAlarmCommand(OWNCommand):
         return message
 
     @classmethod
-    def arm_home(cls, where="0"):
+    def arm_home(cls, where: str | int = "0") -> OWNAlarmCommand:
         message = cls(f"*5*1*{where}##")
         message._human_readable_log = (
             f"Arming burglar alarm (home) for zone {where}."
@@ -2384,7 +2405,7 @@ class OWNAlarmCommand(OWNCommand):
         return message
 
     @classmethod
-    def trigger(cls, where="0"):
+    def trigger(cls, where: str | int = "0") -> OWNAlarmCommand:
         message = cls(f"*5*17*{where}##")
         message._human_readable_log = (
             f"Triggering panic burglar alarm for zone {where}."
@@ -2392,34 +2413,35 @@ class OWNAlarmCommand(OWNCommand):
         return message
 
     @classmethod
-    def panic(cls, where="0"):
+    def panic(cls, where: str | int = "0") -> OWNAlarmCommand:
         return cls.trigger(where=where)
 
 
 class OWNAVCommand(OWNCommand):
     @classmethod
-    def receive_video(cls, where):
-        camera_id = where
+    def receive_video(cls, where: str | int) -> OWNAVCommand | None:
+        camera_id: str | int = where
+        where_str = str(where)
         if int(where) < 100:
-            where = f"40{camera_id}"
+            where_str = f"40{camera_id}"
         elif int(where) >= 4000 and int(where) < 5000:
-            camera_id = where[2:]
+            camera_id = where_str[2:]
         else:
             return None
 
-        message = cls(f"*7*0*{where}##")
+        message = cls(f"*7*0*{where_str}##")
         message._human_readable_log = f"Opening video stream for camera {camera_id}."
         return message
 
     @classmethod
-    def close_video(cls):
+    def close_video(cls) -> OWNAVCommand:
         message = cls("*7*9**##")
         message._human_readable_log = "Closing video stream."
         return message
 
 
 class OWNGatewayCommand(OWNCommand):
-    def __init__(self, data):
+    def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._year = None
@@ -2479,7 +2501,7 @@ class OWNGatewayCommand(OWNCommand):
             )
 
     @classmethod
-    def set_datetime_to_now(cls, time_zone: str):
+    def set_datetime_to_now(cls, time_zone: str) -> OWNGatewayCommand:
         timezone = ZoneInfo(time_zone)
         now = datetime.datetime.now(timezone)
         timezone_offset = (
@@ -2494,7 +2516,7 @@ class OWNGatewayCommand(OWNCommand):
         return message
 
     @classmethod
-    def set_date_to_today(cls, time_zone: str):
+    def set_date_to_today(cls, time_zone: str) -> OWNGatewayCommand:
         timezone = ZoneInfo(time_zone)
         now = datetime.datetime.now(timezone)
         message = cls(f"*#13**#1*0{now.strftime('%w*%d*%m*%Y##')}")
@@ -2502,7 +2524,7 @@ class OWNGatewayCommand(OWNCommand):
         return message
 
     @classmethod
-    def set_time_to_now(cls, time_zone: str):
+    def set_time_to_now(cls, time_zone: str) -> OWNGatewayCommand:
         timezone = ZoneInfo(time_zone)
         now = datetime.datetime.now(timezone)
         timezone_offset = (
@@ -2517,7 +2539,9 @@ class OWNGatewayCommand(OWNCommand):
 
 class OWNEnergyCommand(OWNCommand):
     @classmethod
-    def start_sending_instant_power(cls, where, duration: int = 65):
+    def start_sending_instant_power(
+        cls, where: str | int, duration: int = 65
+    ) -> OWNEnergyCommand:
         where = f"{where}#0" if str(where).startswith("7") else str(where)
         duration = 255 if duration > 255 else duration
         message = cls(f"*#18*{where}*#1200#1*{duration}##")
@@ -2525,7 +2549,9 @@ class OWNEnergyCommand(OWNCommand):
         return message
 
     @classmethod
-    def get_hourly_consumption(cls, where, date: datetime.date):
+    def get_hourly_consumption(
+        cls, where: str | int, date: datetime.date
+    ) -> OWNEnergyCommand | None:
         where = f"{where}#0" if str(where).startswith("7") else str(where)
         today = datetime.date.today()
         one_year_ago = today - relativedelta(years=1)
@@ -2538,7 +2564,7 @@ class OWNEnergyCommand(OWNCommand):
         return message
 
     @classmethod
-    def get_partial_daily_consumption(cls, where):
+    def get_partial_daily_consumption(cls, where: str | int) -> OWNEnergyCommand:
         where = f"{where}#0" if str(where).startswith("7") else str(where)
         message = cls(f"*#18*{where}*54##")
         message._human_readable_log = (
@@ -2547,7 +2573,9 @@ class OWNEnergyCommand(OWNCommand):
         return message
 
     @classmethod
-    def get_daily_consumption(cls, where, year, month):
+    def get_daily_consumption(
+        cls, where: str | int, year: int, month: int
+    ) -> OWNEnergyCommand | None:
         where = f"{where}#0" if str(where).startswith("7") else str(where)
         today = datetime.date.today()
         one_year_ago = today - relativedelta(years=1)
@@ -2565,7 +2593,7 @@ class OWNEnergyCommand(OWNCommand):
         return message
 
     @classmethod
-    def get_partial_monthly_consumption(cls, where):
+    def get_partial_monthly_consumption(cls, where: str | int) -> OWNEnergyCommand:
         where = f"{where}#0" if str(where).startswith("7") else str(where)
         message = cls(f"*#18*{where}*53##")
         message._human_readable_log = (
@@ -2574,14 +2602,16 @@ class OWNEnergyCommand(OWNCommand):
         return message
 
     @classmethod
-    def get_monthly_consumption(cls, where, year, month):
+    def get_monthly_consumption(
+        cls, where: str | int, year: int, month: int
+    ) -> OWNEnergyCommand:
         where = f"{where}#0" if str(where).startswith("7") else str(where)
         message = cls(f"*#18*{where}*52#{str(year)[2:]}#{month}##")
         message._human_readable_log = f"Requesting monthly power consumption for {year}-{month} from sensor {where}."  # pylint: disable=line-too-long
         return message
 
     @classmethod
-    def get_total_consumption(cls, where):
+    def get_total_consumption(cls, where: str | int) -> OWNEnergyCommand:
         where = f"{where}#0" if str(where).startswith("7") else str(where)
         message = cls(f"*#18*{where}*51##")
         message._human_readable_log = (
@@ -2594,25 +2624,27 @@ class OWNSoundCommand(OWNCommand):
     """WHO 16 commands for sound sources and amplifier zones."""
 
     @classmethod
-    def status(cls, where):
+    def status(cls, where: str | int) -> OWNSoundCommand:
         message = cls(f"*#16*{where}##")
         message._human_readable_log = f"Requesting audio zone {where} status."
         return message
 
     @classmethod
-    def turn_on(cls, where):
+    def turn_on(cls, where: str | int) -> OWNSoundCommand:
         message = cls(f"*16*3*{where}##")
         message._human_readable_log = f"Turning on audio zone {where}."
         return message
 
     @classmethod
-    def turn_off(cls, where):
+    def turn_off(cls, where: str | int) -> OWNSoundCommand:
         message = cls(f"*16*13*{where}##")
         message._human_readable_log = f"Turning off audio zone {where}."
         return message
 
     @classmethod
-    def select_source(cls, where, source_id):
+    def select_source(
+        cls, where: str | int, source_id: int | str
+    ) -> list[OWNSoundCommand]:
         source = int(source_id)
         if not 1 <= source <= 9:
             raise ValueError("source_id must be between 1 and 9")
@@ -2632,25 +2664,25 @@ class OWNSoundCommand(OWNCommand):
         return [activate, route]
 
     @classmethod
-    def source_cycle(cls):
+    def source_cycle(cls) -> OWNSoundCommand:
         message = cls("*16*23*100##")
         message._human_readable_log = "Cycling to the next audio source."
         return message
 
     @classmethod
-    def volume_up(cls, where):
+    def volume_up(cls, where: str | int) -> OWNSoundCommand:
         message = cls(f"*16*1001*{where}##")
         message._human_readable_log = f"Increasing audio zone {where} volume."
         return message
 
     @classmethod
-    def volume_down(cls, where):
+    def volume_down(cls, where: str | int) -> OWNSoundCommand:
         message = cls(f"*16*1000*{where}##")
         message._human_readable_log = f"Decreasing audio zone {where} volume."
         return message
 
     @classmethod
-    def set_volume(cls, where, volume):
+    def set_volume(cls, where: str | int, volume: int | str) -> OWNSoundCommand:
         level = int(volume)
         if not 0 <= level <= 100:
             raise ValueError("volume must be between 0 and 100")
@@ -2663,7 +2695,7 @@ class OWNSoundCommand(OWNCommand):
 
 class OWNDryContactCommand(OWNCommand):
     @classmethod
-    def status(cls, where):
+    def status(cls, where: str | int) -> OWNDryContactCommand:
         message = cls(f"*#25*{where}##")
         message._human_readable_log = f"Requesting dry contact {where} status."
         return message
@@ -2749,7 +2781,7 @@ class OWNSignaling(OWNMessage):
     It is dedicated to signaling messages such as ACK or Authentication negotiation
     """
 
-    def __init__(self, data):  # pylint: disable=super-init-not-called
+    def __init__(self, data: str) -> None:  # pylint: disable=super-init-not-called
         self._raw = data
         self._family = ""
         self._match: re.Match[str] | None = None
@@ -2790,7 +2822,7 @@ class OWNSignaling(OWNMessage):
             self._human_readable_log = "Event session requested."
 
     @property
-    def nonce(self):
+    def nonce(self) -> str | None:
         """Return the authentication nonce IF the message is a nonce message"""
         # NB: is_nonce is a method — referencing it without calling it was
         # always truthy, making this guard ineffective.
@@ -2799,7 +2831,7 @@ class OWNSignaling(OWNMessage):
         return None
 
     @property
-    def sha_version(self):
+    def sha_version(self) -> str | None:
         """Return the authentication SHA version IF the message is a SHA challenge message"""
         if self.is_sha() and self._match is not None:
             return self._match.group(1)
