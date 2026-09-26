@@ -16,6 +16,8 @@ import re
 import sys
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
 OWND_DIR = ROOT_DIR / "OWNd"
 
 
@@ -99,6 +101,21 @@ def check_version_sync(validator: StandardsValidator) -> None:
         validator.ok(f"Package version integrity verified: v{match.group(1)}.")
 
 
+def check_gateway_profiles_readme_sync(validator: StandardsValidator) -> None:
+    """Verify README.md gateway profiles table matches OWNd.profiles."""
+    from scripts.update_readme_profiles import README_MD, sync_readme_profiles
+
+    if not sync_readme_profiles(check_only=True):
+        validator.error(
+            "RULE_DOCS_SYNC",
+            README_MD,
+            1,
+            "Gateway profiles table in README.md is out of sync. Run scripts/update_readme_profiles.py",
+        )
+    else:
+        validator.ok("Gateway profiles table in README.md is in sync with OWNd.profiles.")
+
+
 def main() -> int:
     print("=" * 70)
     print("Running OWNd PyPI Library Standards & Decoupling Validator")
@@ -109,6 +126,7 @@ def main() -> int:
     check_pure_async(validator)
     check_pep561_typing(validator)
     check_version_sync(validator)
+    check_gateway_profiles_readme_sync(validator)
 
     print("=" * 70)
     if validator.errors:

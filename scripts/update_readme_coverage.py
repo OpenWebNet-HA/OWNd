@@ -24,7 +24,7 @@ COMPONENT_NOTES = {
     "OWNd/connection.py": "Hardened dual-session TCP engine, SHA-1/HMAC auth, keepalives & bounded read loops",
     "OWNd/discovery.py": "SSDP multicast and UPnP XML gateway discovery and descriptor parsing",
     "OWNd/message.py": "OpenWebNet frame parsers, encoders, and WHO dimension decoders",
-    "OWNd/profiles.py": "Declarative hardware gateway models (F454, MH200N, MH201, MH202, MyHomeServer1)",
+    "OWNd/profiles.py": "Declarative hardware gateway models (F454, MH200, MH200N, MH201, MH202, MyHomeServer1)",
     "OWNd/transport/base.py": "Abstract transport layer and event listener notification contracts",
     "OWNd/transport/serial.py": "Async Serial/USB transport for Legrand 3578 interface with in-band demux",
     "OWNd/transport/tcp.py": "Dual-session TCP transport linking event and command channels",

@@ -92,15 +92,19 @@ OWNd parses OpenWebNet frames and dispatches typed commands and events across th
 
 Gateways have varying processing limitations, socket budgets, and pacing requirements. OWNd uses declarative profiles to protect your hardware:
 
+<!-- START_GATEWAY_PROFILES_TABLE -->
 | Gateway Model | Concurrency | Queue Delay | Keepalive | Features |
 |:---|:---:|:---:|:---:|:---|
-| **MyHomeServer1** | 4 sessions (2 default) | 20 ms | Profile | HMAC-SHA2, Native transitions, Extended frames |
-| **F454 / F455** | 4 sessions | 50 ms | 90 s | HMAC-SHA2, Native transitions, Extended frames |
-| **MH202** | 2 sessions | 100 ms | Profile | HMAC-SHA2, Extended frames |
-| **MH201** | 1 session | 100 ms | Profile | Extended frames, Clock diagnostics |
+| **MyHomeServer1** | 4 sessions (2 default) | 20 ms | OS TCP only | HMAC-SHA2, Native transitions, Extended frames, Sound system (WHO 16) |
+| **F454** | 4 sessions | 50 ms | 90 s | HMAC-SHA2, Native transitions, Extended frames, Sound system (WHO 16) |
+| **F455** | 4 sessions | 50 ms | 90 s | HMAC-SHA2, Native transitions, Extended frames, Sound system (WHO 16) |
+| **F461** | 4 sessions | 50 ms | 90 s | HMAC-SHA2, Native transitions, Extended frames, Sound system (WHO 16) |
+| **MH202** | 2 sessions | 100 ms | OS TCP only | HMAC-SHA2, Extended frames, Sound system (WHO 16) |
+| **MH201** | 1 session | 100 ms | OS TCP only | Legacy password auth, Extended frames, Sound system (WHO 16), Clock diagnostics |
 | **MH200** | 1 session | 150 ms | 90 s | Safe pacing, Legacy password auth, Sound system (WHO 16) |
-| **MH200N** | 1 session | 150 ms | 90 s | Safe pacing, Legacy password auth |
-| **Generic Gateway** | 1 session | 50 ms | Profile | Conservative fallback |
+| **MH200N** | 1 session | 150 ms | 90 s | Safe pacing, Legacy password auth, Sound system (WHO 16) |
+| **Generic Gateway** | 1 session | 50 ms | OS TCP only | Conservative fallback |
+<!-- END_GATEWAY_PROFILES_TABLE -->
 
 Profiles can be resolved automatically using `get_gateway_profile(model_name)`:
 

@@ -48,6 +48,7 @@ class GatewayProfile:
     supports_native_transitions: bool = False
     supports_extended_frames: bool = False
     supported_who: tuple[int, ...] = DEFAULT_SUPPORTED_WHO
+    extra_features: tuple[str, ...] = ()
 
     @property
     def max_workers(self) -> int:
@@ -68,6 +69,47 @@ class GatewayProfile:
     @property
     def display_name(self) -> str:
         return f"{self.model_name} Gateway"
+
+    @property
+    def concurrency_summary(self) -> str:
+        """Formatted concurrency string for documentation and diagnostics."""
+        suffix = "session" if self.max_command_sessions == 1 else "sessions"
+        if self.default_command_sessions > 1:
+            return f"{self.max_command_sessions} {suffix} ({self.default_command_sessions} default)"
+        return f"{self.max_command_sessions} {suffix}"
+
+    @property
+    def queue_delay_summary(self) -> str:
+        """Formatted queue pacing delay string."""
+        return f"{int(self.command_queue_delay * 1000)} ms"
+
+    @property
+    def keepalive_summary(self) -> str:
+        """Formatted keepalive interval string."""
+        if self.event_keepalive_interval is not None:
+            return f"{int(self.event_keepalive_interval)} s"
+        return "OS TCP only"
+
+    @property
+    def features_summary(self) -> str:
+        """Formatted capabilities and features string."""
+        if isinstance(self, GenericGatewayProfile):
+            return "Conservative fallback"
+        features: list[str] = []
+        if self.command_queue_delay >= 0.15:
+            features.append("Safe pacing")
+        if self.supports_hmac:
+            features.append("HMAC-SHA2")
+        elif self.requires_password:
+            features.append("Legacy password auth")
+        if self.supports_native_transitions:
+            features.append("Native transitions")
+        if self.supports_extended_frames:
+            features.append("Extended frames")
+        if self.supports_who(WHO_SOUND) or self.supports_audio:
+            features.append("Sound system (WHO 16)")
+        features.extend(self.extra_features)
+        return ", ".join(features) or "Conservative fallback"
 
     def supports_who(self, who: int) -> bool:
         """Return whether the profile advertises a WHO subsystem."""
@@ -100,6 +142,7 @@ class F455Profile(GatewayProfile):
             model_name="F455",
             max_command_sessions=4,
             max_queue_size=250,
+            event_keepalive_interval=90,
             supports_hmac=True,
             supports_native_transitions=True,
             supports_extended_frames=True,
@@ -153,10 +196,9 @@ class MH200Profile(GatewayProfile):
 class MH200NProfile(GatewayProfile):
     """The MH200N.
 
-    No audio is unverified. The flag predates any MH200N capture, and a
-    real MH200N relays WHO 16 events together with WHO 22 mirrors of them
-    (MyHOME#422). Whether it answers ``*#16*0*5##`` has not been checked
-    (#53); until it has, startup discovery skips WHO 16 here.
+    Supports sound system discovery (WHO 16). Hardware verified answering
+    ``*#16*0*5##`` without NACK and returning full source and amplifier inventory
+    (MyHOME#427 / comment 5848181845).
     """
 
     def __init__(self) -> None:
@@ -166,7 +208,7 @@ class MH200NProfile(GatewayProfile):
             max_queue_size=100,
             event_keepalive_interval=90,
             supports_energy_instant_power=False,
-            supports_audio=False,
+            supports_audio=True,
             supported_who=(
                 WHO_LIGHTING,
                 WHO_AUTOMATION,
@@ -174,6 +216,7 @@ class MH200NProfile(GatewayProfile):
                 WHO_CEN,
                 WHO_SCENARIO,
                 WHO_CEN_PLUS,
+                WHO_SOUND,
             ),
         )
 
@@ -185,6 +228,7 @@ class MH201Profile(GatewayProfile):
             command_queue_delay=0.10,
             max_queue_size=100,
             supports_extended_frames=True,
+            extra_features=("Clock diagnostics",),
         )
 
 
@@ -230,6 +274,24 @@ _PROFILES = {
     "mh202": MH202Profile(),
     "myhomeserver1": MyHomeServer1Profile(),
 }
+
+CANONICAL_PROFILE_ORDER = (
+    "myhomeserver1",
+    "f454",
+    "f455",
+    "f461",
+    "mh202",
+    "mh201",
+    "mh200",
+    "mh200n",
+)
+
+
+def canonical_profiles() -> tuple[GatewayProfile, ...]:
+    return tuple(_PROFILES[key] for key in CANONICAL_PROFILE_ORDER) + (_GENERIC,)
+
+
+CANONICAL_PROFILES: tuple[GatewayProfile, ...] = canonical_profiles()
 
 _ALIASES = {
     "mhs1": "myhomeserver1",
