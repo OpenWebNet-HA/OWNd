@@ -196,10 +196,9 @@ class MH200Profile(GatewayProfile):
 class MH200NProfile(GatewayProfile):
     """The MH200N.
 
-    No audio is unverified. The flag predates any MH200N capture, and a
-    real MH200N relays WHO 16 events together with WHO 22 mirrors of them
-    (MyHOME#422). Whether it answers ``*#16*0*5##`` has not been checked
-    (#53); until it has, startup discovery skips WHO 16 here.
+    Supports sound system discovery (WHO 16). Hardware verified answering
+    ``*#16*0*5##`` without NACK and returning full source and amplifier inventory
+    (MyHOME#427 / comment 5848181845).
     """
 
     def __init__(self) -> None:
@@ -209,7 +208,7 @@ class MH200NProfile(GatewayProfile):
             max_queue_size=100,
             event_keepalive_interval=90,
             supports_energy_instant_power=False,
-            supports_audio=False,
+            supports_audio=True,
             supported_who=(
                 WHO_LIGHTING,
                 WHO_AUTOMATION,
@@ -217,6 +216,7 @@ class MH200NProfile(GatewayProfile):
                 WHO_CEN,
                 WHO_SCENARIO,
                 WHO_CEN_PLUS,
+                WHO_SOUND,
             ),
         )
 

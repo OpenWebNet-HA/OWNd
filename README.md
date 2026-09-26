@@ -102,7 +102,7 @@ Gateways have varying processing limitations, socket budgets, and pacing require
 | **MH202** | 2 sessions | 100 ms | OS TCP only | HMAC-SHA2, Extended frames, Sound system (WHO 16) |
 | **MH201** | 1 session | 100 ms | OS TCP only | Legacy password auth, Extended frames, Sound system (WHO 16), Clock diagnostics |
 | **MH200** | 1 session | 150 ms | 90 s | Safe pacing, Legacy password auth, Sound system (WHO 16) |
-| **MH200N** | 1 session | 150 ms | 90 s | Safe pacing, Legacy password auth |
+| **MH200N** | 1 session | 150 ms | 90 s | Safe pacing, Legacy password auth, Sound system (WHO 16) |
 | **Generic Gateway** | 1 session | 50 ms | OS TCP only | Conservative fallback |
 <!-- END_GATEWAY_PROFILES_TABLE -->
 

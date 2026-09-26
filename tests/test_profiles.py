@@ -43,15 +43,15 @@ def test_mh200_keeps_the_mh200n_pacing() -> None:
     assert mh200.command_queue_delay == mh200n.command_queue_delay
     assert mh200.max_queue_size == mh200n.max_queue_size
     assert mh200.event_keepalive_interval == mh200n.event_keepalive_interval
-    assert set(mh200.supported_who) - set(mh200n.supported_who) == {WHO_SOUND}
+    assert set(mh200.supported_who) == set(mh200n.supported_who)
 
 
-def test_mh200n_audio_stays_off_until_checked() -> None:
-    """Unchanged until an MH200N is seen answering *#16*0*5## (#53)."""
+def test_mh200n_audio_enabled_and_verified() -> None:
+    """MH200N verified answering *#16*0*5## without NACK (MyHOME#427 comment 5848181845)."""
     profile = get_gateway_profile("MH200N")
 
-    assert profile.supports_audio is False
-    assert not profile.supports_who(WHO_SOUND)
+    assert profile.supports_audio is True
+    assert profile.supports_who(WHO_SOUND)
 
 
 def test_profile_lookup_accepts_common_name_variants() -> None:
@@ -176,7 +176,10 @@ def test_gateway_profile_summary_properties() -> None:
     assert mh200n.concurrency_summary == "1 session"
     assert mh200n.queue_delay_summary == "150 ms"
     assert mh200n.keepalive_summary == "90 s"
-    assert mh200n.features_summary == "Safe pacing, Legacy password auth"
+    assert (
+        mh200n.features_summary
+        == "Safe pacing, Legacy password auth, Sound system (WHO 16)"
+    )
 
     generic = get_gateway_profile("Unknown")
     assert generic.keepalive_summary == "OS TCP only"
