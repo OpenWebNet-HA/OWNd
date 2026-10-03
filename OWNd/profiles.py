@@ -204,7 +204,10 @@ class MH200Profile(GatewayProfile):
     state frame for every amplifier and source within 0.6 s, and the bare
     ``*#16*0##`` returned none (#53). Pacing, queue size, keepalive and the other
     subsystems are copied from the MH200N profile and have not been
-    measured on an MH200.
+    measured on an MH200. As documented in the BTicino TiMH200N release
+    notes, support for CEN+ (WHO 25) and virtual objects was newly introduced
+    specifically for the MH200N; the legacy MH200 firmware predates and
+    does not support CEN+, supporting only classic CEN (WHO 15).
     """
 
     def __init__(self) -> None:
@@ -221,7 +224,6 @@ class MH200Profile(GatewayProfile):
                 WHO_CEN,
                 WHO_SOUND,
                 WHO_SCENARIO,
-                WHO_CEN_PLUS,
             ),
         )
 

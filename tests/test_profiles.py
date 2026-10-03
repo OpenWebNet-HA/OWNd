@@ -11,6 +11,8 @@ from OWNd.profiles import (
     CANONICAL_PROFILE_ORDER,
     DEFAULT_SUPPORTED_WHO,
     WHO_ALARM,
+    WHO_CEN,
+    WHO_CEN_PLUS,
     WHO_LIGHTING,
     WHO_LOAD_CONTROL,
     WHO_SOUND,
@@ -46,7 +48,12 @@ def test_mh200_keeps_the_mh200n_pacing() -> None:
     assert mh200.command_queue_delay == mh200n.command_queue_delay
     assert mh200.max_queue_size == mh200n.max_queue_size
     assert mh200.event_keepalive_interval == mh200n.event_keepalive_interval
-    assert set(mh200.supported_who) == set(mh200n.supported_who)
+    # TiMH200N release notes: MH200N added CEN+ (WHO 25); legacy MH200 only supports classic CEN (WHO 15)
+    assert set(mh200n.supported_who) - set(mh200.supported_who) == {WHO_CEN_PLUS}
+    assert mh200.supports_who(WHO_CEN) is True
+    assert not mh200.supports_who(WHO_CEN_PLUS)
+    assert mh200n.supports_who(WHO_CEN) is True
+    assert mh200n.supports_who(WHO_CEN_PLUS) is True
 
 
 def test_mh200n_audio_enabled_and_verified() -> None:
