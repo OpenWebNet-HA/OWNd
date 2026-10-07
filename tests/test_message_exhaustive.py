@@ -158,8 +158,9 @@ class TestMessageExhaustiveCoverage:
         assert str(OWNAutomationCommand.set_shutter_level("31", 50)) == "*#2*31*#11#001*50##"
 
     def test_heating_dimensions_and_commands(self) -> None:
-        # Mode Target with temperature string (WHAT=1#0215)
-        ev_target = OWNHeatingEvent("*4*1#0215*1##")
+        # Mode Target with temperature string (WHAT=110#0215, manual heating
+        # with temperature, Legrand WHO 4 p. 23 / p. 56)
+        ev_target = OWNHeatingEvent("*4*110#0215*1##")
         assert ev_target.message_type == MESSAGE_TYPE_MODE_TARGET
         assert ev_target.set_temperature == 21.5
         assert "21.5" in ev_target.human_readable_log

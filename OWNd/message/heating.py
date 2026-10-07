@@ -16,6 +16,7 @@ MESSAGE_TYPE_LOCAL_OFFSET = "local_offset"
 MESSAGE_TYPE_LOCAL_TARGET_TEMPERATURE = "local_target_temperature"
 MESSAGE_TYPE_MODE = "hvac_mode"
 MESSAGE_TYPE_MODE_TARGET = "hvac_mode_target"
+MESSAGE_TYPE_SEASON = "hvac_season"
 
 MESSAGE_TYPE_FAN_SPEED = "fan_speed"
 MESSAGE_TYPE_ZONE_STATE = "zone_state"
@@ -24,6 +25,9 @@ CLIMATE_MODE_OFF = "off"
 CLIMATE_MODE_HEAT = "heat"
 CLIMATE_MODE_COOL = "cool"
 CLIMATE_MODE_AUTO = "auto"
+
+SEASON_HEATING = "heating"
+SEASON_CONDITIONING = "conditioning"
 
 LOCAL_CONTROL_NORMAL = "normal"
 LOCAL_CONTROL_OFFSET = "offset"
@@ -173,6 +177,7 @@ class OWNHeatingEvent(OWNEvent):
 
         self._mode = None
         self._mode_name = None
+        self._season: str | None = None
         self._zone_context: str | None = None
         self._zone_state: str | None = None
         self._set_temperature = None
@@ -201,14 +206,39 @@ class OWNHeatingEvent(OWNEvent):
 
         if self._what is not None:
             self._mode = int(self._what)
-            if self._mode in [103, 203, 303, 102, 202, 302]:
+            # Season of every mode WHAT (Legrand WHO 4 v2.0.0 p. 5: 1xx / 11xx /
+            # 12xx / 13xxx heating, 2xx / 21xx / 22xx / 23xxx conditioning,
+            # 3xx / 31xx / 32xx / 33xxx generic): the thousands or hundreds
+            # digit names the season, independently of the operating mode.
+            _season_digit = str(self._mode)[0] if self._mode >= 100 else None
+            if self._mode == 1 or _season_digit == "1":
+                self._season = SEASON_HEATING
+            elif self._mode == 0 or _season_digit == "2":
+                self._season = SEASON_CONDITIONING
+
+            if self._mode in (0, 1):
+                # Zone operation mode frame: the zone (or the central unit)
+                # is operating in the heating (1) or conditioning (0) season.
+                # It is not an operating mode change: Legrand WHO 4 p. 13, 16,
+                # 19 and 63 list it next to the setpoint frames as "zone
+                # operation mode acquire frame"; the MyHomeServer1 translator
+                # emits it with the dimension 12 setpoint report; BTicino's
+                # client keeps a zone in automatic on it (libqtdevices
+                # TS10_1_0_23 probe_device.cpp:240-253). Manual / automatic /
+                # off arrive as 110 / 111 / 103 etc.
+                self._type = MESSAGE_TYPE_SEASON
+                self._mode_name = None
+                self._human_readable_log = (
+                    f"Zone {self._zone}'s season is {self._season}."
+                )
+            elif self._mode in [103, 203, 303, 102, 202, 302]:
                 self._type = MESSAGE_TYPE_MODE
                 self._mode_name = CLIMATE_MODE_OFF
                 self._human_readable_log = (
                     f"Zone {self._zone}'s mode is set to '{self._mode_name}'"
                 )
             elif (
-                self._mode in [0, 210, 211, 212, 215]
+                self._mode in [210, 211, 212, 215]
                 or (self._mode >= 2101 and self._mode <= 2103)
                 or (self._mode >= 2201 and self._mode <= 2216)
             ):
@@ -218,7 +248,7 @@ class OWNHeatingEvent(OWNEvent):
                     f"Zone {self._zone}'s mode is set to '{self._mode_name}'"
                 )
             elif (
-                self._mode in [1, 110, 111, 112, 115]
+                self._mode in [110, 111, 112, 115]
                 or (self._mode >= 1101 and self._mode <= 1103)
                 or (self._mode >= 1201 and self._mode <= 1216)
             ):
@@ -265,7 +295,7 @@ class OWNHeatingEvent(OWNEvent):
                     self._human_readable_log += f" at {self._set_temperature}°C."
                 else:
                     self._human_readable_log += "."
-            else:
+            elif self._type != MESSAGE_TYPE_SEASON:
                 self._human_readable_log += "."
 
         if self._dimension == 0:  # Temperature
@@ -579,6 +609,17 @@ class OWNHeatingEvent(OWNEvent):
     @property
     def mode(self) -> str | None:
         return self._mode_name
+
+    @property
+    def season(self) -> str | None:
+        """SEASON_HEATING or SEASON_CONDITIONING named by the WHAT, else None.
+
+        Set for the bare season frame (WHAT 1 / 0, message_type
+        MESSAGE_TYPE_SEASON, mode None) and for every season-specific mode
+        WHAT (1xx, 11xx, 12xx, 13xxx heating; 2xx, 21xx, 22xx, 23xxx
+        conditioning). Generic WHATs (3xx, 31xx, 32xx, 33xxx) have no season.
+        """
+        return self._season
 
     @property
     def zone_context(self) -> str | None:

@@ -41,6 +41,7 @@ from OWNd.message import (
     OWNLightingCommand,
     OWNMessage,
 )
+from OWNd.message import MESSAGE_TYPE_SEASON, SEASON_CONDITIONING, SEASON_HEATING  # OWNd#94
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 
@@ -53,15 +54,15 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
     ("mode", "what", "parsed_mode"),
     [
         (CLIMATE_MODE_OFF, 303, CLIMATE_MODE_OFF),
-        (CLIMATE_MODE_HEAT, 1, CLIMATE_MODE_HEAT),
-        (CLIMATE_MODE_COOL, 0, CLIMATE_MODE_COOL),
+        (CLIMATE_MODE_HEAT, 1, None),
+        (CLIMATE_MODE_COOL, 0, None),
         (CLIMATE_MODE_AUTO, 311, CLIMATE_MODE_AUTO),
         ("antifreeze", 102, CLIMATE_MODE_OFF),
         ("protection", 302, CLIMATE_MODE_OFF),
     ],
 )
 def test_fix1_central_mode_uses_the_who4_what_table(
-    where: str, mode: str, what: int, parsed_mode: str
+    where: str, mode: str, what: int, parsed_mode: str | None
 ) -> None:
     """Central-unit modes use WHAT 303 / 1 / 0 / 311 / 102 / 302.
 
@@ -80,12 +81,18 @@ def test_fix1_central_mode_uses_the_who4_what_table(
     Not verified: how a physical central unit reacts to them.
 
     OWNd's own parser must read each frame back as the mode that was asked for
-    (antifreeze and protection are shown as off).
+    (antifreeze and protection are shown as off). WHAT 1 / 0 are the season
+    frames: they come back as ``season`` heating / conditioning with no
+    operating mode (Legrand WHO 4 v2.0.0 p. 5, 13, 63).
     """
     command = OWNHeatingCommand.set_central_mode(where, mode)
 
     assert str(command) == f"*4*{what}*{where}##"
-    assert OWNHeatingEvent(str(command)).mode == parsed_mode
+    event = OWNHeatingEvent(str(command))
+    assert event.mode == parsed_mode
+    if what in (1, 0):
+        assert event.message_type == MESSAGE_TYPE_SEASON
+        assert event.season == (SEASON_HEATING if what == 1 else SEASON_CONDITIONING)
 
 
 def test_fix1_captured_central_unit_mode_parses_as_cooling() -> None:
@@ -96,7 +103,9 @@ def test_fix1_captured_central_unit_mode_parses_as_cooling() -> None:
     """
     event = OWNHeatingEvent("*4*0*#0##")
 
-    assert event.mode == CLIMATE_MODE_COOL
+    assert event.message_type == MESSAGE_TYPE_SEASON
+    assert event.season == SEASON_CONDITIONING
+    assert event.mode is None
     assert str(OWNHeatingCommand.set_central_mode("#0", CLIMATE_MODE_COOL)) == "*4*0*#0##"
 
 
