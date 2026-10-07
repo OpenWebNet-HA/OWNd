@@ -20,6 +20,7 @@ from OWNd.message import (
     OWNEnergyEvent,
     OWNGatewayEvent,
     OWNGatewayCommand,
+    OWNGatewayDiagnosticEvent,
     OWNDryContactEvent,
     OWNSoundEvent,
     OWNSoundCommand,
@@ -733,6 +734,39 @@ class TestGatewayDeviceTypes:
     def test_h4684(self):
         msg = OWNEvent.parse("*#13**15*13##")
         assert isinstance(msg, OWNGatewayEvent)
+        assert msg.device_type == "H4684"
+
+        for code in ("13", "19", "23", "29"):
+            evt = OWNEvent.parse(f"*#13**15*{code}##")
+            assert isinstance(evt, OWNGatewayEvent)
+            assert evt.device_type == "H4684"
+
+        for code in ("20", "26"):
+            evt = OWNEvent.parse(f"*#13**15*{code}##")
+            assert isinstance(evt, OWNGatewayEvent)
+            assert evt.device_type == "LGRH4684"
+
+    def test_who1013_h4684_diagnostics(self):
+        for code in ("13", "19", "23", "29"):
+            evt = OWNEvent.parse(f"*#1013**1*{code}##")
+            assert isinstance(evt, OWNGatewayDiagnosticEvent)
+            assert evt.device_type == "H4684"
+            assert evt.object_model == code
+
+        for code in ("20", "26"):
+            evt = OWNEvent.parse(f"*#1013**1*{code}##")
+            assert isinstance(evt, OWNGatewayDiagnosticEvent)
+            assert evt.device_type == "LGRH4684"
+            assert evt.object_model == code
+
+        # 4-field WHO 1013 response
+        evt = OWNEvent.parse("*#1013**1*19*15*5*0##")
+        assert isinstance(evt, OWNGatewayDiagnosticEvent)
+        assert evt.device_type == "H4684"
+        assert evt.object_model == "19"
+        assert evt.n_conf == "15"
+        assert evt.brand == "5"
+        assert evt.line == "0"
 
     def test_f454(self):
         msg = OWNEvent.parse("*#13**15*200##")
