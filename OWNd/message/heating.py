@@ -183,6 +183,9 @@ class OWNHeatingEvent(OWNEvent):
         self._measured_temperature = None
         self._secondary_temperature = None
         self._measured_humidity = None
+        self._program: int | None = None
+        self._scenario: int | None = None
+        self._holiday_days: int | None = None
         self._holiday_end_date: tuple[int, int, int] | None = None
         self._holiday_end_time: tuple[int, int] | None = None
         self._manual_timed_duration: tuple[int, int] | None = None
@@ -211,6 +214,7 @@ class OWNHeatingEvent(OWNEvent):
                 self._mode in [0, 210, 211, 212, 215]
                 or (self._mode >= 2101 and self._mode <= 2103)
                 or (self._mode >= 2201 and self._mode <= 2216)
+                or (self._mode >= 23001 and self._mode <= 23255)
             ):
                 self._type = MESSAGE_TYPE_MODE
                 self._mode_name = CLIMATE_MODE_COOL
@@ -221,6 +225,7 @@ class OWNHeatingEvent(OWNEvent):
                 self._mode in [1, 110, 111, 112, 115]
                 or (self._mode >= 1101 and self._mode <= 1103)
                 or (self._mode >= 1201 and self._mode <= 1216)
+                or (self._mode >= 13001 and self._mode <= 13255)
             ):
                 self._type = MESSAGE_TYPE_MODE
                 self._mode_name = CLIMATE_MODE_HEAT
@@ -232,8 +237,6 @@ class OWNHeatingEvent(OWNEvent):
                 or (self._mode >= 3101 and self._mode <= 3116)
                 or (self._mode >= 3201 and self._mode <= 3216)
                 or (self._mode >= 33001 and self._mode <= 33255)
-                or (self._mode >= 23001 and self._mode <= 23255)
-                or (self._mode >= 13001 and self._mode <= 13255)
             ):
                 self._type = MESSAGE_TYPE_MODE
                 self._mode_name = CLIMATE_MODE_AUTO
@@ -250,15 +253,60 @@ class OWNHeatingEvent(OWNEvent):
                 self._human_readable_log = (
                     f"Zone {self._zone}'s remote control is enabled"
                 )
+            elif self._mode in (22, 23, 24, 30, 31):
+                # Central unit system status (Legrand WHO 4 p. 5, p. 64):
+                # 22 at least one probe OFF, 23 at least one probe in
+                # protection, 24 at least one probe in manual, 30 failure
+                # discovered, 31 central unit battery KO.
+                self._mode_name = None
+                _status_text = {
+                    22: "at least one probe is OFF",
+                    23: "at least one probe is in protection",
+                    24: "at least one probe is in manual mode",
+                    30: "a failure was discovered",
+                    31: "the central unit battery is KO",
+                }[self._mode]
+                self._human_readable_log = (
+                    f"Zone {self._zone}'s central unit reports {_status_text}"
+                )
             else:
                 self._mode_name = None
                 self._human_readable_log = f"Zone {self._zone}'s mode is unknown"
 
+            # Program / scenario / holiday-days numbers carried in the WHAT
+            # (Legrand WHO 4 p. 5 and p. 64; libqtdevices thermal_device.cpp:209-211,
+            # 246-262, 291-307): 11xx/21xx/31xx program, 12xx/22xx/32xx scenario,
+            # 13xxx/23xxx/33xxx holiday days.
+            if self._type == MESSAGE_TYPE_MODE:
+                if 1101 <= self._mode <= 1199 or 2101 <= self._mode <= 2199 or 3101 <= self._mode <= 3199:
+                    self._program = self._mode % 100
+                elif 1201 <= self._mode <= 1299 or 2201 <= self._mode <= 2299 or 3201 <= self._mode <= 3299:
+                    self._scenario = self._mode % 100
+                elif 13001 <= self._mode <= 13999 or 23001 <= self._mode <= 23999 or 33001 <= self._mode <= 33999:
+                    self._holiday_days = self._mode % 1000
+
             if (
+                self._mode in (115, 215, 315)
+                and self._what_param
+                and self._what_param[0]
+            ):
+                # Holiday daily plan: the parameter is the weekly program the
+                # central unit resumes afterwards, 1101-1103 / 2101-2103
+                # (Legrand WHO 4 p. 56 and p. 64, "115#parameterH"); libqtdevices
+                # reads it as whatArgN(0) % 100 (thermal_device.cpp:241, 286).
+                # It is not a temperature.
+                try:
+                    self._program = int(self._what_param[0]) % 100
+                    self._human_readable_log += f" (program {self._program})."
+                except ValueError:
+                    self._human_readable_log += "."
+            elif (
                 self._type == MESSAGE_TYPE_MODE
                 and self._what_param
                 and self._what_param[0] is not None
             ):
+                # 110#T / 210#T manual with temperature (Legrand WHO 4 p. 23,
+                # p. 56), 312#T timed manual (libqtdevices thermal_device.cpp:378).
                 self._type = MESSAGE_TYPE_MODE_TARGET
                 self._set_temperature = who4_temperature(self._what_param[0])
                 if self._set_temperature is not None:
@@ -656,6 +704,21 @@ class OWNHeatingEvent(OWNEvent):
     @property
     def cooling_fan_on(self) -> bool | None:
         return self._cooling_fan_on
+
+    @property
+    def program(self) -> int | None:
+        """Weekly program number (1..16) named by the WHAT, else None."""
+        return self._program
+
+    @property
+    def scenario(self) -> int | None:
+        """Scenario number (1..16) named by the WHAT, else None."""
+        return self._scenario
+
+    @property
+    def holiday_days(self) -> int | None:
+        """Holiday days (1..255) named by a 13xxx/23xxx/33xxx WHAT, else None."""
+        return self._holiday_days
 
     @property
     def holiday_end_date(self) -> tuple[int, int, int] | None:

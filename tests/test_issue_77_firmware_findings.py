@@ -25,6 +25,8 @@ from pathlib import Path
 import pytest
 
 from OWNd.message import (
+    OWNScenarioPlusCommand,
+    OWNScenarioPlusEvent,
     CLIMATE_MODE_AUTO,
     CLIMATE_MODE_COOL,
     CLIMATE_MODE_HEAT,
@@ -396,15 +398,22 @@ def test_fix8_interface_is_read_for_scenarios_and_who14(frame: str) -> None:
 # ── Fix 9: other WHO 25 messages ────────────────────────────────────────────
 
 
-@pytest.mark.parametrize("frame", ["*25*11#121*10##", "*25*12*131##"])
-def test_fix9_other_who25_messages_are_not_dry_contacts(frame: str) -> None:
+@pytest.mark.parametrize(
+    ("frame", "action"),
+    [("*25*11#121*10##", "on"), ("*25*12*131##", "off"), ("*25*13#0#5*11##", "increase")],
+)
+def test_fix9_other_who25_messages_are_not_dry_contacts(frame: str, action: str) -> None:
     """Emitted: the firmware sends WHAT 11..15 on ``1xx`` addresses.
 
-    Encyclopedia: dry contacts are WHAT 31 and 32 only.
+    Encyclopedia: dry contacts are WHAT 31 and 32 only. libqtdevices
+    ScenarioPlusDevice sends 11#0 / 12 / 13#0#5 / 14#0#5 / 15
+    (scenario_device.cpp:37-41) and mhs1 bt_luci accepts and echoes all five
+    (oracle3/out/luci.tsv), so they are scenario-plus events.
     """
     event = OWNEvent.parse(frame)
 
-    assert type(event) is OWNEvent
+    assert isinstance(event, OWNScenarioPlusEvent)
+    assert event.action == action
     assert not isinstance(event, OWNDryContactEvent)
 
 
@@ -425,8 +434,8 @@ def test_fix9_captured_who25_messages_keep_their_class(frame: str, cls: type) ->
 @pytest.mark.parametrize(
     ("frame", "cls"),
     [
-        ("*25*11#121*10##", OWNCommand),
-        ("*25*12*131##", OWNCommand),
+        ("*25*11#121*10##", OWNScenarioPlusCommand),
+        ("*25*12*131##", OWNScenarioPlusCommand),
         ("*25*31#1*339##", OWNDryContactCommand),
         ("*25*32#1*33##", OWNDryContactCommand),
         ("*#25*331##", OWNDryContactCommand),

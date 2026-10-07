@@ -17,6 +17,7 @@ MESSAGE_TYPE_DAILY_CONSUMPTION = "daily_consumption"
 MESSAGE_TYPE_MONTHLY_CONSUMPTION = "monthly_consumption"
 MESSAGE_TYPE_CURRENT_DAY_CONSUMPTION = "current_day_partial_consumption"
 MESSAGE_TYPE_CURRENT_MONTH_CONSUMPTION = "current_month_partial_consumption"
+MESSAGE_TYPE_AUTO_UPDATE_INTERVAL = "auto_update_interval"
 
 
 def _integer_value(
@@ -45,6 +46,8 @@ class OWNEnergyEvent(OWNEvent):
         self._current_day_partial_consumption = 0
         self._monthly_consumption: dict[str, Any] = {}
         self._current_month_partial_consumption = 0
+        self._update_interval: int | None = None
+        self._energy_type: int | None = None
 
         if not where.startswith(("1", "5", "7")):
             return
@@ -158,6 +161,16 @@ class OWNEnergyEvent(OWNEvent):
                     self._dimension_value, 0
                 )
                 self._human_readable_log = f"Sensor {self._sensor} is reporting a power consumption of {self._monthly_consumption['value']} Wh for {self._monthly_consumption['date'].strftime('%B %Y')}."  # pylint: disable=line-too-long
+            elif self._dimension == 1200 and self._dimension_value:
+                # *#18*W*1200#type*time##: the meter confirms (time > 0) or
+                # ends (time = 0) the automatic power updates; libqtdevices
+                # re-arms the stream on time = 0 (energy_device.cpp:289-322,
+                # 719-726). type: 1 electricity, 2 gas, 3 heat, 4 water
+                # (energy_device.cpp:50-56).
+                self._type = MESSAGE_TYPE_AUTO_UPDATE_INTERVAL
+                self._update_interval = _integer_value(self._dimension_value, 0)
+                self._energy_type = _integer_value(self._dimension_param, 0, 0) if self._dimension_param else None
+                self._human_readable_log = f"Sensor {self._sensor} automatic updates every {self._update_interval} s (0 = stopped)."  # pylint: disable=line-too-long
             elif self._dimension == 53:
                 self._type = MESSAGE_TYPE_CURRENT_MONTH_CONSUMPTION
                 self._current_month_partial_consumption = _integer_value(
@@ -172,6 +185,16 @@ class OWNEnergyEvent(OWNEvent):
     @property
     def sensor(self) -> str:
         return self._sensor
+
+    @property
+    def update_interval(self) -> int | None:
+        """Seconds between automatic power updates from a 1200 reply, 0 when stopped."""
+        return self._update_interval
+
+    @property
+    def energy_type(self) -> int | None:
+        """Energy type of a 1200 reply (1 electricity, 2 gas, 3 heat, 4 water)."""
+        return self._energy_type
 
     @property
     def active_power(self) -> int:

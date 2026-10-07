@@ -155,6 +155,66 @@ class OWNCENPlusEvent(OWNEvent):
 
 
 
+class OWNScenarioPlusEvent(OWNEvent):
+    """WHO 25 WHAT 11-15: scenario-plus / dimmer-like commands on a WHERE.
+
+    libqtdevices ScenarioPlusDevice sends 11#0 on, 12 off, 13#0#5 increase,
+    14#0#5 decrease, 15 stop (scenario_device.cpp:37-41, 163-186); mhs1 bt_luci
+    accepts all five and echoes them on the monitor port.
+    """
+
+    _NAMES = {11: "on", 12: "off", 13: "increase", 14: "decrease", 15: "stop"}
+
+    def __init__(self, data: str) -> None:
+        super().__init__(data)
+        self._action = self._NAMES.get(self._what) if self._what is not None else None
+        self.object = self._where
+        _params = "#".join(self._what_param) if self._what_param else ""
+        self._human_readable_log = (
+            f"Scenario plus {self._where}: {self._action}"
+            + (f" (parameters {_params})" if _params else "")
+            + "."
+        )
+
+    @property
+    def action(self) -> str | None:
+        return self._action
+
+
+class OWNScenarioPlusCommand(OWNCommand):
+    """Builders for the five WHO 25 frames libqtdevices ScenarioPlusDevice sends."""
+
+    @classmethod
+    def turn_on(cls, where: str | int) -> OWNScenarioPlusCommand:
+        message = cls(f"*25*11#0*{where}##")
+        message._human_readable_log = f"Scenario plus {where}: on."
+        return message
+
+    @classmethod
+    def turn_off(cls, where: str | int) -> OWNScenarioPlusCommand:
+        message = cls(f"*25*12*{where}##")
+        message._human_readable_log = f"Scenario plus {where}: off."
+        return message
+
+    @classmethod
+    def increase(cls, where: str | int) -> OWNScenarioPlusCommand:
+        message = cls(f"*25*13#0#5*{where}##")
+        message._human_readable_log = f"Scenario plus {where}: increase."
+        return message
+
+    @classmethod
+    def decrease(cls, where: str | int) -> OWNScenarioPlusCommand:
+        message = cls(f"*25*14#0#5*{where}##")
+        message._human_readable_log = f"Scenario plus {where}: decrease."
+        return message
+
+    @classmethod
+    def stop(cls, where: str | int) -> OWNScenarioPlusCommand:
+        message = cls(f"*25*15*{where}##")
+        message._human_readable_log = f"Scenario plus {where}: stop."
+        return message
+
+
 class OWNDryContactCommand(OWNCommand):
     @classmethod
     def status(cls, where: str | int) -> OWNDryContactCommand:
@@ -280,6 +340,8 @@ def _parse_who25_event(data: str) -> OWNEvent:
         what_code = None
     if what_code is not None and 21 <= what_code <= 28:
         return OWNCENPlusEvent(data)
+    if what_code is not None and 11 <= what_code <= 15:
+        return OWNScenarioPlusEvent(data)
     if what_code is not None and what_code not in (31, 32):
         return OWNEvent(data)
     return OWNDryContactEvent(data)
@@ -296,6 +358,8 @@ def _parse_who25_command(data: str) -> OWNCommand:
         what_code = None
     if what_code is not None and 21 <= what_code <= 28:
         return OWNCenPlusCommand(data)
+    if what_code is not None and 11 <= what_code <= 15:
+        return OWNScenarioPlusCommand(data)
     # Same rule as _parse_who25_event: only WHAT 31/32 are dry contacts.
     if what_code is not None and what_code not in (31, 32):
         return OWNCommand(data)

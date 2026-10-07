@@ -33,6 +33,8 @@ from .cen import (
     OWNCENPlusEvent,
     OWNCenCommand,
     OWNCenPlusCommand,
+    OWNScenarioPlusCommand,
+    OWNScenarioPlusEvent,
     OWNDryContactCommand,
     OWNDryContactEvent,
 )
@@ -40,6 +42,7 @@ from .energy import (
     MESSAGE_TYPE_ACTIVE_POWER,
     MESSAGE_TYPE_CURRENT_DAY_CONSUMPTION,
     MESSAGE_TYPE_CURRENT_MONTH_CONSUMPTION,
+    MESSAGE_TYPE_AUTO_UPDATE_INTERVAL,
     MESSAGE_TYPE_DAILY_CONSUMPTION,
     MESSAGE_TYPE_ENERGY_TOTALIZER,
     MESSAGE_TYPE_HOURLY_CONSUMPTION,

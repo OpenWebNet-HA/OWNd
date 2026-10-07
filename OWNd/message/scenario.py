@@ -13,7 +13,38 @@ class OWNScenarioEvent(OWNEvent):
 
         self._scenario = self._what
         self._control_panel = self._where
-        self._human_readable_log = f"Scenario {self._scenario} from control panel {self._control_panel} has been launched."  # pylint: disable=line-too-long
+        self._programming_scenario: int | None = None
+        self._event: str | None = None
+        # WHAT 40-46 are scenario-module programming states, not scenarios
+        # (libqtdevices scenario_device.cpp:27-35, 93-156; mhs1 bt_luci
+        # accepts *0*40#N*W##, 41#N, 42, 42#N, 43, 44 and emits 40#N..46#N).
+        _programming = {
+            40: "programming started",
+            41: "programming stopped",
+            42: "deleted",
+            43: "locked",
+            44: "unlocked",
+            45: "status 45",
+            46: "status 46",
+        }
+        if self._what in _programming:
+            self._event = _programming[self._what]
+            self._scenario = None
+            try:
+                self._programming_scenario = (
+                    int(self._what_param[0]) if self._what_param else None
+                )
+            except (TypeError, ValueError):
+                self._programming_scenario = None
+            _target = (
+                f"scenario {self._programming_scenario}"
+                if self._programming_scenario is not None
+                else "all scenarios"
+            )
+            self._human_readable_log = f"Scenario module {self._control_panel}: {_target} {self._event}."  # pylint: disable=line-too-long
+        else:
+            self._event = "launched"
+            self._human_readable_log = f"Scenario {self._scenario} from control panel {self._control_panel} has been launched."  # pylint: disable=line-too-long
 
     @property
     def scenario(self) -> int | None:
@@ -22,6 +53,16 @@ class OWNScenarioEvent(OWNEvent):
     @property
     def control_panel(self) -> str | None:
         return self._control_panel
+
+    @property
+    def event(self) -> str | None:
+        """'launched' for WHAT 1-31, else the programming/lock state (WHAT 40-46)."""
+        return self._event
+
+    @property
+    def programming_scenario(self) -> int | None:
+        """Scenario named by a WHAT 40/41/42 parameter, None when it targets all."""
+        return self._programming_scenario
 
 
 

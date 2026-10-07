@@ -409,6 +409,83 @@ class OWNLightingCommand(OWNCommand):
         return message
 
     @classmethod
+    def set_brightness_preset(cls, where: str | int, preset: int) -> OWNLightingCommand:
+        """Dimmer preset WHAT 2..10 (20 %..100 %), the frame libqtdevices
+        DimmerDevice::setLevel100 sends (lighting_device.cpp:240-245)."""
+        preset = int(preset)
+        if not 2 <= preset <= 10:
+            raise ValueError("preset must be between 2 and 10")
+        message = cls(f"*1*{preset}*{where}##")
+        message._human_readable_log = f"Setting light {message._where}{message._interface_log_text} to preset level {preset}."  # pylint: disable=line-too-long
+        return message
+
+    @classmethod
+    def step_up(
+        cls, where: str | int, delta: int | None = None, speed: int | None = None
+    ) -> OWNLightingCommand:
+        """One level up (WHAT 30), or ``30#delta#speed`` for a dimmer 100
+        (libqtdevices lighting_device.cpp:230-233, 409-412)."""
+        return cls._step(where, 30, "up", delta, speed)
+
+    @classmethod
+    def step_down(
+        cls, where: str | int, delta: int | None = None, speed: int | None = None
+    ) -> OWNLightingCommand:
+        """One level down (WHAT 31), or ``31#delta#speed`` for a dimmer 100
+        (libqtdevices lighting_device.cpp:235-238, 414-417)."""
+        return cls._step(where, 31, "down", delta, speed)
+
+    @classmethod
+    def _step(
+        cls, where: str | int, what: int, direction: str, delta: int | None, speed: int | None
+    ) -> OWNLightingCommand:
+        if delta is None:
+            message = cls(f"*1*{what}*{where}##")
+            message._human_readable_log = f"Dimming light {message._where}{message._interface_log_text} one level {direction}."  # pylint: disable=line-too-long
+            return message
+        delta = int(delta)
+        speed = int(speed if speed is not None else 0)
+        if not 1 <= delta <= 100 or not 0 <= speed <= 255:
+            raise ValueError("delta must be 1..100 and speed 0..255")
+        message = cls(f"*1*{what}#{delta}#{speed}*{where}##")
+        message._human_readable_log = f"Dimming light {message._where}{message._interface_log_text} {direction} by {delta}% at speed {speed}."  # pylint: disable=line-too-long
+        return message
+
+    _FIXED_TIMERS = {11: 60, 12: 120, 13: 180, 14: 240, 15: 300, 16: 900, 17: 30, 18: 0.5}
+
+    @classmethod
+    def switch_on_timed(cls, where: str | int, what: int) -> OWNLightingCommand:
+        """Fixed timer WHAT 11..18 (1, 2, 3, 4, 5, 15 min, 30 s, 0.5 s), the
+        frame libqtdevices LightingDevice::fixedTiming sends (lighting_device.cpp:110-117)."""
+        what = int(what)
+        if what not in cls._FIXED_TIMERS:
+            raise ValueError("timer WHAT must be between 11 and 18")
+        message = cls(f"*1*{what}*{where}##")
+        message._human_readable_log = f"Switching ON light {message._where}{message._interface_log_text} for {cls._FIXED_TIMERS[what]}s."  # pylint: disable=line-too-long
+        return message
+
+    @classmethod
+    def set_variable_timer(
+        cls, where: str | int, hours: int, minutes: int, seconds: int
+    ) -> OWNLightingCommand:
+        """``*#1*W*#2*H*M*S##`` (libqtdevices LightingDevice::variableTiming,
+        lighting_device.cpp:119-124)."""
+        h, m, s = int(hours), int(minutes), int(seconds)
+        if not (0 <= h <= 255 and 0 <= m <= 59 and 0 <= s <= 59):
+            raise ValueError("hours 0..255, minutes and seconds 0..59")
+        message = cls(f"*#1*{where}*#2*{h}*{m}*{s}##")
+        message._human_readable_log = f"Setting light {message._where}{message._interface_log_text} timer to {h}h {m}m {s}s."  # pylint: disable=line-too-long
+        return message
+
+    @classmethod
+    def get_variable_timer(cls, where: str | int) -> OWNLightingCommand:
+        """``*#1*W*2##`` (libqtdevices LightingDevice::requestVariableTiming,
+        lighting_device.cpp:131-134)."""
+        message = cls(f"*#1*{where}*2##")
+        message._human_readable_log = f"Requesting light {message._where}{message._interface_log_text} timer."
+        return message
+
+    @classmethod
     def set_brightness(
         cls, where: str | int, _level: int = 30, _transition: int = 0
     ) -> OWNLightingCommand:

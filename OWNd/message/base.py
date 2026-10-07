@@ -223,6 +223,11 @@ class OWNMessage:
         return self._who
 
     @property
+    def what(self) -> int | None:
+        """The raw WHAT of a command or status frame, None for dimension frames."""
+        return self._what
+
+    @property
     def where(self) -> str | None:
         """The 'where' ID of the subject of this message"""
         return self._where  # [1:] if self._where.startswith('#') else self._where

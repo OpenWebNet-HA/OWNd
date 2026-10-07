@@ -196,15 +196,41 @@ class TestHeatingEdgeCases:
         assert isinstance(msg, OWNHeatingEvent)
         assert msg.mode == CLIMATE_MODE_AUTO
 
-    def test_mode_auto_weekly_23001(self):
+    def test_mode_holiday_23001_is_conditioning(self):
+        # Legrand WHO 4 p. 5 and p. 64: 23xxx = holiday days in conditioning
+        # mode; libqtdevices thermal_device.cpp:258-262 (SUM_HOLIDAY, summer).
         msg = OWNEvent.parse("*4*23001*1##")
         assert isinstance(msg, OWNHeatingEvent)
-        assert msg.mode == CLIMATE_MODE_AUTO
+        assert msg.mode == CLIMATE_MODE_COOL
+        assert msg.holiday_days == 1
 
-    def test_mode_auto_weekly_13001(self):
+    def test_mode_holiday_13001_is_heating(self):
+        # Legrand WHO 4 p. 5 and p. 64: 13xxx = holiday days in heating mode;
+        # libqtdevices thermal_device.cpp:303-307 (WIN_HOLIDAY, winter).
         msg = OWNEvent.parse("*4*13001*1##")
         assert isinstance(msg, OWNHeatingEvent)
+        assert msg.mode == CLIMATE_MODE_HEAT
+        assert msg.holiday_days == 1
+
+    def test_mode_holiday_33004_is_generic(self):
+        msg = OWNEvent.parse("*4*33004*#0##")
         assert msg.mode == CLIMATE_MODE_AUTO
+        assert msg.holiday_days == 4
+
+    def test_holiday_plan_parameter_is_a_program_not_a_temperature(self):
+        # Legrand WHO 4 p. 56 / p. 64: 115#parameterH, parameterH = 1101-1103;
+        # libqtdevices thermal_device.cpp:241 reads whatArgN(0) % 100.
+        msg = OWNEvent.parse("*4*115#1102*#0##")
+        assert msg.mode == CLIMATE_MODE_HEAT
+        assert msg.program == 2
+        assert msg.set_temperature is None
+        assert msg.message_type == "hvac_mode"
+
+    def test_manual_with_temperature_parameter(self):
+        # Legrand WHO 4 p. 23 / p. 56: 110#T manual heating with temperature.
+        msg = OWNEvent.parse("*4*110#0215*#0##")
+        assert msg.set_temperature == 21.5
+        assert msg.message_type == "hvac_mode_target"
 
     def test_unknown_mode(self):
         msg = OWNEvent.parse("*4*999*1##")
