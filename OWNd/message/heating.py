@@ -186,6 +186,7 @@ class OWNHeatingEvent(OWNEvent):
         self._holiday_end_date: tuple[int, int, int] | None = None
         self._holiday_end_time: tuple[int, int] | None = None
         self._manual_timed_duration: tuple[int, int] | None = None
+        self._holiday_days: int | None = None
 
         self._is_active = None
         self._is_heating = None
@@ -211,9 +212,14 @@ class OWNHeatingEvent(OWNEvent):
                 self._mode in [0, 210, 211, 212, 215]
                 or (self._mode >= 2101 and self._mode <= 2103)
                 or (self._mode >= 2201 and self._mode <= 2216)
+                or (self._mode >= 23001 and self._mode <= 23255)
             ):
+                # 23xxx: holiday days in conditioning mode (Legrand WHO 4
+                # p. 5 / p. 64; libqtdevices thermal_device.cpp:58, 258-262).
                 self._type = MESSAGE_TYPE_MODE
                 self._mode_name = CLIMATE_MODE_COOL
+                if self._mode >= 23001:
+                    self._holiday_days = self._mode % 1000
                 self._human_readable_log = (
                     f"Zone {self._zone}'s mode is set to '{self._mode_name}'"
                 )
@@ -221,9 +227,14 @@ class OWNHeatingEvent(OWNEvent):
                 self._mode in [1, 110, 111, 112, 115]
                 or (self._mode >= 1101 and self._mode <= 1103)
                 or (self._mode >= 1201 and self._mode <= 1216)
+                or (self._mode >= 13001 and self._mode <= 13255)
             ):
+                # 13xxx: holiday days in heating mode (Legrand WHO 4 p. 5 /
+                # p. 64; libqtdevices thermal_device.cpp:68, 303-307).
                 self._type = MESSAGE_TYPE_MODE
                 self._mode_name = CLIMATE_MODE_HEAT
+                if self._mode >= 13001:
+                    self._holiday_days = self._mode % 1000
                 self._human_readable_log = (
                     f"Zone {self._zone}'s mode is set to '{self._mode_name}'"
                 )
@@ -232,11 +243,11 @@ class OWNHeatingEvent(OWNEvent):
                 or (self._mode >= 3101 and self._mode <= 3116)
                 or (self._mode >= 3201 and self._mode <= 3216)
                 or (self._mode >= 33001 and self._mode <= 33255)
-                or (self._mode >= 23001 and self._mode <= 23255)
-                or (self._mode >= 13001 and self._mode <= 13255)
             ):
                 self._type = MESSAGE_TYPE_MODE
                 self._mode_name = CLIMATE_MODE_AUTO
+                if self._mode >= 33001:
+                    self._holiday_days = self._mode % 1000
                 self._human_readable_log = (
                     f"Zone {self._zone}'s mode is set to '{self._mode_name}'"
                 )
@@ -661,6 +672,11 @@ class OWNHeatingEvent(OWNEvent):
     def holiday_end_date(self) -> tuple[int, int, int] | None:
         """Holiday / weekend end date (day, month, year), or None."""
         return self._holiday_end_date
+
+    @property
+    def holiday_days(self) -> int | None:
+        """Holiday days (1..255) named by a 13xxx/23xxx/33xxx WHAT, else None."""
+        return self._holiday_days
 
     @property
     def holiday_end_time(self) -> tuple[int, int] | None:

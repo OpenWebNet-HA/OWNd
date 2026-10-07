@@ -196,15 +196,32 @@ class TestHeatingEdgeCases:
         assert isinstance(msg, OWNHeatingEvent)
         assert msg.mode == CLIMATE_MODE_AUTO
 
-    def test_mode_auto_weekly_23001(self):
+    def test_mode_holiday_23001_is_conditioning(self):
+        # Legrand WHO 4 p. 5 and p. 64: 23xxx = holiday days in conditioning
+        # mode; libqtdevices thermal_device.cpp:58 (SUM_HOLIDAY = 23000) and
+        # :258-262 (season SE_SUMMER).
         msg = OWNEvent.parse("*4*23001*1##")
         assert isinstance(msg, OWNHeatingEvent)
-        assert msg.mode == CLIMATE_MODE_AUTO
+        assert msg.mode == CLIMATE_MODE_COOL
+        assert msg.holiday_days == 1
 
-    def test_mode_auto_weekly_13001(self):
+    def test_mode_holiday_13001_is_heating(self):
+        # Legrand WHO 4 p. 5 and p. 64: 13xxx = holiday days in heating mode;
+        # libqtdevices thermal_device.cpp:68 (WIN_HOLIDAY = 13000) and
+        # :303-307 (season SE_WINTER).
         msg = OWNEvent.parse("*4*13001*1##")
         assert isinstance(msg, OWNHeatingEvent)
+        assert msg.mode == CLIMATE_MODE_HEAT
+        assert msg.holiday_days == 1
+
+    def test_mode_holiday_33004_is_generic(self):
+        msg = OWNEvent.parse("*4*33004*#0##")
         assert msg.mode == CLIMATE_MODE_AUTO
+        assert msg.holiday_days == 4
+
+    def test_holiday_days_is_none_for_other_modes(self):
+        assert OWNEvent.parse("*4*1*1##").holiday_days is None
+        assert OWNEvent.parse("*4*3101*#0##").holiday_days is None
 
     def test_unknown_mode(self):
         msg = OWNEvent.parse("*4*999*1##")
