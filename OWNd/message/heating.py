@@ -250,6 +250,22 @@ class OWNHeatingEvent(OWNEvent):
                 self._human_readable_log = (
                     f"Zone {self._zone}'s remote control is enabled"
                 )
+            elif self._mode in (22, 23, 24, 30, 31):
+                # Central unit system status (Legrand WHO 4 p. 5, p. 64):
+                # 22 at least one probe OFF, 23 at least one probe in
+                # protection, 24 at least one probe in manual, 30 failure
+                # discovered, 31 central unit battery KO.
+                self._mode_name = None
+                _status_text = {
+                    22: "at least one probe is OFF",
+                    23: "at least one probe is in protection",
+                    24: "at least one probe is in manual mode",
+                    30: "a failure was discovered",
+                    31: "the central unit battery is KO",
+                }[self._mode]
+                self._human_readable_log = (
+                    f"Zone {self._zone}'s central unit reports {_status_text}"
+                )
             else:
                 self._mode_name = None
                 self._human_readable_log = f"Zone {self._zone}'s mode is unknown"
