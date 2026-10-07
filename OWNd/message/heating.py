@@ -183,6 +183,8 @@ class OWNHeatingEvent(OWNEvent):
         self._measured_temperature = None
         self._secondary_temperature = None
         self._measured_humidity = None
+        self._program: int | None = None
+        self._scenario: int | None = None
         self._holiday_end_date: tuple[int, int, int] | None = None
         self._holiday_end_time: tuple[int, int] | None = None
         self._manual_timed_duration: tuple[int, int] | None = None
@@ -254,11 +256,35 @@ class OWNHeatingEvent(OWNEvent):
                 self._mode_name = None
                 self._human_readable_log = f"Zone {self._zone}'s mode is unknown"
 
+            # Program / scenario numbers carried in the WHAT (Legrand WHO 4
+            # p. 5 and p. 64; libqtdevices thermal_device.cpp:209-211, 246-256,
+            # 291-301): 11xx/21xx/31xx program, 12xx/22xx/32xx scenario.
+            if self._type == MESSAGE_TYPE_MODE:
+                if 1101 <= self._mode <= 1199 or 2101 <= self._mode <= 2199 or 3101 <= self._mode <= 3199:
+                    self._program = self._mode % 100
+                elif 1201 <= self._mode <= 1299 or 2201 <= self._mode <= 2299 or 3201 <= self._mode <= 3299:
+                    self._scenario = self._mode % 100
+
             if (
+                self._mode in (115, 215, 315)
+                and self._what_param
+                and self._what_param[0]
+            ):
+                # Holiday daily plan: the parameter is the weekly program the
+                # central unit resumes afterwards, 1101-1103 / 2101-2103
+                # (Legrand WHO 4 p. 56 and p. 64, "115#parameterH"); libqtdevices
+                # reads it as whatArgN(0) % 100 (thermal_device.cpp:241, 286).
+                # It is not a temperature. The grammar only admits digits in
+                # a WHAT parameter (base.py _STATUS), so int() cannot fail.
+                self._program = int(self._what_param[0]) % 100
+                self._human_readable_log += f" (program {self._program})."
+            elif (
                 self._type == MESSAGE_TYPE_MODE
                 and self._what_param
                 and self._what_param[0] is not None
             ):
+                # 110#T / 210#T manual with temperature (Legrand WHO 4 p. 23,
+                # p. 56), 312#T timed manual (libqtdevices thermal_device.cpp:378).
                 self._type = MESSAGE_TYPE_MODE_TARGET
                 self._set_temperature = who4_temperature(self._what_param[0])
                 if self._set_temperature is not None:
@@ -656,6 +682,16 @@ class OWNHeatingEvent(OWNEvent):
     @property
     def cooling_fan_on(self) -> bool | None:
         return self._cooling_fan_on
+
+    @property
+    def program(self) -> int | None:
+        """Weekly program number (1..16) named by the WHAT, else None."""
+        return self._program
+
+    @property
+    def scenario(self) -> int | None:
+        """Scenario number (1..16) named by the WHAT, else None."""
+        return self._scenario
 
     @property
     def holiday_end_date(self) -> tuple[int, int, int] | None:
