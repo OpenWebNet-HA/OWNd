@@ -313,6 +313,22 @@ class OWNEnergyCommand(OWNCommand):
         return message
 
     @classmethod
+    def request_active_power(cls, where: str | int) -> OWNEnergyCommand:
+        """Request instantaneous active power: *#18*W*113##.
+
+        Legrand WHO 18 section 5.2.18 Dimension 113.
+        """
+        where = _normalize_actuator_where(where)
+        message = cls(f"*#18*{where}*113##")
+        message._human_readable_log = (
+            f"Requesting active power from sensor {where}."
+        )
+        return message
+
+    # Alias for API symmetry with get_total_consumption / downstream integrations
+    get_instant_power = request_active_power
+
+    @classmethod
     def get_hourly_consumption(
         cls, where: str | int, date: datetime.date
     ) -> OWNEnergyCommand | None:

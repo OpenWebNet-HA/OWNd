@@ -123,3 +123,21 @@ def test_actuator_address_preserves_hash_zero():
     cmd4 = OWNEnergyCommand.get_total_consumption("76#0")
     assert str(cmd4) == "*#18*76#0*51##"
 
+
+def test_request_active_power_builder():
+    cmd = OWNEnergyCommand.request_active_power(51)
+    assert str(cmd) == "*#18*51*113##"
+    assert cmd.human_readable_log == "Requesting active power from sensor 51."
+
+    cmd_alias = OWNEnergyCommand.get_instant_power("51")
+    assert str(cmd_alias) == "*#18*51*113##"
+    assert cmd_alias.human_readable_log == "Requesting active power from sensor 51."
+
+    # 7x address receives #0 normalization
+    cmd_7x = OWNEnergyCommand.request_active_power("71")
+    assert str(cmd_7x) == "*#18*71#0*113##"
+
+    cmd_7x_preset = OWNEnergyCommand.request_active_power("71#0")
+    assert str(cmd_7x_preset) == "*#18*71#0*113##"
+
+
