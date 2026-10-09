@@ -76,7 +76,7 @@ OWNd parses OpenWebNet frames and dispatches typed commands and events across th
 |:---:|:---|:---|:---|
 | **1** | Lighting | On/off switching, dimming level (0–100%), DALI Tunable White (Dimension 14, 2000K–6535K / mireds), status queries | `OWNLightingCommand`, `OWNLightingEvent` |
 | **2** | Automation | Shutters, blinds, motorized curtains, tilt angles, short & full replies | `OWNAutomationCommand`, `OWNAutomationEvent` |
-| **3** | Load Control | Load shedding status, circuit priority management | `OWNCommand`, `OWNEvent` |
+| **3** | Load Control | Priority forcing (`*3*2*#N##`, firmware-verified), priority states 0–3, priority status and central-unit measurement requests; measurement replies kept raw until a plant capture confirms their meaning | `OWNLoadCommand`, `OWNLoadEvent` |
 | **4** | Thermoregulation / Climate | Multi-zone temperature readouts, target adjustments, HVAC modes (Heat/Cool/Auto/Off), local offsets, fan coil speeds, valve states, Central Unit 3550/4695 master coordination | `OWNHeatingCommand`, `OWNHeatingEvent` |
 | **5** | Burglar Alarm | Zone status, system arming / disarming states | `OWNAlarmCommand`, `OWNAlarmEvent` |
 | **13** | Gateway Diagnostics & Clock | Gateway date/time synchronization, timezone offsets, firmware metadata | `OWNGatewayCommand`, `OWNGatewayEvent` |

@@ -19,6 +19,7 @@ _WHO_SUBMODULES: tuple[str, ...] = (
     "gateway",
     "heating",
     "lighting",
+    "load",
     "scenario",
     "sound",
 )
@@ -388,7 +389,7 @@ class OWNCommand(OWNMessage):
             parser = _COMMAND_DISPATCH.get(_who)
             if parser is not None:
                 return parser(data)
-            if _who in (0, 3, 14, 22, 24) or _who > 1000:
+            if _who in (0, 14, 22, 24) or _who > 1000:
                 return cls(data)
             if _who in (6, 7, 9):
                 return (
