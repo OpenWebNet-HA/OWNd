@@ -29,6 +29,7 @@ from OWNd.profiles import (
     F454Profile,
     F455Profile,
     GatewayProfile,
+    H4684Profile,
     H4890Profile,
     MH200NProfile,
     MH200Profile,
@@ -548,5 +549,14 @@ def test_profile_no_auth_features() -> None:
     )
     assert "Legacy password auth" not in profile.features_summary
     assert "HMAC-SHA2" not in profile.features_summary
+
+
+@pytest.mark.parametrize("name", ["H4684", "h4684", "L4684", "N4684", "NT4684", "LGRH4684", "LGR4684"])
+def test_h4684_profile(name: str) -> None:
+    """H4684 colour touch screen and brand variants resolve to H4684Profile."""
+    profile = get_gateway_profile(name)
+    assert isinstance(profile, H4684Profile)
+    assert profile.model_name == "H4684"
+
 
 

@@ -52,7 +52,11 @@ from .gateway import (
     _gateway_timezone,
     _validate_gateway_clock_values,
     OWNGatewayCommand,
+    OWNGatewayDiagnosticCommand,
+    OWNGatewayDiagnosticEvent,
     OWNGatewayEvent,
+    WHO13_DEVICE_TYPES,
+    WHO1013_DEVICE_TYPES,
 )
 from .heating import (
     CLIMATE_MODE_AUTO,
@@ -178,11 +182,15 @@ __all__ = [
     # Burglar Alarm (WHO 5)
     "OWNAlarmEvent",
     "OWNAlarmCommand",
-    # Gateway (WHO 13)
+    # Gateway (WHO 13 & WHO 1013)
     "_validate_gateway_clock_values",
     "_gateway_timezone",
     "OWNGatewayEvent",
     "OWNGatewayCommand",
+    "OWNGatewayDiagnosticEvent",
+    "OWNGatewayDiagnosticCommand",
+    "WHO13_DEVICE_TYPES",
+    "WHO1013_DEVICE_TYPES",
     # CEN & Dry Contact (WHO 15 & 25)
     "OWNCENEvent",
     "OWNDryContactEvent",

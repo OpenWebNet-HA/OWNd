@@ -500,6 +500,18 @@ class H4890Profile(GatewayProfile):
         )
 
 
+class H4684Profile(GatewayProfile):
+    """The H4684 colour touch screen family (H4684, L4684, N4684, NT4684, LGRH4684)."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            model_name="H4684",
+            auth_measured=False,
+            audio_measured=False,
+            supported_who=DEFAULT_SUPPORTED_WHO,
+        )
+
+
 class MyHomeServer1Profile(GatewayProfile):
     def __init__(self) -> None:
         super().__init__(
@@ -530,6 +542,7 @@ _PROFILES = {
     "f454": F454Profile(),
     "f455": F455Profile(),
     "f461": F461Profile(),
+    "h4684": H4684Profile(),
     "h4890": H4890Profile(),
     "mh200": MH200Profile(),
     "mh200n": MH200NProfile(),
@@ -547,6 +560,7 @@ CANONICAL_PROFILE_ORDER = (
     "f454",
     "f455",
     "f461",
+    "h4684",
     "h4890",
     "mh202",
     "mh201",
@@ -567,6 +581,11 @@ _ALIASES = {
     "ln4890": "h4890",
     "ln4890a": "h4890",
     "4890": "h4890",
+    "l4684": "h4684",
+    "n4684": "h4684",
+    "nt4684": "h4684",
+    "lgrh4684": "h4684",
+    "lgr4684": "h4684",
     # Item numbers. MHCatalogue.db (MyHOME_Suite 3.5.38, fingerprinted in
     # OpenWebNet-Encyclopedia sources/manifest.yaml) gives each gateway a name
     # row and a number row sharing one EN_DEVICE.id_item: MH202/003535 (1902),
