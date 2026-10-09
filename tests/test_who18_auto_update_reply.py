@@ -103,10 +103,15 @@ def test_actuator_address_preserves_hash_zero():
     # Meter frame does not collide with actuator
     meter_evt = OWNEnergyEvent("*#18*56*113*0##")
     assert meter_evt.where == "56"
+    assert meter_evt.target_address == "56"
     assert meter_evt.sensor == "6"
     assert meter_evt.is_actuator is False
     assert meter_evt.active_power == 0
     assert meter_evt.human_readable_log == "Sensor 6 is reporting an active power draw of 0 W."
+
+    # Fallback to empty string if where is empty
+    meter_evt._where = None
+    assert meter_evt.target_address == ""
 
     # Command builder preserves address whether #0 was already provided or inferred
     cmd1 = OWNEnergyCommand.stop_sending_instant_power("76")
