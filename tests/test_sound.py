@@ -155,3 +155,123 @@ def test_non_routing_events_have_no_environment(frame: str) -> None:
     assert event.environment is None
     assert event.routed_source is None
     assert event.zone == event.where
+
+
+def test_who16_sound_source_commands() -> None:
+    """Verify WHO 16 sound source command builders and range validation."""
+    assert str(OWNSoundCommand.next_track("101")) == "*16*6001*101##"
+    assert str(OWNSoundCommand.next_track(102, 5)) == "*16*6005*102##"
+    assert str(OWNSoundCommand.previous_track("101")) == "*16*6101*101##"
+    assert str(OWNSoundCommand.previous_track(102, 3)) == "*16*6103*102##"
+    assert str(OWNSoundCommand.seek_up("101")) == "*16*5000*101##"
+    assert str(OWNSoundCommand.seek_down("101")) == "*16*5100*101##"
+    assert str(OWNSoundCommand.select_track("101", 4)) == "*#16*101*#7*4##"
+    assert str(OWNSoundCommand.request_track("101")) == "*#16*101*7##"
+    assert str(OWNSoundCommand.set_frequency("101", 107000)) == "*#16*101*#6*0*107000##"
+    # Below 100 MHz the value is not zero-padded (F500N capture, MyHOME#427).
+    assert str(OWNSoundCommand.set_frequency("101", 96200)) == "*#16*101*#6*0*96200##"
+    assert str(OWNSoundCommand.request_frequency("101")) == "*#16*101*6##"
+    assert str(OWNSoundCommand.start_rds("101")) == "*16*101*101##"
+    assert str(OWNSoundCommand.stop_rds("101")) == "*16*102*101##"
+    assert str(OWNSoundCommand.request_rds("101")) == "*#16*101*8##"
+
+    with pytest.raises(ValueError, match="step must be between 1 and 15"):
+        OWNSoundCommand.next_track("101", 0)
+    with pytest.raises(ValueError, match="step must be between 1 and 15"):
+        OWNSoundCommand.next_track("101", 16)
+    with pytest.raises(ValueError, match="step must be between 1 and 15"):
+        OWNSoundCommand.previous_track("101", 0)
+    with pytest.raises(ValueError, match="step must be between 1 and 15"):
+        OWNSoundCommand.previous_track("101", 16)
+    with pytest.raises(ValueError, match="track must be greater than or equal to 1"):
+        OWNSoundCommand.select_track("101", 0)
+    with pytest.raises(ValueError, match="track must be greater than or equal to 1"):
+        OWNSoundCommand.select_track("101", -1)
+    with pytest.raises(ValueError, match="frequency in kHz must be positive"):
+        OWNSoundCommand.set_frequency("101", 0)
+    with pytest.raises(ValueError, match="frequency in kHz must be positive"):
+        OWNSoundCommand.set_frequency("101", -107000)
+
+
+def test_who16_sound_source_events() -> None:
+    """Verify WHO 16 sound source event parsing and state extraction."""
+    # Source busy indicator
+    busy = OWNMessage.parse("*16*100*101##")
+    assert isinstance(busy, OWNSoundEvent)
+    assert busy.is_source_busy is True
+    assert busy.source_id == "1"
+    assert "BUSY" in busy.human_readable_log
+
+    # Track advance steps
+    step_fwd = OWNMessage.parse("*16*6001*101##")
+    assert isinstance(step_fwd, OWNSoundEvent)
+    assert step_fwd.track_step_forward == 1
+    assert "advance track/station by 1 step(s)" in step_fwd.human_readable_log
+
+    step_fwd5 = OWNMessage.parse("*16*6005*101##")
+    assert isinstance(step_fwd5, OWNSoundEvent)
+    assert step_fwd5.track_step_forward == 5
+
+    # Track return steps
+    step_back = OWNMessage.parse("*16*6101*101##")
+    assert isinstance(step_back, OWNSoundEvent)
+    assert step_back.track_step_backward == 1
+    assert "return track/station by 1 step(s)" in step_back.human_readable_log
+
+    # Hardware seek
+    seek_up = OWNMessage.parse("*16*5000*101##")
+    assert isinstance(seek_up, OWNSoundEvent)
+    assert seek_up.is_seek_up is True
+
+    seek_down = OWNMessage.parse("*16*5100*101##")
+    assert isinstance(seek_down, OWNSoundEvent)
+    assert seek_down.is_seek_down is True
+
+    # Frequency report
+    freq = OWNMessage.parse("*#16*101*6*0*107000##")
+    assert isinstance(freq, OWNSoundEvent)
+    assert freq.frequency_khz == 107000
+    assert "frequency is 107000 kHz" in freq.human_readable_log
+
+    # Stored station/track report
+    trk = OWNMessage.parse("*#16*101*7*0*3##")
+    assert isinstance(trk, OWNSoundEvent)
+    assert trk.track == 3
+    assert "station/track is 3" in trk.human_readable_log
+
+    # RDS text report
+    rds = OWNMessage.parse("*#16*101*8*82*65*68*73*79*32*32*49##")
+    assert isinstance(rds, OWNSoundEvent)
+    assert rds.rds_text == "RADIO  1"
+    assert "RADIO  1" in rds.human_readable_log
+
+    # Malformed dimension error handling
+    bad_freq = OWNSoundEvent("*#16*101*6*##")
+    assert bad_freq.frequency_khz is None
+
+    bad_freq_neg = OWNSoundEvent("*#16*101*6*0*0##")
+    assert bad_freq_neg.frequency_khz is None
+
+    bad_trk = OWNSoundEvent("*#16*101*7*##")
+    assert bad_trk.track is None
+
+    bad_trk_zero = OWNSoundEvent("*#16*101*7*0*0##")
+    assert bad_trk_zero.track is None
+
+    bad_rds = OWNSoundEvent("*#16*101*8*82*65*68*73*79*32*32*##")
+    assert bad_rds.rds_text == "RADIO"
+
+    zero_rds = OWNSoundEvent("*#16*101*8*82*65*68*73*79*32*32*0##")
+    assert zero_rds.rds_text == "RADIO"
+
+    # Non-8-code RDS payloads are ignored as malformed frames
+    short_rds = OWNSoundEvent("*#16*101*8*82*65*68##")
+    assert short_rds.rds_text is None
+
+    long_rds = OWNSoundEvent("*#16*101*8*82*65*68*73*79*32*32*49*50##")
+    assert long_rds.rds_text is None
+
+    # Blank RDS payload
+    blank_rds = OWNSoundEvent("*#16*101*8*32*32*32*32*32*32*32*32##")
+    assert blank_rds.rds_text is None
+    assert "RDS text: ''" in blank_rds.human_readable_log
