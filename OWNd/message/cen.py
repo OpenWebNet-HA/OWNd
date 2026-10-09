@@ -184,6 +184,18 @@ class OWNScenarioPlusEvent(OWNEvent):
 class OWNScenarioPlusCommand(OWNCommand):
     """Builders for the five WHO 25 frames libqtdevices ScenarioPlusDevice sends."""
 
+    _NAMES = {11: "on", 12: "off", 13: "increase", 14: "decrease", 15: "stop"}
+
+    def __init__(self, data: str) -> None:
+        super().__init__(data)
+        self._action = self._NAMES.get(self._what) if self._what is not None else None
+        self.object = self._where
+        self._human_readable_log = f"Scenario plus {self._where}: {self._action}."
+
+    @property
+    def action(self) -> str | None:
+        return self._action
+
     @classmethod
     def turn_on(cls, where: str | int) -> OWNScenarioPlusCommand:
         message = cls(f"*25*11#0*{where}##")

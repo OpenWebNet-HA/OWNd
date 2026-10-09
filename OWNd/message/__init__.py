@@ -191,6 +191,8 @@ __all__ = [
     "OWNCenCommand",
     "OWNDryContactCommand",
     "OWNCenPlusCommand",
+    "OWNScenarioPlusEvent",
+    "OWNScenarioPlusCommand",
     # Sound & AV (WHO 16 & 22 & 7)
     "OWNSoundEvent",
     "OWNAVCommand",

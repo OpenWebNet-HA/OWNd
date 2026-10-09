@@ -22,11 +22,23 @@ def test_commands_and_events_are_routed():
         ("*25*14#0#5*11##", "decrease"),
         ("*25*15*11##", "stop"),
     ]:
-        assert isinstance(OWNCommand.parse(frame), OWNScenarioPlusCommand)
+        cmd = OWNCommand.parse(frame)
+        assert isinstance(cmd, OWNScenarioPlusCommand)
+        assert cmd.action == action
+        assert cmd.object == "11"
+        assert cmd.human_readable_log == f"Scenario plus 11: {action}."
+
         event = OWNEvent.parse(frame)
         assert isinstance(event, OWNScenarioPlusEvent)
         assert event.action == action
         assert event.object == "11"
+
+
+def test_classes_exported_in_all():
+    import OWNd.message as message_mod
+
+    assert "OWNScenarioPlusCommand" in message_mod.__all__
+    assert "OWNScenarioPlusEvent" in message_mod.__all__
 
 
 def test_firmware_emitted_forms_parse():
