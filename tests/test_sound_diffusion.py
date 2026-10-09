@@ -230,3 +230,7 @@ def test_who22_command_parser_dispatch() -> None:
     assert req.is_request is True
     assert req.where == "3"
     assert req.target_address == "3#4#1"
+
+    cmd_all = OWNSoundDiffusionCommand.turn_off("6")
+    assert cmd_all.where == "6"
+    assert cmd_all.target_address == "6"
