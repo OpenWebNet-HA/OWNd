@@ -450,12 +450,16 @@ class OWNSoundDiffusionEvent(OWNEvent):
         self._device_state: int | None = None
         self._multimedia_type: int | None = None
 
-        if self._where and self._where_param:
-            self._where = f"{self._where}#{'#'.join(self._where_param)}"
+        target = (
+            f"{self._where}#{'#'.join(self._where_param)}"
+            if self._where and self._where_param
+            else (self._where or "")
+        )
+        self._target_address: str = target
 
-        # Decode structured target class from WHERE
-        if self._where:
-            parts = self._where.split("#")
+        # Decode structured target class from target address
+        if target:
+            parts = target.split("#")
             kind = parts[0]
             if kind == "3" and len(parts) >= 3:
                 self._target_type = "speaker"
@@ -497,12 +501,12 @@ class OWNSoundDiffusionEvent(OWNEvent):
 
         # Human-readable log
         subject = (
-            f"Speaker {self._where} (Zone {self.equivalent_who16_where})"
+            f"Speaker {target} (Zone {self.equivalent_who16_where})"
             if self._target_type == "speaker" and self.equivalent_who16_where
             else (
                 f"Audio Source {self._source_id}"
                 if self._target_type == "source" and self._source_id is not None
-                else (f"Sound diffusion device {self._where}" if self._where else "Sound diffusion system")
+                else (f"Sound diffusion device {target}" if target else "Sound diffusion system")
             )
         )
         if self._dimension == 1 and self._volume is not None:
@@ -628,14 +632,21 @@ class OWNSoundDiffusionEvent(OWNEvent):
         """True if WHAT represents previous radio station (WHAT=10)."""
         return self._what == 10
 
+    @property
+    def target_address(self) -> str:
+        """Structured target address including point/source parameters (e.g. 3#4#1, 2#3)."""
+        return self._target_address
+
 
 class OWNSoundDiffusionCommand(OWNCommand):
     """Commands for WHO 22 advanced sound diffusion system."""
 
-    def __init__(self, data: str) -> None:
-        super().__init__(data)
+    @property
+    def target_address(self) -> str:
+        """Structured target address including point/source parameters (e.g. 3#4#1, 2#3)."""
         if self._where and self._where_param:
-            self._where = f"{self._where}#{'#'.join(self._where_param)}"
+            return f"{self._where}#{'#'.join(self._where_param)}"
+        return self._where or ""
 
     @classmethod
     def status(cls, where: str | int) -> OWNSoundDiffusionCommand:

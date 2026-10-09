@@ -17,7 +17,8 @@ def test_who22_speaker_volume_event() -> None:
     assert event.target_type == "speaker"
     assert event.area == 4
     assert event.point == 1
-    assert event.where == "3#4#1"
+    assert event.where == "3"
+    assert event.target_address == "3#4#1"
     assert event.equivalent_who16_where == "41"
     assert event.volume == 1
     assert event.human_readable_log == "Speaker 3#4#1 (Zone 41) volume is set to 1."
@@ -27,6 +28,8 @@ def test_who22_speaker_volume_event() -> None:
     assert event61.target_type == "speaker"
     assert event61.area == 6
     assert event61.point == 1
+    assert event61.where == "3"
+    assert event61.target_address == "3#6#1"
     assert event61.equivalent_who16_where == "61"
     assert event61.volume == 7
     assert event61.human_readable_log == "Speaker 3#6#1 (Zone 61) volume is set to 7."
@@ -217,11 +220,13 @@ def test_who22_command_parser_dispatch() -> None:
     assert isinstance(cmd, OWNSoundDiffusionCommand)
     assert isinstance(cmd, OWNCommand)
     assert cmd.who == 22
-    assert cmd.where == "3#4#1"
+    assert cmd.where == "3"
+    assert cmd.target_address == "3#4#1"
 
     req = OWNCommand.parse("*#22*3#4#1##")
     assert isinstance(req, OWNSoundDiffusionCommand)
     assert isinstance(req, OWNCommand)
     assert req.who == 22
     assert req.is_request is True
-    assert req.where == "3#4#1"
+    assert req.where == "3"
+    assert req.target_address == "3#4#1"
