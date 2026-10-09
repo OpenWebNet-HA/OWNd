@@ -36,8 +36,6 @@ class OWNEnergyEvent(OWNEvent):
         super().__init__(data)
 
         self._type: str | None = None
-        if self._where and self._where_param:
-            self._where = f"{self._where}#{'#'.join(self._where_param)}"
         where = self._where or ""
         self._sensor = where[1:] if len(where) > 1 else where
         self._active_power = 0
@@ -250,9 +248,22 @@ class OWNEnergyEvent(OWNEvent):
         return self._current_month_partial_consumption
 
     @property
+    def target_address(self) -> str:
+        """The full target address including any actuator channel suffix (#0)."""
+        if self._where and self._where_param:
+            return f"{self._where}#{'#'.join(self._where_param)}"
+        return self._where or ""
+
+    @property
     def is_actuator(self) -> bool:
         """True if the event originates from an energy management actuator (7N#0)."""
-        return bool(self._where and (self._where.startswith("7") or self._where.endswith("#0")))
+        return bool(
+            self._where
+            and (
+                self._where.startswith("7")
+                or (self._where_param and self._where_param == ["0"])
+            )
+        )
 
     @property
     def human_readable_log(self) -> str:

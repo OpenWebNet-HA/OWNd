@@ -86,15 +86,17 @@ def test_negative_interval_clamped_to_stopped():
 def test_actuator_address_preserves_hash_zero():
     # Authentic actuator frames from issue #669 trace (*#18*76#0*113*0##, *#18*77#0*113*161##)
     actuator_evt = OWNEnergyEvent("*#18*76#0*113*0##")
-    assert actuator_evt.where == "76#0"
-    assert actuator_evt.sensor == "6#0"
+    assert actuator_evt.where == "76"
+    assert actuator_evt.target_address == "76#0"
+    assert actuator_evt.sensor == "6"
     assert actuator_evt.is_actuator is True
     assert actuator_evt.active_power == 0
-    assert actuator_evt.human_readable_log == "Sensor 6#0 is reporting an active power draw of 0 W."
+    assert actuator_evt.human_readable_log == "Sensor 6 is reporting an active power draw of 0 W."
 
     actuator_evt2 = OWNEnergyEvent("*#18*77#0*113*161##")
-    assert actuator_evt2.where == "77#0"
-    assert actuator_evt2.sensor == "7#0"
+    assert actuator_evt2.where == "77"
+    assert actuator_evt2.target_address == "77#0"
+    assert actuator_evt2.sensor == "7"
     assert actuator_evt2.is_actuator is True
     assert actuator_evt2.active_power == 161
 
