@@ -104,6 +104,17 @@ from .lighting import (
     OWNLightingCommand,
     OWNLightingEvent,
 )
+from .load import (
+    LOAD_CONTROL_UNIT,
+    LOAD_MEASUREMENT_DIMENSIONS,
+    LOAD_PRIORITIES,
+    LOAD_STATE_DISABLED,
+    LOAD_STATE_ENABLED,
+    LOAD_STATE_FORCED,
+    LOAD_STATE_FORCING_REMOVED,
+    OWNLoadCommand,
+    OWNLoadEvent,
+)
 from .scenario import (
     OWNAuxEvent,
     OWNScenarioEvent,
@@ -138,6 +149,16 @@ __all__ = [
     # Automation (WHO 2)
     "OWNAutomationEvent",
     "OWNAutomationCommand",
+    # Load control (WHO 3)
+    "LOAD_STATE_DISABLED",
+    "LOAD_STATE_ENABLED",
+    "LOAD_STATE_FORCED",
+    "LOAD_STATE_FORCING_REMOVED",
+    "LOAD_CONTROL_UNIT",
+    "LOAD_PRIORITIES",
+    "LOAD_MEASUREMENT_DIMENSIONS",
+    "OWNLoadEvent",
+    "OWNLoadCommand",
     # Heating (WHO 4)
     "MESSAGE_TYPE_MAIN_TEMPERATURE",
     "MESSAGE_TYPE_MAIN_HUMIDITY",
