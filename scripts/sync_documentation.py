@@ -86,6 +86,12 @@ class WhoCatalogDefinition:
 
 WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
     WhoCatalogDefinition(
+        who="**0**",
+        name="Scenarios",
+        description="Basic scenario execution (1–32) from control panels, scenario module programming and memory lock states",
+        dispatch_who_keys=(0,),
+    ),
+    WhoCatalogDefinition(
         who="**1**",
         name="Lighting",
         description="On/off switching, dimming level (0–100%), DALI Tunable White (Dimension 14, 2000K–6535K / mireds), status queries",
@@ -117,6 +123,12 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
         dispatch_who_keys=(5,),
     ),
     WhoCatalogDefinition(
+        who="**9**",
+        name="Auxiliary",
+        description="Auxiliary channel status (aux 1–9) for remote relays and inter-system signaling",
+        dispatch_who_keys=(9,),
+    ),
+    WhoCatalogDefinition(
         who="**13**",
         name="Gateway Diagnostics & Clock",
         description="Gateway date/time synchronization, timezone offsets, firmware metadata",
@@ -127,7 +139,6 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
         name="CEN Scenarios",
         description="Scenario control, pushbutton push/release/extended press events, strongly typed command builders",
         dispatch_who_keys=(15,),
-        explicit_classes=("OWNScenarioEvent",),
     ),
     WhoCatalogDefinition(
         who="**16** / **22**",
@@ -152,7 +163,7 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
         who="**25**",
         name="CEN+ & Dry Contacts",
         description="32-button keypads, rotary knob encoders (CW/CCW), dry contacts, PIR sensors, strongly typed command builders",
-        dispatch_who_keys=(),
+        dispatch_who_keys=(25,),
         explicit_classes=(
             "OWNCenPlusCommand",
             "OWNCENPlusEvent",
@@ -250,9 +261,10 @@ def build_who_catalog_table() -> str:
 
 
 def verify_who_catalog_coverage() -> list[str]:
-    """Verify that all WHO subsystems registered in _COMMAND_DISPATCH are accounted for."""
+    """Verify that all WHO subsystems registered in dispatch registries are accounted for."""
     from OWNd.message.base import (
         _COMMAND_DISPATCH,
+        _EVENT_DISPATCH,
         _ensure_all_subsystems_registered,
     )
 
@@ -261,17 +273,25 @@ def verify_who_catalog_coverage() -> list[str]:
     for defn in WHO_DEFINITIONS:
         covered_who.update(defn.dispatch_who_keys)
 
-    # WHO 25 is handled with explicit classes because its dispatcher is a private helper function
+    all_registered = set(_COMMAND_DISPATCH.keys()) | set(_EVENT_DISPATCH.keys())
     missing_who = [
-        who for who in sorted(_COMMAND_DISPATCH.keys())
-        if who not in covered_who and who != 25
+        who for who in sorted(all_registered)
+        if who not in covered_who
     ]
-    if missing_who:
-        return [
-            f"WHO {who} registered in _COMMAND_DISPATCH but not mapped in WHO_DEFINITIONS."
-            for who in missing_who
-        ]
-    return []
+    violations: list[str] = []
+    for who in missing_who:
+        in_cmd = who in _COMMAND_DISPATCH
+        in_evt = who in _EVENT_DISPATCH
+        if in_cmd and in_evt:
+            registry = "_COMMAND_DISPATCH and _EVENT_DISPATCH"
+        elif in_cmd:
+            registry = "_COMMAND_DISPATCH"
+        else:
+            registry = "_EVENT_DISPATCH"
+        violations.append(
+            f"WHO {who} registered in {registry} but not mapped in WHO_DEFINITIONS."
+        )
+    return violations
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -436,7 +456,14 @@ def sync_documentation(
     else:
         messages.append("Gateway Profiles table is in sync.")
 
-    # 2. WHO Subsystems Catalog Table
+    # 2. WHO Subsystems Catalog Table & Coverage Check
+    coverage_violations = verify_who_catalog_coverage()
+    if coverage_violations:
+        for violation in coverage_violations:
+            messages.append(f"WHO catalog gap: {violation}")
+    else:
+        messages.append("WHO catalog dispatch coverage is complete.")
+
     who_table = build_who_catalog_table()
     working_content, who_changed = _replace_marker_block(
         working_content,
@@ -480,8 +507,13 @@ def sync_documentation(
             if svg_drifted:
                 messages.append(f"{coverage_svg_path.name} drifted from {coverage_xml_path.name} ({rate_round}%).")
                 if not check_only:
-                    coverage_svg_path.write_text(expected_svg, encoding="utf-8", newline="\n")
-                    messages.append(f"Updated {coverage_svg_path.name} to {rate_round}%.")
+                    if coverage_violations:
+                        messages.append(
+                            f"Refused to update {coverage_svg_path.name} while WHO catalog coverage gaps exist."
+                        )
+                    else:
+                        coverage_svg_path.write_text(expected_svg, encoding="utf-8", newline="\n")
+                        messages.append(f"Updated {coverage_svg_path.name} to {rate_round}%.")
             else:
                 messages.append(f"{coverage_svg_path.name} is in sync ({rate_round}%).")
     else:
@@ -497,7 +529,12 @@ def sync_documentation(
             messages.append(f"Normalized line endings to LF in {readme_path.name}.")
 
     content_changed = working_content != original_content
-    is_in_sync = (not content_changed) and (not has_crlf) and (not svg_drifted)
+    is_in_sync = (
+        (not content_changed)
+        and (not has_crlf)
+        and (not svg_drifted)
+        and (not coverage_violations)
+    )
 
     diff_str = ""
     if content_changed:
@@ -512,8 +549,13 @@ def sync_documentation(
         diff_str = "".join(diff_lines)
 
     if not check_only and (content_changed or has_crlf):
-        readme_path.write_text(working_content, encoding="utf-8", newline="\n")
-        messages.append(f"Updated {readme_path.name} in place.")
+        if coverage_violations:
+            messages.append(
+                f"Refused to update {readme_path.name} while WHO catalog coverage gaps exist."
+            )
+        else:
+            readme_path.write_text(working_content, encoding="utf-8", newline="\n")
+            messages.append(f"Updated {readme_path.name} in place.")
 
     return is_in_sync, diff_str, messages
 
@@ -586,23 +628,39 @@ def main(argv: list[str] | None = None) -> int:
     for msg in messages:
         print(f"- {msg}")
 
+    has_catalog_gaps = any(msg.startswith("WHO catalog gap:") for msg in messages)
+
     if args.check:
         if not in_sync:
             print("\nError: Documentation is out of date!", file=sys.stderr)
             if diff:
                 print(diff, file=sys.stderr)
-            print(
-                f"\nRun 'python scripts/sync_documentation.py' to synchronize {args.readme.name}.",
-                file=sys.stderr,
-            )
+            if has_catalog_gaps:
+                print(
+                    f"\nRun 'python scripts/sync_documentation.py' after defining missing WHO subsystems in WHO_DEFINITIONS.",
+                    file=sys.stderr,
+                )
+            else:
+                print(
+                    f"\nRun 'python scripts/sync_documentation.py' to synchronize {args.readme.name}.",
+                    file=sys.stderr,
+                )
             return 1
         print(f"\nDocumentation in {args.readme.name} is fully synchronized.")
         return 0
 
     if in_sync:
         print(f"\nDocumentation in {args.readme.name} is already up to date.")
-    else:
-        print(f"\nSuccessfully synchronized documentation in {args.readme.name}.")
+        return 0
+
+    if has_catalog_gaps:
+        print(
+            "\nError: Incomplete documentation synchronization — unmapped WHO subsystems in WHO_DEFINITIONS.",
+            file=sys.stderr,
+        )
+        return 1
+
+    print(f"\nSuccessfully synchronized documentation in {args.readme.name}.")
     return 0
 
 

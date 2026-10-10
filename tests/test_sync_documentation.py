@@ -66,6 +66,18 @@ def test_build_who_catalog_table() -> None:
     # Verify WHO 4 includes OWNHeatingCommand and OWNHeatingEvent
     assert "`OWNHeatingCommand`, `OWNHeatingEvent`" in table
 
+    # Verify WHO 0 includes OWNScenarioEvent
+    assert "| **0** | Scenarios |" in table
+    assert "`OWNScenarioEvent`" in table
+
+    # Verify WHO 9 includes OWNAuxEvent
+    assert "| **9** | Auxiliary |" in table
+    assert "`OWNAuxEvent`" in table
+
+    # Verify WHO 15 includes CEN classes without OWNScenarioEvent
+    assert "| **15** | CEN Scenarios |" in table
+    assert "`OWNCenCommand`, `OWNCENEvent`" in table
+
     # Verify WHO 25 includes CEN+ and DryContact classes
     assert "`OWNCenPlusCommand`, `OWNCENPlusEvent`, `OWNDryContactCommand`, `OWNDryContactEvent`" in table
 
@@ -388,9 +400,96 @@ def test_sync_documentation_crlf_detection(tmp_path: Path) -> None:
 
 
 def test_who_catalog_dispatch_coverage() -> None:
-    """Verify all registered WHO command parsers are covered in WHO_DEFINITIONS."""
+    """Verify all registered WHO command and event parsers are covered in WHO_DEFINITIONS."""
     violations = verify_who_catalog_coverage()
     assert not violations, f"WHO catalog definition gaps found: {violations}"
+
+
+def test_who_catalog_dispatch_coverage_detects_unmapped_registries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Verify verify_who_catalog_coverage catches missing WHOs in commands, events, or both."""
+    import OWNd.message.base as base_mod
+
+    # Clean initial state
+    clean_cmds = dict(base_mod._COMMAND_DISPATCH)
+    clean_evts = dict(base_mod._EVENT_DISPATCH)
+    assert verify_who_catalog_coverage() == []
+
+    # 1. Isolated command-only registration
+    cmd_only = dict(clean_cmds)
+    cmd_only[998] = lambda frame: base_mod.OWNCommand(frame)
+    monkeypatch.setattr(base_mod, "_COMMAND_DISPATCH", cmd_only)
+    monkeypatch.setattr(base_mod, "_EVENT_DISPATCH", dict(clean_evts))
+    assert verify_who_catalog_coverage() == [
+        "WHO 998 registered in _COMMAND_DISPATCH but not mapped in WHO_DEFINITIONS."
+    ]
+
+    # 2. Isolated event-only registration
+    evt_only = dict(clean_evts)
+    evt_only[999] = lambda frame: base_mod.OWNEvent(frame)
+    monkeypatch.setattr(base_mod, "_COMMAND_DISPATCH", dict(clean_cmds))
+    monkeypatch.setattr(base_mod, "_EVENT_DISPATCH", evt_only)
+    assert verify_who_catalog_coverage() == [
+        "WHO 999 registered in _EVENT_DISPATCH but not mapped in WHO_DEFINITIONS."
+    ]
+
+    # 3. Isolated dual registration (both command and event dispatch)
+    both_cmd = dict(clean_cmds)
+    both_cmd[997] = lambda frame: base_mod.OWNCommand(frame)
+    both_evt = dict(clean_evts)
+    both_evt[997] = lambda frame: base_mod.OWNEvent(frame)
+    monkeypatch.setattr(base_mod, "_COMMAND_DISPATCH", both_cmd)
+    monkeypatch.setattr(base_mod, "_EVENT_DISPATCH", both_evt)
+    assert verify_who_catalog_coverage() == [
+        "WHO 997 registered in _COMMAND_DISPATCH and _EVENT_DISPATCH but not mapped in WHO_DEFINITIONS."
+    ]
+
+
+def test_sync_documentation_fails_on_catalog_gap_and_refuses_write(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Verify sync_documentation and CLI refuse writing and exit 1 on catalog gaps."""
+    import OWNd.message.base as base_mod
+
+    repo_root = Path(__file__).resolve().parent.parent
+    readme_path = repo_root / "README.md"
+
+    # Register an unmapped event-only WHO (e.g. 999)
+    fake_evt_dispatch = dict(base_mod._EVENT_DISPATCH)
+    fake_evt_dispatch[999] = lambda frame: base_mod.OWNEvent(frame)
+    monkeypatch.setattr(base_mod, "_EVENT_DISPATCH", fake_evt_dispatch)
+
+    # 1. sync_documentation in check mode must return in_sync=False
+    in_sync, diff, messages = sync_documentation(
+        readme_path=readme_path,
+        coverage_xml_path=None,
+        check_only=True,
+    )
+    assert in_sync is False
+    assert any("WHO catalog gap:" in m for m in messages)
+    assert any("WHO 999 registered in _EVENT_DISPATCH" in m for m in messages)
+
+    # 2. sync_documentation in update mode must refuse writing when catalog gaps exist
+    drifted_content = readme_path.read_text(encoding="utf-8").replace(
+        WHO_END_MARKER, f"| **999** | Fake | Description | `FakeEvent` |\n{WHO_END_MARKER}"
+    )
+    temp_readme = tmp_path / "README_drift.md"
+    temp_readme.write_text(drifted_content, encoding="utf-8")
+
+    in_sync_update, _, update_msgs = sync_documentation(
+        readme_path=temp_readme,
+        coverage_xml_path=None,
+        check_only=False,
+    )
+    assert in_sync_update is False
+    assert any("Refused to update" in m for m in update_msgs)
+    # File content must NOT have been modified
+    assert temp_readme.read_text(encoding="utf-8") == drifted_content
+
+    # 3. CLI --check must exit 1
+    assert main(["--check"]) == 1
+
+    # 4. CLI update mode must also exit 1 on catalog gaps
+    assert main(["--readme", str(temp_readme)]) == 1
 
 
 def test_sync_documentation_missing_coverage_graceful(tmp_path: Path) -> None:

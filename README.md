@@ -75,13 +75,15 @@ OWNd parses OpenWebNet frames and dispatches typed commands and events across th
 <!-- START_WHO_CATALOG_TABLE -->
 | WHO | Subsystem | Description & Capabilities | Event / Command Classes |
 |:---:|:---|:---|:---|
+| **0** | Scenarios | Basic scenario execution (1–32) from control panels, scenario module programming and memory lock states | `OWNScenarioEvent` |
 | **1** | Lighting | On/off switching, dimming level (0–100%), DALI Tunable White (Dimension 14, 2000K–6535K / mireds), status queries | `OWNLightingCommand`, `OWNLightingEvent` |
 | **2** | Automation | Shutters, blinds, motorized curtains, tilt angles, short & full replies | `OWNAutomationCommand`, `OWNAutomationEvent` |
 | **3** | Load Control | Load shedding status, circuit priority management | `OWNCommand`, `OWNEvent` |
 | **4** | Thermoregulation / Climate | Multi-zone temperature readouts, target adjustments, HVAC modes (Heat/Cool/Auto/Off), local offsets, fan coil speeds, valve states, Central Unit 3550/4695 master coordination | `OWNHeatingCommand`, `OWNHeatingEvent` |
 | **5** | Burglar Alarm | Zone status, system arming / disarming states | `OWNAlarmCommand`, `OWNAlarmEvent` |
+| **9** | Auxiliary | Auxiliary channel status (aux 1–9) for remote relays and inter-system signaling | `OWNAuxEvent` |
 | **13** | Gateway Diagnostics & Clock | Gateway date/time synchronization, timezone offsets, firmware metadata | `OWNGatewayCommand`, `OWNGatewayEvent` |
-| **15** | CEN Scenarios | Scenario control, pushbutton push/release/extended press events, strongly typed command builders | `OWNCenCommand`, `OWNCENEvent`, `OWNScenarioEvent` |
+| **15** | CEN Scenarios | Scenario control, pushbutton push/release/extended press events, strongly typed command builders | `OWNCenCommand`, `OWNCENEvent` |
 | **16** / **22** | Sound Diffusion | Multi-source selection, zone activation, volume adjustment, F441 matrix | `OWNSoundCommand`, `OWNSoundEvent`, `OWNAVCommand` |
 | **17** | Scenario Programmer | MH200N / MH202 scenario activation and state monitoring | `OWNSceneCommand`, `OWNSceneEvent` |
 | **18** | Energy Management | Active power (W), hourly/daily/monthly consumption (kWh), Stop & Go breaker diagnostics | `OWNEnergyCommand`, `OWNEnergyEvent` |
