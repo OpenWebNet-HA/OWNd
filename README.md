@@ -239,14 +239,14 @@ frame_cenplus_held = OWNCenPlusCommand.still_held(where="21", button=5)
 # CEN+ (WHO=25): Button 5 release after a long press -> *25*24#5*21##
 frame_cenplus_rel = OWNCenPlusCommand.release(where="21", button=5)
 
-# Central Unit (WHO=4): Set 3550 (#0) master mode to Heating at 21.5°C -> *4*1#0215*#0##
-frame_heat = OWNHeatingCommand.set_central_mode(where="#0", mode="heating", temperature=21.5)
+# Central Unit (WHO=4): Set 3550 (#0) master mode to Heating -> *4*1*#0##
+frame_heat = OWNHeatingCommand.set_central_mode(where="#0", mode="heating")
 
-# Central Unit (WHO=4): Set 4695 (#0#1) master mode to Cooling at 24.0°C -> *4*2#0240*#0#1##
-frame_cool = OWNHeatingCommand.set_central_mode(where="#0#1", mode="cooling", temperature=24.0)
+# Central Unit (WHO=4): Set 4695 (#0#1) master mode to Cooling -> *4*0*#0#1##
+frame_cool = OWNHeatingCommand.set_central_mode(where="#0#1", mode="cooling")
 
-# Central Unit (WHO=4): Turn Central Unit OFF -> *4*303#0215*#0##
-frame_off = OWNHeatingCommand.set_central_off(where="#0", mode="heating", temperature=21.5)
+# Central Unit (WHO=4): Turn Central Unit OFF -> *4*303*#0##
+frame_off = OWNHeatingCommand.set_central_mode(where="#0", mode="off")
 ```
 
 ---
