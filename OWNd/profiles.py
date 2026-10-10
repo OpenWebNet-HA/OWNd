@@ -10,6 +10,9 @@ WHO_AUTOMATION = 2
 WHO_LOAD_CONTROL = 3
 WHO_HEATING = 4
 WHO_ALARM = 5
+WHO_DOOR_ENTRY = 6
+WHO_LOCK = 8
+WHO_INTERCOM = 8
 WHO_CEN = 15
 WHO_SOUND = 16
 WHO_SCENARIO = 17
@@ -393,6 +396,12 @@ class MH200Profile(GatewayProfile):
     page 13 "Gateways that allow the function": MH200 NO, MH200N 03565 YES),
     the legacy MH200 firmware supports neither, supporting only classic
     CEN (WHO 15).
+
+    WHO 6 and 8 (video door entry) are listed because a live MH200 (firmware
+    2.1.0, MyHOME#667) relayed ``*8*1#1#4*74##``, ``*8*9#1#4*73##`` and
+    ``*6*9##`` from a 2-wire entrance panel. They are bus-level subsystems: a
+    plant without a door entry system never emits them. No other gateway
+    model has a capture either way, so they are not in ``DEFAULT_SUPPORTED_WHO``.
     """
 
     def __init__(self) -> None:
@@ -406,6 +415,8 @@ class MH200Profile(GatewayProfile):
                 WHO_LIGHTING,
                 WHO_AUTOMATION,
                 WHO_HEATING,
+                WHO_DOOR_ENTRY,
+                WHO_LOCK,
                 WHO_CEN,
                 WHO_SOUND,
                 WHO_SCENARIO,
@@ -419,6 +430,11 @@ class MH200NProfile(GatewayProfile):
     Supports sound system discovery (WHO 16). Hardware verified answering
     ``*#16*0*5##`` without NACK and returning full source and amplifier inventory
     (MyHOME#427 / comment 5848181845).
+
+    WHO 6 and 8 are listed by family with the MH200, whose capture proves the
+    relay (see ``MH200Profile``). Nothing has been captured on an MH200N itself;
+    its 1.1.8 image ships a ``bt_vct`` translator, which the firmware oracle
+    target does not run, so the oracle's WHO 8 NACKs for it are not evidence.
     """
 
     def __init__(self) -> None:
@@ -433,6 +449,8 @@ class MH200NProfile(GatewayProfile):
                 WHO_LIGHTING,
                 WHO_AUTOMATION,
                 WHO_HEATING,
+                WHO_DOOR_ENTRY,
+                WHO_LOCK,
                 WHO_CEN,
                 WHO_SCENARIO,
                 WHO_CEN_PLUS,

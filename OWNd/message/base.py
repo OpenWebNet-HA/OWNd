@@ -15,6 +15,7 @@ _WHO_SUBMODULES: tuple[str, ...] = (
     "alarm",
     "automation",
     "cen",
+    "door_entry",
     "energy",
     "gateway",
     "heating",
@@ -66,6 +67,13 @@ class OWNMessage:
     _ALARM_EMPTY_WHERE = re.compile(
         r"^\*5\*(?P<what>\d+)(?P<what_param>(?:#\d+)*)\*##$"
     )  #  *5*WHAT*##
+    # WHO 6: camera OFF published form has no WHERE field (*6*9##), but field
+    # units may also emit a single trailing star delimiter (*6*9*##).
+    # The double-star form (*6*9**##) has WHERE="*" and is matched by _STATUS.
+    # Only WHAT 9 may omit WHERE; any other short WHO 6 frame is not valid.
+    _DOOR_ENTRY_SHORT = re.compile(
+        r"^\*6\*(?P<what>9)\*?##$"
+    )  # *6*9##, *6*9*##
     _STATUS_REQUEST = re.compile(
         r"^\*#(?P<who>\d+)(?:\*(?P<where>#?\d+)(?P<where_param>(?:#\d+)*))?##$"
     )  #  *#WHO*WHERE## or *#WHO##
@@ -128,6 +136,15 @@ class OWNMessage:
             # not turn this spelling into a device.
             self._where = ""
 
+        elif match := self._DOOR_ENTRY_SHORT.match(self._raw):
+            self._is_valid_message = True
+            self._match = match
+            self._family = "EVENT"
+            self._message_type = "STATUS"
+            self._who = 6
+            self._what = int(match.group("what"))
+            self._where = ""
+
         elif match := self._STATUS_REQUEST.match(self._raw):
             self._is_valid_message = True
             self._match = match
@@ -186,6 +203,7 @@ class OWNMessage:
         if (
             cls._STATUS.match(data)
             or cls._ALARM_EMPTY_WHERE.match(data)
+            or cls._DOOR_ENTRY_SHORT.match(data)
             or cls._DIMENSION_REQUEST_REPLY.match(data)
         ):
             return OWNEvent.parse(data)
@@ -390,7 +408,7 @@ class OWNCommand(OWNMessage):
                 return parser(data)
             if _who in (0, 3, 14, 22, 24) or _who > 1000:
                 return cls(data)
-            if _who in (6, 7, 9):
+            if _who in (7, 9):
                 return (
                     OWNStatusRequest(data)
                     if cls._STATUS_REQUEST.match(data)

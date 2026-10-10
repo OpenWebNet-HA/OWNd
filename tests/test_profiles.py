@@ -14,10 +14,12 @@ from OWNd.profiles import (
     WHO_AUTOMATION,
     WHO_CEN,
     WHO_CEN_PLUS,
+    WHO_DOOR_ENTRY,
     WHO_ENERGY,
     WHO_HEATING,
     WHO_LIGHTING,
     WHO_LOAD_CONTROL,
+    WHO_LOCK,
     WHO_SCENARIO,
     WHO_SOUND,
     WHO_SOUND_DIFFUSION,
@@ -63,8 +65,22 @@ def test_mh200_keeps_the_mh200n_pacing() -> None:
     assert set(mh200n.supported_who) - set(mh200.supported_who) == {WHO_CEN_PLUS}
     assert mh200.supports_who(WHO_CEN) is True
     assert not mh200.supports_who(WHO_CEN_PLUS)
+    assert mh200.supports_who(WHO_DOOR_ENTRY) is True
+    assert mh200.supports_who(WHO_LOCK) is True
     assert mh200n.supports_who(WHO_CEN) is True
     assert mh200n.supports_who(WHO_CEN_PLUS) is True
+    assert mh200n.supports_who(WHO_DOOR_ENTRY) is True
+    assert mh200n.supports_who(WHO_LOCK) is True
+
+
+def test_door_entry_not_advertised_by_default() -> None:
+    """Only the MH200 has a door-entry capture; other profiles must not claim it."""
+    assert WHO_DOOR_ENTRY not in DEFAULT_SUPPORTED_WHO
+    assert WHO_LOCK not in DEFAULT_SUPPORTED_WHO
+    for model in ("MH201", "F452", "F454", "MyHomeServer1"):
+        profile = get_gateway_profile(model)
+        assert not profile.supports_who(WHO_DOOR_ENTRY), model
+        assert not profile.supports_who(WHO_LOCK), model
 
 
 def test_mh200n_audio_enabled_and_verified() -> None:

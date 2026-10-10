@@ -23,6 +23,8 @@ from OWNd.message import (
     OWNEvent,
     OWNLightingCommand,
     OWNLightingEvent,
+    OWNLockCommand,
+    OWNLockEvent,
     OWNMessage,
     OWNSignaling,
 )
@@ -172,10 +174,9 @@ def test_oracle_input_frames_ownd_parser_resilience():
 
     Guarantees that:
     1. Zero input frames cause unhandled parser crashes (AttributeError, IndexError, ValueError).
-    2. Exactly 297 frames parse into valid typed OWNMessage instances across subsystems
+    2. Exactly 303 frames parse into valid typed OWNMessage instances across subsystems
        WHO 0, 1, 2, 3, 4, 8, 14, 15, 18, 22, 25.
-    3. Exactly 6 frames (WHO 8 global status queries `*#8*...##` without WHERE) safely return None.
-    4. For all 297 parsed frames, msg.who matches the subsystem extracted from the frame syntax.
+    3. For all 303 parsed frames, msg.who matches the subsystem extracted from the frame syntax.
     """
     parsed_count = 0
     unparsed_count = 0
@@ -196,11 +197,24 @@ def test_oracle_input_frames_ownd_parser_resilience():
             )
         else:
             unparsed_count += 1
-            # Unparsed frames are exclusively WHO 8 status queries without target address
-            assert frame.startswith("*#8*"), f"Unexpected unparsed frame {frame}"
 
-    assert parsed_count == 297
-    assert unparsed_count == 6
+    assert parsed_count == 303
+    assert unparsed_count == 0
+
+
+def test_oracle_who8_inputs_parse_into_specialized_classes() -> None:
+    """Verify that all authentic oracle inputs for WHO 8 parse into specialized classes."""
+    who8_count = 0
+    for inp in ALL_VERDICTS:
+        if inp.startswith("*8*") or inp.startswith("*#8*"):
+            who8_count += 1
+            msg = OWNMessage.parse(inp)
+            assert msg is not None, f"Failed to parse WHO 8 message: {inp}"
+            assert isinstance(msg, (OWNLockEvent, OWNLockCommand)), (
+                f"Expected OWNLockEvent/Command for {inp}, got {type(msg)}"
+            )
+    assert who8_count == 59
+
 
 
 def test_golden_corpus_bidirectional_cross_validation():
