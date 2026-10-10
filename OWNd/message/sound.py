@@ -433,3 +433,339 @@ class OWNSoundCommand(OWNCommand):
 
 register_event_parser(16, OWNSoundEvent)
 register_command_parser(16, OWNSoundCommand)
+
+
+class OWNSoundDiffusionEvent(OWNEvent):
+    """Event reported by a WHO 22 advanced sound diffusion system."""
+
+    def __init__(self, data: str) -> None:
+        super().__init__(data)
+
+        self._target_type: str = "unknown"
+        self._area: int | None = None
+        self._point: int | None = None
+        self._source_id: int | None = None
+        self._volume: int | None = None
+        self._volume_step: int | None = None
+        self._device_state: int | None = None
+        self._multimedia_type: int | None = None
+
+        target = (
+            f"{self._where}#{'#'.join(self._where_param)}"
+            if self._where and self._where_param
+            else (self._where or "")
+        )
+        self._target_address: str = target
+
+        # Decode structured target class from target address
+        if target:
+            parts = target.split("#")
+            kind = parts[0]
+            if kind == "3" and len(parts) >= 3:
+                self._target_type = "speaker"
+                if parts[1].isdigit():
+                    self._area = int(parts[1])
+                if parts[2].isdigit():
+                    self._point = int(parts[2])
+            elif kind == "4" and len(parts) >= 2:
+                self._target_type = "area"
+                if parts[1].isdigit():
+                    self._area = int(parts[1])
+            elif kind == "2" and len(parts) >= 2:
+                self._target_type = "source"
+                if parts[1].isdigit():
+                    self._source_id = int(parts[1])
+            elif kind == "5" and len(parts) >= 3 and parts[1] == "2":
+                self._target_type = "source"
+                if parts[2].isdigit():
+                    self._source_id = int(parts[2])
+            elif kind == "6":
+                self._target_type = "all_sources"
+
+        # Relative volume step in WHAT
+        if self._what in (3, 4):
+            if self._what_param and self._what_param[0].isdigit():
+                self._volume_step = int(self._what_param[0])
+            else:
+                self._volume_step = 1
+
+        # Dimensions
+        if self._dimension == 1 and self._dimension_value:
+            if self._dimension_value[0].isdigit():
+                self._volume = int(self._dimension_value[0])
+        elif self._dimension == 12 and self._dimension_value:
+            if self._dimension_value[0].isdigit():
+                self._device_state = int(self._dimension_value[0])
+            if len(self._dimension_value) > 1 and self._dimension_value[1].isdigit():
+                self._multimedia_type = int(self._dimension_value[1])
+
+        # Human-readable log
+        subject = (
+            f"Speaker {target} (Zone {self.equivalent_who16_where})"
+            if self._target_type == "speaker" and self.equivalent_who16_where
+            else (
+                f"Audio Source {self._source_id}"
+                if self._target_type == "source" and self._source_id is not None
+                else (f"Sound diffusion device {target}" if target else "Sound diffusion system")
+            )
+        )
+        if self._dimension == 1 and self._volume is not None:
+            self._human_readable_log = f"{subject} volume is set to {self._volume}."
+        elif self._dimension == 12 and self._device_state is not None:
+            state_str = "ON" if self._device_state == 1 else "OFF"
+            self._human_readable_log = f"{subject} device state is {state_str}."
+        elif self._dimension is not None:
+            self._human_readable_log = f"{subject} reported dimension {self._dimension}."
+        elif self._what in (1, 2):
+            self._human_readable_log = f"{subject} is switched ON."
+        elif self._what == 0:
+            self._human_readable_log = f"{subject} is switched OFF."
+        elif self._what == 3:
+            step = f" by {self._volume_step}" if self._volume_step and self._volume_step > 1 else ""
+            self._human_readable_log = f"{subject} volume increased{step}."
+        elif self._what == 4:
+            step = f" by {self._volume_step}" if self._volume_step and self._volume_step > 1 else ""
+            self._human_readable_log = f"{subject} volume decreased{step}."
+        elif self._what == 9:
+            self._human_readable_log = f"{subject} next station."
+        elif self._what == 10:
+            self._human_readable_log = f"{subject} previous station."
+        elif self._what == 11:
+            self._human_readable_log = f"{subject} next track."
+        elif self._what == 12:
+            self._human_readable_log = f"{subject} previous track."
+        elif self._what is not None:
+            self._human_readable_log = f"{subject} received command: {self._what}."
+
+    @property
+    def target_type(self) -> str:
+        """Target category: 'speaker' (3#A#P), 'area' (4#A), 'source' (2#S or 5#2#S), 'all_sources' (6), or 'unknown'."""
+        return self._target_type
+
+    @property
+    def area(self) -> int | None:
+        """Area/environment number (1..9)."""
+        return self._area
+
+    @property
+    def point(self) -> int | None:
+        """Amplifier / speaker point number (1..9)."""
+        return self._point
+
+    @property
+    def source_id(self) -> int | None:
+        """Audio source ID."""
+        return self._source_id
+
+    @property
+    def volume(self) -> int | None:
+        """Absolute volume level (0..31)."""
+        return self._volume
+
+    @property
+    def volume_step(self) -> int | None:
+        """Volume adjustment step for WHAT 3 / 4."""
+        return self._volume_step
+
+    @property
+    def device_state(self) -> int | None:
+        """Device power state reported under dimension 12: 0=OFF, 1=ON."""
+        return self._device_state
+
+    @property
+    def multimedia_type(self) -> int | None:
+        """Multimedia type under dimension 12: 1=voice, 2=right, 3=left, 4=stereo, 11=all sources."""
+        return self._multimedia_type
+
+    @property
+    def equivalent_who16_where(self) -> str | None:
+        """Mathematical equivalent WHO 16 zone address: EA = Area * 10 + Point."""
+        if self._area is not None and self._point is not None:
+            return f"{self._area}{self._point}"
+        return None
+
+    @property
+    def is_on(self) -> bool:
+        """True if the device received a power-on state (WHAT=1 or 2, or dimension 12 state 1)."""
+        if self._what in (1, 2):
+            return True
+        if self._dimension == 12 and self._device_state == 1:
+            return True
+        return False
+
+    @property
+    def is_off(self) -> bool:
+        """True if the device received a power-off state (WHAT=0, or dimension 12 state 0)."""
+        if self._what == 0:
+            return True
+        if self._dimension == 12 and self._device_state == 0:
+            return True
+        return False
+
+    @property
+    def is_volume_up(self) -> bool:
+        """True if WHAT represents volume increase (WHAT=3)."""
+        return self._what == 3
+
+    @property
+    def is_volume_down(self) -> bool:
+        """True if WHAT represents volume decrease (WHAT=4)."""
+        return self._what == 4
+
+    @property
+    def is_next_track(self) -> bool:
+        """True if WHAT represents next track (WHAT=11)."""
+        return self._what == 11
+
+    @property
+    def is_previous_track(self) -> bool:
+        """True if WHAT represents previous track (WHAT=12)."""
+        return self._what == 12
+
+    @property
+    def is_next_station(self) -> bool:
+        """True if WHAT represents next radio station (WHAT=9)."""
+        return self._what == 9
+
+    @property
+    def is_previous_station(self) -> bool:
+        """True if WHAT represents previous radio station (WHAT=10)."""
+        return self._what == 10
+
+    @property
+    def target_address(self) -> str:
+        """Structured target address including point/source parameters (e.g. 3#4#1, 2#3)."""
+        return self._target_address
+
+
+class OWNSoundDiffusionCommand(OWNCommand):
+    """Commands for WHO 22 advanced sound diffusion system."""
+
+    @property
+    def target_address(self) -> str:
+        """Structured target address including point/source parameters (e.g. 3#4#1, 2#3)."""
+        if self._where and self._where_param:
+            return f"{self._where}#{'#'.join(self._where_param)}"
+        return self._where or ""
+
+    @classmethod
+    def status(cls, where: str | int) -> OWNSoundDiffusionCommand:
+        target = str(where).strip()
+        message = cls(f"*#22*{target}##")
+        message._human_readable_log = f"Requesting status of sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def turn_on(cls, where: str | int) -> OWNSoundDiffusionCommand:
+        target = str(where).strip()
+        message = cls(f"*22*1*{target}##")
+        message._human_readable_log = f"Turning ON sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def turn_off(cls, where: str | int) -> OWNSoundDiffusionCommand:
+        target = str(where).strip()
+        message = cls(f"*22*0*{target}##")
+        message._human_readable_log = f"Turning OFF sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def volume_up(cls, where: str | int, step: int = 1) -> OWNSoundDiffusionCommand:
+        target = str(where).strip()
+        what = f"3#{int(step)}" if int(step) > 1 else "3"
+        message = cls(f"*22*{what}*{target}##")
+        message._human_readable_log = f"Increasing sound diffusion device {target} volume."
+        return message
+
+    @classmethod
+    def volume_down(cls, where: str | int, step: int = 1) -> OWNSoundDiffusionCommand:
+        target = str(where).strip()
+        what = f"4#{int(step)}" if int(step) > 1 else "4"
+        message = cls(f"*22*{what}*{target}##")
+        message._human_readable_log = f"Decreasing sound diffusion device {target} volume."
+        return message
+
+    @classmethod
+    def set_volume(cls, where: str | int, volume: int | str) -> OWNSoundDiffusionCommand:
+        target = str(where).strip()
+        level = int(volume)
+        if not 0 <= level <= 31:
+            raise ValueError("volume must be between 0 and 31 per WHO 22 specification")
+        message = cls(f"*#22*{target}*#1*{level}##")
+        message._human_readable_log = f"Setting sound diffusion device {target} volume to {level}."
+        return message
+
+    @classmethod
+    def request_volume(cls, where: str | int) -> OWNSoundDiffusionCommand:
+        target = str(where).strip()
+        message = cls(f"*#22*{target}*1##")
+        message._human_readable_log = f"Requesting volume status for sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def request_device_state(cls, where: str | int) -> OWNSoundDiffusionCommand:
+        target = str(where).strip()
+        message = cls(f"*#22*{target}*12##")
+        message._human_readable_log = f"Requesting device state for sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def next_track(cls, where: str | int = "6") -> OWNSoundDiffusionCommand:
+        target = str(where).strip()
+        message = cls(f"*22*11*{target}##")
+        message._human_readable_log = f"Next track on sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def previous_track(cls, where: str | int = "6") -> OWNSoundDiffusionCommand:
+        target = str(where).strip()
+        message = cls(f"*22*12*{target}##")
+        message._human_readable_log = f"Previous track on sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def next_station(cls, where: str | int = "6") -> OWNSoundDiffusionCommand:
+        target = str(where).strip()
+        message = cls(f"*22*9*{target}##")
+        message._human_readable_log = f"Next station on sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def previous_station(cls, where: str | int = "6") -> OWNSoundDiffusionCommand:
+        target = str(where).strip()
+        message = cls(f"*22*10*{target}##")
+        message._human_readable_log = f"Previous station on sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def speaker_address(cls, area: int | str, point: int | str) -> str:
+        """Format structured speaker point target: 3#AREA#POINT (area 1..9, point 1..9)."""
+        a, p = int(area), int(point)
+        if not (1 <= a <= 9 and 1 <= p <= 9):
+            raise ValueError(f"Area ({a}) and point ({p}) must both be between 1 and 9 per WHO 22 specification")
+        return f"3#{a}#{p}"
+
+    @classmethod
+    def area_address(cls, area: int | str) -> str:
+        """Format structured area target: 4#AREA (area 1..9)."""
+        a = int(area)
+        if not (1 <= a <= 9):
+            raise ValueError(f"Area ({a}) must be between 1 and 9 per WHO 22 specification")
+        return f"4#{a}"
+
+    @classmethod
+    def source_address(cls, source_id: int | str) -> str:
+        """Format structured source target: 2#SOURCE_ID (source_id >= 1)."""
+        s = int(source_id)
+        if s < 1:
+            raise ValueError(f"Source ID ({s}) must be positive per WHO 22 specification")
+        return f"2#{s}"
+
+    @classmethod
+    def all_sources_address(cls) -> str:
+        """Target address for all sources: '6'."""
+        return "6"
+
+
+register_event_parser(22, OWNSoundDiffusionEvent)
+register_command_parser(22, OWNSoundDiffusionCommand)

@@ -113,6 +113,8 @@ from .scenario import (
 from .sound import (
     OWNAVCommand,
     OWNSoundCommand,
+    OWNSoundDiffusionCommand,
+    OWNSoundDiffusionEvent,
     OWNSoundEvent,
 )
 
@@ -195,6 +197,8 @@ __all__ = [
     "OWNSoundEvent",
     "OWNAVCommand",
     "OWNSoundCommand",
+    "OWNSoundDiffusionEvent",
+    "OWNSoundDiffusionCommand",
     # Energy (WHO 18)
     "MESSAGE_TYPE_ACTIVE_POWER",
     "MESSAGE_TYPE_ENERGY_TOTALIZER",
