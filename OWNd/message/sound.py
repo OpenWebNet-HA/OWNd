@@ -449,6 +449,10 @@ class OWNSoundDiffusionEvent(OWNEvent):
         self._volume_step: int | None = None
         self._device_state: int | None = None
         self._multimedia_type: int | None = None
+        self._frequency_khz: int | None = None
+        self._preset: int | None = None
+        self._rds_text: str | None = None
+        self._is_rds_blank: bool = False
 
         target = (
             f"{self._where}#{'#'.join(self._where_param)}"
@@ -498,6 +502,31 @@ class OWNSoundDiffusionEvent(OWNEvent):
                 self._device_state = int(self._dimension_value[0])
             if len(self._dimension_value) > 1 and self._dimension_value[1].isdigit():
                 self._multimedia_type = int(self._dimension_value[1])
+        elif self._dimension in (5, 11) and self._dimension_value:
+            # Tuner frequency in 10 kHz units after one leading value (always
+            # `1` in traces, meaning unknown); dimension 11 adds the station.
+            expected = 2 if self._dimension == 5 else 3
+            values = self._dimension_value
+            if len(values) == expected and values[1].isdigit():
+                khz = int(values[1]) * 10
+                if 87500 <= khz <= 108000:
+                    self._frequency_khz = khz
+                    if self._dimension == 11 and values[2].isdigit() and int(values[2]) > 0:
+                        self._preset = int(values[2])
+        elif self._dimension == 6 and len(self._dimension_value) == 1:
+            if self._dimension_value[0].isdigit() and int(self._dimension_value[0]) >= 1:
+                self._preset = int(self._dimension_value[0])
+        elif self._dimension == 10 and len(self._dimension_value) == 8:
+            # RDS programme service: exactly 8 decimal ASCII codes. Other
+            # lengths are bus glitches and are ignored.
+            chars = [
+                chr(int(code))
+                for code in self._dimension_value
+                if code.isdigit() and 32 <= int(code) <= 126
+            ]
+            text = "".join(chars).strip()
+            self._rds_text = text or None
+            self._is_rds_blank = text == ""
 
         # Human-readable log
         subject = (
@@ -514,6 +543,15 @@ class OWNSoundDiffusionEvent(OWNEvent):
         elif self._dimension == 12 and self._device_state is not None:
             state_str = "ON" if self._device_state == 1 else "OFF"
             self._human_readable_log = f"{subject} device state is {state_str}."
+        elif self._dimension in (5, 11) and self._frequency_khz is not None:
+            preset = f" (station {self._preset})" if self._preset else ""
+            self._human_readable_log = (
+                f"{subject} is tuned to {self._frequency_khz / 1000:.2f} MHz{preset}."
+            )
+        elif self._dimension == 6 and self._preset is not None:
+            self._human_readable_log = f"{subject} station is {self._preset}."
+        elif self._dimension == 10 and (self._rds_text is not None or self._is_rds_blank):
+            self._human_readable_log = f"{subject} RDS text: '{self._rds_text or ''}'."
         elif self._dimension is not None:
             self._human_readable_log = f"{subject} reported dimension {self._dimension}."
         elif self._what in (1, 2):
@@ -576,6 +614,26 @@ class OWNSoundDiffusionEvent(OWNEvent):
     def multimedia_type(self) -> int | None:
         """Multimedia type under dimension 12: 1=voice, 2=right, 3=left, 4=stereo, 11=all sources."""
         return self._multimedia_type
+
+    @property
+    def frequency_khz(self) -> int | None:
+        """FM frequency in kHz from dimension 5 or 11 (reported in 10 kHz units), if in the FM band."""
+        return self._frequency_khz
+
+    @property
+    def preset(self) -> int | None:
+        """Stored tuner station (1..): dimension 6, or dimension 11 where 0 means 'not stored'."""
+        return self._preset
+
+    @property
+    def rds_text(self) -> str | None:
+        """RDS programme service text from dimension 10; ``None`` when blank or malformed."""
+        return self._rds_text
+
+    @property
+    def is_rds_blank(self) -> bool:
+        """True for a well-formed RDS frame with no visible text (the tuner is retuning)."""
+        return self._is_rds_blank
 
     @property
     def equivalent_who16_where(self) -> str | None:

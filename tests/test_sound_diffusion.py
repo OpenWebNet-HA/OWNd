@@ -234,3 +234,93 @@ def test_who22_command_parser_dispatch() -> None:
     cmd_all = OWNSoundDiffusionCommand.turn_off("6")
     assert cmd_all.where == "6"
     assert cmd_all.target_address == "6"
+
+
+@pytest.mark.parametrize(
+    ("frame", "khz"),
+    [
+        ("*#22*5#2#1*5*1*8880##", 88800),
+        ("*#22*5#2#1*5*1*9620##", 96200),
+        ("*#22*5#2#1*5*1*10350##", 103500),
+    ],
+)
+def test_who22_tuner_frequency_event(frame: str, khz: int) -> None:
+    """Dimension 5 reports the F500 frequency in 10 kHz units (live MH200N frames)."""
+    event = OWNMessage.parse(frame)
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event.target_type == "source"
+    assert event.source_id == 1
+    assert event.frequency_khz == khz
+    assert event.preset is None
+    assert f"{khz / 1000:.2f} MHz" in event.human_readable_log
+
+
+@pytest.mark.parametrize(
+    ("frame", "khz", "preset"),
+    [
+        ("*#22*5#2#1*11*1*8880*1##", 88800, 1),
+        ("*#22*5#2#1*11*1*9620*2##", 96200, 2),
+        ("*#22*5#2#1*11*1*10350*4##", 103500, 4),
+    ],
+)
+def test_who22_tuner_frequency_and_preset_event(frame: str, khz: int, preset: int) -> None:
+    event = OWNMessage.parse(frame)
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event.frequency_khz == khz
+    assert event.preset == preset
+
+
+def test_who22_tuner_preset_zero_is_not_a_stored_station() -> None:
+    event = OWNMessage.parse("*#22*5#2#1*11*1*8950*0##")
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event.frequency_khz == 89500
+    assert event.preset is None
+
+
+def test_who22_tuner_station_report() -> None:
+    event = OWNMessage.parse("*#22*2#1*6*3##")
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event.target_type == "source"
+    assert event.source_id == 1
+    assert event.preset == 3
+    assert event.frequency_khz is None
+
+
+def test_who22_rds_text_event() -> None:
+    event = OWNMessage.parse("*#22*5#2#1*10*75*82*79*78*69*72*73*84##")
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event.rds_text == "KRONEHIT"
+    assert event.is_rds_blank is False
+    assert event.human_readable_log == "Audio Source 1 RDS text: 'KRONEHIT'."
+
+
+def test_who22_rds_blank_while_retuning() -> None:
+    event = OWNMessage.parse("*#22*5#2#1*10*32*32*32*32*32*32*32*32##")
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event.rds_text is None
+    assert event.is_rds_blank is True
+
+
+def test_who22_rds_keeps_asterisk_padding() -> None:
+    event = OWNMessage.parse("*#22*5#2#1*10*42*82*65*68*73*79*42*32##")
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event.rds_text == "*RADIO*"
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        "*#22*5#2#1*10*42*42*79*79*69*42*79*79*69*42*42*32##",  # 12-code glitch
+        "*#22*5#2#1*5*1*96200##",  # kHz where 10 kHz units belong
+        "*#22*5#2#1*5*1##",  # frequency missing
+        "*#22*5#2#1*11*1*9620##",  # preset missing
+        "*#22*2#1*6*0##",  # station numbers start at 1
+    ],
+)
+def test_who22_tuner_malformed_frames_set_nothing(frame: str) -> None:
+    event = OWNMessage.parse(frame)
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event.frequency_khz is None
+    assert event.preset is None
+    assert event.rds_text is None
+    assert event.is_rds_blank is False
