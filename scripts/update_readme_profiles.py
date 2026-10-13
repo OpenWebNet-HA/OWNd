@@ -18,30 +18,13 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from OWNd.profiles import canonical_profiles  # noqa: E402
+from scripts.sync_documentation import (  # noqa: E402
+    GATEWAY_END_MARKER as END_MARKER,
+    GATEWAY_START_MARKER as START_MARKER,
+    build_gateway_profiles_table as build_profiles_table,
+)
 
 README_MD = REPO_ROOT / "README.md"
-START_MARKER = "<!-- START_GATEWAY_PROFILES_TABLE -->"
-END_MARKER = "<!-- END_GATEWAY_PROFILES_TABLE -->"
-
-
-def build_profiles_table() -> str:
-    """Generate Markdown table representing canonical gateway profiles."""
-    lines = [
-        "| Gateway Model | Concurrency | Queue Delay | Event keepalive | Features |",
-        "|:---|:---:|:---:|:---:|:---|",
-    ]
-    for profile in canonical_profiles():
-        model_name = (
-            "Generic Gateway"
-            if profile.model_name in ("Generic", "Generic Gateway")
-            else profile.model_name
-        )
-        lines.append(
-            f"| **{model_name}** | {profile.concurrency_summary} | "
-            f"{profile.queue_delay_summary} | {profile.keepalive_summary} | "
-            f"{profile.features_summary} |"
-        )
-    return "\n".join(lines)
 
 
 def sync_readme_profiles(check_only: bool = False) -> bool:

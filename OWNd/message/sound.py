@@ -453,6 +453,7 @@ class OWNSoundDiffusionEvent(OWNEvent):
         self._preset: int | None = None
         self._rds_text: str | None = None
         self._is_rds_blank: bool = False
+        self._source_request: int | None = None
 
         target = (
             f"{self._where}#{'#'.join(self._where_param)}"
@@ -483,6 +484,13 @@ class OWNSoundDiffusionEvent(OWNEvent):
                 self._target_type = "source"
                 if parts[2].isdigit():
                     self._source_id = int(parts[2])
+            elif kind == "5" and len(parts) >= 4 and parts[1] == "3":
+                # 5#3#AREA#POINT: zone control of a wall unit; 5#3#0#0 is every zone.
+                self._target_type = "zone_control"
+                if parts[2].isdigit():
+                    self._area = int(parts[2])
+                if parts[3].isdigit():
+                    self._point = int(parts[3])
             elif kind == "6":
                 self._target_type = "all_sources"
 
@@ -492,6 +500,12 @@ class OWNSoundDiffusionEvent(OWNEvent):
                 self._volume_step = int(self._what_param[0])
             else:
                 self._volume_step = 1
+
+        # Source named by a power-on (1#TYPE#SOURCE) or a matrix route (35#TYPE#?#SOURCE)
+        if self._what == 1 and len(self._what_param) >= 2 and self._what_param[1].isdigit():
+            self._source_request = int(self._what_param[1])
+        elif self._what == 35 and len(self._what_param) >= 3 and self._what_param[-1].isdigit():
+            self._source_request = int(self._what_param[-1])
 
         # Dimensions
         if self._dimension == 1 and self._dimension_value:
@@ -503,21 +517,23 @@ class OWNSoundDiffusionEvent(OWNEvent):
             if len(self._dimension_value) > 1 and self._dimension_value[1].isdigit():
                 self._multimedia_type = int(self._dimension_value[1])
         elif self._dimension in (5, 11) and self._dimension_value:
-            # Tuner frequency in 10 kHz units after one leading value (always
+            # Tuner frequency after one leading value (always
             # `1` in traces, meaning unknown); dimension 11 adds the station.
+            # The unit is 10 kHz on an MH200N and 100 kHz on a MyHomeServer1;
+            # the FM ranges (8750..10800, 875..1080) do not overlap.
             expected = 2 if self._dimension == 5 else 3
             values = self._dimension_value
             if len(values) == expected and values[1].isdigit():
-                khz = int(values[1]) * 10
-                if 87500 <= khz <= 108000:
+                khz = next((v for v in (int(values[1]) * 10, int(values[1]) * 100) if 87500 <= v <= 108000), 0)
+                if khz:
                     self._frequency_khz = khz
                     if self._dimension == 11 and values[2].isdigit() and int(values[2]) > 0:
                         self._preset = int(values[2])
         elif self._dimension == 6 and len(self._dimension_value) == 1:
             if self._dimension_value[0].isdigit() and int(self._dimension_value[0]) >= 1:
                 self._preset = int(self._dimension_value[0])
-        elif self._dimension == 10 and len(self._dimension_value) == 8:
-            # RDS programme service: exactly 8 decimal ASCII codes. Other
+        elif self._dimension == 10 and 0 < len(self._dimension_value) <= 8:
+            # RDS programme service: 1 to 8 decimal ASCII codes (a MyHomeServer1 sends 5). Other
             # lengths are bus glitches and are ignored.
             chars = [
                 chr(int(code))
@@ -541,8 +557,13 @@ class OWNSoundDiffusionEvent(OWNEvent):
         if self._dimension == 1 and self._volume is not None:
             self._human_readable_log = f"{subject} volume is set to {self._volume}."
         elif self._dimension == 12 and self._device_state is not None:
-            state_str = "ON" if self._device_state == 1 else "OFF"
-            self._human_readable_log = f"{subject} device state is {state_str}."
+            if self._device_state == 1 and self.audio_channel is not None:
+                self._human_readable_log = f"{subject} is ON, audio channel {self.audio_channel}."
+            elif self.is_standby:
+                self._human_readable_log = f"{subject} is in standby (OFF or muted by a priority call)."
+            else:
+                state_str = "ON" if self._device_state == 1 else "OFF"
+                self._human_readable_log = f"{subject} device state is {state_str}."
         elif self._dimension in (5, 11) and self._frequency_khz is not None:
             preset = f" (station {self._preset})" if self._preset else ""
             self._human_readable_log = (
@@ -554,10 +575,22 @@ class OWNSoundDiffusionEvent(OWNEvent):
             self._human_readable_log = f"{subject} RDS text: '{self._rds_text or ''}'."
         elif self._dimension is not None:
             self._human_readable_log = f"{subject} reported dimension {self._dimension}."
+        elif self._what == 1 and self._source_request is not None:
+            self._human_readable_log = f"{subject} is switched ON with source {self._source_request}."
         elif self._what in (1, 2):
             self._human_readable_log = f"{subject} is switched ON."
+        elif self.is_atomic_off:
+            self._human_readable_log = f"{subject} is switched OFF (atomic)."
         elif self._what == 0:
             self._human_readable_log = f"{subject} is switched OFF."
+        elif self._what == 35 and self._source_request is not None:
+            self._human_readable_log = f"{subject} is routed to source {self._source_request}."
+        elif self._what == 19:
+            self._human_readable_log = f"{subject} opens paging channel {self.paging_channel}."
+        elif self._what == 20:
+            self._human_readable_log = f"{subject} starts paging voice on channel {self.paging_channel}."
+        elif self.is_keypress:
+            self._human_readable_log = f"{subject} keypad pressed."
         elif self._what == 3:
             step = f" by {self._volume_step}" if self._volume_step and self._volume_step > 1 else ""
             self._human_readable_log = f"{subject} volume increased{step}."
@@ -577,17 +610,17 @@ class OWNSoundDiffusionEvent(OWNEvent):
 
     @property
     def target_type(self) -> str:
-        """Target category: 'speaker' (3#A#P), 'area' (4#A), 'source' (2#S or 5#2#S), 'all_sources' (6), or 'unknown'."""
+        """Target category: 'speaker' (3#A#P), 'area' (4#A), 'source' (2#S or 5#2#S), 'zone_control' (5#3#A#P, 5#3#0#0 is every zone), 'all_sources' (6), or 'unknown'."""
         return self._target_type
 
     @property
     def area(self) -> int | None:
-        """Area/environment number (1..9)."""
+        """Area/environment number (1..9; 0 in 5#3#0#0, every zone)."""
         return self._area
 
     @property
     def point(self) -> int | None:
-        """Amplifier / speaker point number (1..9)."""
+        """Amplifier / speaker point number (1..9; 0 in 5#3#0#0, every zone)."""
         return self._point
 
     @property
@@ -612,12 +645,16 @@ class OWNSoundDiffusionEvent(OWNEvent):
 
     @property
     def multimedia_type(self) -> int | None:
-        """Multimedia type under dimension 12: 1=voice, 2=right, 3=left, 4=stereo, 11=all sources."""
+        """Second value of dimension 12, whatever the state.
+
+        Traces: with state 1 it is the audio channel (see ``audio_channel``), with state 0 it is 10
+        (see ``is_standby``).
+        """
         return self._multimedia_type
 
     @property
     def frequency_khz(self) -> int | None:
-        """FM frequency in kHz from dimension 5 or 11 (reported in 10 kHz units), if in the FM band."""
+        """FM frequency in kHz from dimension 5 or 11 (reported in 10 kHz units on an MH200N, 100 kHz on a MyHomeServer1), if in the FM band."""
         return self._frequency_khz
 
     @property
@@ -636,9 +673,63 @@ class OWNSoundDiffusionEvent(OWNEvent):
         return self._is_rds_blank
 
     @property
+    def audio_channel(self) -> int | None:
+        """Audio channel / source the zone plays, from ``12*1*N`` (N = 1 or 2 on a F441 plant)."""
+        if self._dimension == 12 and self._device_state == 1:
+            return self._multimedia_type
+        return None
+
+    @property
+    def is_standby(self) -> bool:
+        """True for ``12*0*10``: standby, which is also how a priority call (paging) mutes a zone."""
+        return self._dimension == 12 and self._device_state == 0 and self._multimedia_type == 10
+
+    @property
+    def requested_source(self) -> int | None:
+        """Source named by a command: ``1#TYPE#S`` (power on with source) or ``35#TYPE#?#S`` (route)."""
+        return self._source_request
+
+    @property
+    def is_route_source(self) -> bool:
+        """True for WHAT 35, which routes the target zone to a source on the matrix."""
+        return self._what == 35
+
+    @property
+    def is_atomic_off(self) -> bool:
+        """True for ``0#4#0``, the single-frame power off (a plain WHAT 0 carries no parameters)."""
+        return self._what == 0 and len(self._what_param) >= 1
+
+    @property
+    def paging_channel(self) -> int | None:
+        """Channel of a paging frame (``19#C`` open, ``20#C`` voice)."""
+        if self._what in (19, 20) and self._what_param and self._what_param[0].isdigit():
+            return int(self._what_param[0])
+        return None
+
+    @property
+    def is_paging_open(self) -> bool:
+        """True for WHAT 19, the paging channel opening (whole house on ``5#3#0#0``)."""
+        return self._what == 19
+
+    @property
+    def is_paging_voice(self) -> bool:
+        """True for WHAT 20, the paging voice transmission starting."""
+        return self._what == 20
+
+    @property
+    def is_all_zones(self) -> bool:
+        """True when the target is ``5#3#0#0``, every zone."""
+        return self._target_type == "zone_control" and self._area == 0 and self._point == 0
+
+    @property
+    def is_keypress(self) -> bool:
+        """True for WHAT 9 aimed at a zone control (``9`` on ``5#3#A#P``): a wall unit button press."""
+        return self._what == 9 and self._target_type == "zone_control"
+
+    @property
     def equivalent_who16_where(self) -> str | None:
         """Mathematical equivalent WHO 16 zone address: EA = Area * 10 + Point."""
-        if self._area is not None and self._point is not None:
+        if self._target_type == "speaker" and self._area is not None and self._point is not None:
             return f"{self._area}{self._point}"
         return None
 
@@ -682,8 +773,8 @@ class OWNSoundDiffusionEvent(OWNEvent):
 
     @property
     def is_next_station(self) -> bool:
-        """True if WHAT represents next radio station (WHAT=9)."""
-        return self._what == 9
+        """True if WHAT represents next radio station (WHAT=9, unless it is a keypress)."""
+        return self._what == 9 and not self.is_keypress
 
     @property
     def is_previous_station(self) -> bool:
@@ -725,6 +816,59 @@ class OWNSoundDiffusionCommand(OWNCommand):
         target = str(where).strip()
         message = cls(f"*22*0*{target}##")
         message._human_readable_log = f"Turning OFF sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def turn_on_with_source(
+        cls, where: str | int, source_id: int | str, multimedia_type: int | str = 4
+    ) -> OWNSoundDiffusionCommand:
+        """Power a zone on and play a source: ``*22*1#TYPE#SOURCE*WHERE##`` (TYPE 4 on the traced plant)."""
+        target = str(where).strip()
+        source = int(source_id)
+        if source < 1:
+            raise ValueError("source must be positive")
+        message = cls(f"*22*1#{int(multimedia_type)}#{source}*{target}##")
+        message._human_readable_log = f"Turning ON sound diffusion device {target} with source {source}."
+        return message
+
+    @classmethod
+    def turn_off_atomic(cls, where: str | int, multimedia_type: int | str = 4) -> OWNSoundDiffusionCommand:
+        """Power a zone off in one frame: ``*22*0#TYPE#0*WHERE##``."""
+        target = str(where).strip()
+        message = cls(f"*22*0#{int(multimedia_type)}#0*{target}##")
+        message._human_readable_log = f"Turning OFF sound diffusion device {target} (atomic)."
+        return message
+
+    @classmethod
+    def route_source(
+        cls, where: str | int, source_id: int | str, multimedia_type: int | str = 4
+    ) -> OWNSoundDiffusionCommand:
+        """Route a zone to a source on the matrix: ``*22*35#TYPE#1#SOURCE*WHERE##``.
+
+        The ``1`` before the source is constant in every trace; its meaning is not known.
+        """
+        target = str(where).strip()
+        source = int(source_id)
+        if source < 1:
+            raise ValueError("source must be positive")
+        message = cls(f"*22*35#{int(multimedia_type)}#1#{source}*{target}##")
+        message._human_readable_log = f"Routing sound diffusion device {target} to source {source}."
+        return message
+
+    @classmethod
+    def open_paging(cls, where: str | int = "5#3#0#0", channel: int | str = 1) -> OWNSoundDiffusionCommand:
+        """Open a paging channel: ``*22*19#CHANNEL*WHERE##`` (``5#3#0#0`` is the whole house)."""
+        target = str(where).strip()
+        message = cls(f"*22*19#{int(channel)}*{target}##")
+        message._human_readable_log = f"Opening paging channel {int(channel)} on {target}."
+        return message
+
+    @classmethod
+    def start_paging_voice(cls, where: str | int = "5#3#0#0", channel: int | str = 1) -> OWNSoundDiffusionCommand:
+        """Start the paging voice transmission: ``*22*20#CHANNEL*WHERE##``."""
+        target = str(where).strip()
+        message = cls(f"*22*20#{int(channel)}*{target}##")
+        message._human_readable_log = f"Starting paging voice on channel {int(channel)} on {target}."
         return message
 
     @classmethod
@@ -818,6 +962,14 @@ class OWNSoundDiffusionCommand(OWNCommand):
         if s < 1:
             raise ValueError(f"Source ID ({s}) must be positive per WHO 22 specification")
         return f"2#{s}"
+
+    @classmethod
+    def zone_control_address(cls, area: int | str, point: int | str) -> str:
+        """Format a zone control target: 5#3#AREA#POINT (0..9; 5#3#0#0 is every zone)."""
+        a, p = int(area), int(point)
+        if not (0 <= a <= 9 and 0 <= p <= 9):
+            raise ValueError(f"Area ({a}) and point ({p}) must both be between 0 and 9 per WHO 22 traces")
+        return f"5#3#{a}#{p}"
 
     @classmethod
     def all_sources_address(cls) -> str:
