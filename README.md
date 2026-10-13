@@ -86,7 +86,7 @@ OWNd parses OpenWebNet frames and dispatches typed commands and events across th
 | **9** | Auxiliary | Auxiliary channel status (aux 1–9) for remote relays and inter-system signaling | `OWNAuxEvent` |
 | **13** | Gateway Diagnostics & Clock | Gateway date/time synchronization, timezone offsets, firmware metadata | `OWNGatewayCommand`, `OWNGatewayEvent` |
 | **15** | CEN Scenarios | Scenario control, pushbutton push/release/extended press events, strongly typed command builders | `OWNCenCommand`, `OWNCENEvent` |
-| **16** / **22** | Sound Diffusion | Multi-source selection, zone activation, volume adjustment, F441 matrix | `OWNSoundCommand`, `OWNSoundEvent`, `OWNAVCommand` |
+| **16** / **22** | Sound Diffusion | Multi-source selection, zone activation, volume adjustment, F441 matrix routing, WHO 22 paging and standby | `OWNSoundCommand`, `OWNSoundDiffusionCommand`, `OWNSoundEvent`, `OWNSoundDiffusionEvent`, `OWNAVCommand` |
 | **17** | Scenario Programmer | MH200N / MH202 scenario activation and state monitoring | `OWNSceneCommand`, `OWNSceneEvent` |
 | **18** | Energy Management | Active power (W), hourly/daily/monthly consumption (kWh), Stop & Go breaker diagnostics | `OWNEnergyCommand`, `OWNEnergyEvent` |
 | **25** | CEN+ & Dry Contacts | 32-button keypads, rotary knob encoders (CW/CCW), dry contacts, PIR sensors, strongly typed command builders | `OWNCenPlusCommand`, `OWNCENPlusEvent`, `OWNDryContactCommand`, `OWNDryContactEvent` |
@@ -337,12 +337,13 @@ OWNd maintains an automated test suite with strict **100.0% line coverage** veri
 | [`OWNd/message/automation.py`](OWNd/message/automation.py) | **100%** | WHO 2: Automation and motorized shutter events and commands |
 | [`OWNd/message/base.py`](OWNd/message/base.py) | **100%** | Base message, signaling, and protocol dispatcher registries |
 | [`OWNd/message/cen.py`](OWNd/message/cen.py) | **100%** | WHO 15 & WHO 25: CEN, CEN+, and dry contact control events/commands |
+| [`OWNd/message/door_entry.py`](OWNd/message/door_entry.py) | **100%** | Core OWNd library component |
 | [`OWNd/message/energy.py`](OWNd/message/energy.py) | **100%** | WHO 18: Energy management, power, and diagnostic pulse events/commands |
 | [`OWNd/message/gateway.py`](OWNd/message/gateway.py) | **100%** | WHO 13: Gateway management, clock/date configuration, and model telemetry |
 | [`OWNd/message/heating.py`](OWNd/message/heating.py) | **100%** | WHO 4: Thermoregulation, heating/cooling zone control, and temperature decoders |
 | [`OWNd/message/lighting.py`](OWNd/message/lighting.py) | **100%** | WHO 1: Lighting controls, dimming, RGB/HSV color, and motion/PIR sensors |
 | [`OWNd/message/scenario.py`](OWNd/message/scenario.py) | **100%** | WHO 0, WHO 9, WHO 17: Scenario activation, auxiliary commands, and MH200/MH202 scenes |
-| [`OWNd/message/sound.py`](OWNd/message/sound.py) | **100%** | WHO 16: Sound system and audio/video matrix routing (WHO 22 is not implemented) |
+| [`OWNd/message/sound.py`](OWNd/message/sound.py) | **100%** | WHO 16 & WHO 22: Sound system, advanced sound diffusion, F441 matrix routing and paging |
 | [`OWNd/profiles.py`](OWNd/profiles.py) | **100%** | Declarative hardware gateway models across 14 canonical hardware profiles |
 | [`OWNd/transport/__init__.py`](OWNd/transport/__init__.py) | **100%** | Transport subpackage exports |
 | [`OWNd/transport/base.py`](OWNd/transport/base.py) | **100%** | Abstract transport layer and event listener notification contracts |

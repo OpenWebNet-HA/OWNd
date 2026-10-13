@@ -65,7 +65,7 @@ COMPONENT_NOTES: dict[str, str] = {
     "OWNd/message/heating.py": "WHO 4: Thermoregulation, heating/cooling zone control, and temperature decoders",
     "OWNd/message/lighting.py": "WHO 1: Lighting controls, dimming, RGB/HSV color, and motion/PIR sensors",
     "OWNd/message/scenario.py": "WHO 0, WHO 9, WHO 17: Scenario activation, auxiliary commands, and MH200/MH202 scenes",
-    "OWNd/message/sound.py": "WHO 16: Sound system and audio/video matrix routing (WHO 22 is not implemented)",
+    "OWNd/message/sound.py": "WHO 16 & WHO 22: Sound system, advanced sound diffusion, F441 matrix routing and paging",
     "OWNd/profiles.py": "Declarative hardware gateway models across 14 canonical hardware profiles",
     "OWNd/transport/base.py": "Abstract transport layer and event listener notification contracts",
     "OWNd/transport/serial.py": "Async Serial/USB transport for Legrand 3578 interface with in-band demux",
@@ -155,8 +155,8 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
     WhoCatalogDefinition(
         who="**16** / **22**",
         name="Sound Diffusion",
-        description="Multi-source selection, zone activation, volume adjustment, F441 matrix",
-        dispatch_who_keys=(16,),
+        description="Multi-source selection, zone activation, volume adjustment, F441 matrix routing, WHO 22 paging and standby",
+        dispatch_who_keys=(16, 22),
         explicit_classes=("OWNAVCommand",),
     ),
     WhoCatalogDefinition(

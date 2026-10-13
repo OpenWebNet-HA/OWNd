@@ -46,7 +46,7 @@ def test_who22_device_state_event() -> None:
     assert event_on.multimedia_type == 4
     assert event_on.is_on is True
     assert event_on.is_off is False
-    assert event_on.human_readable_log == "Speaker 3#1#1 (Zone 11) device state is ON."
+    assert event_on.human_readable_log == "Speaker 3#1#1 (Zone 11) is ON, audio channel 4."
 
     event_off = OWNMessage.parse("*#22*3#1#1*12*0*4##")
     assert isinstance(event_off, OWNSoundDiffusionEvent)
@@ -234,3 +234,145 @@ def test_who22_command_parser_dispatch() -> None:
     cmd_all = OWNSoundDiffusionCommand.turn_off("6")
     assert cmd_all.where == "6"
     assert cmd_all.target_address == "6"
+
+
+# ---------------------------------------------------------------------------
+# MyHomeServer1 + F500 + F441 + H4562, contributed by @bboykaos in OWNd#103
+# (frames are literal; MyHOME tests/fixtures/traces/who22_myhomeserver1_f500_h4562)
+# ---------------------------------------------------------------------------
+
+
+def test_dimension_12_state_on_carries_the_audio_channel() -> None:
+    on = OWNMessage.parse("*#22*3#7#5*12*1*2##")
+    assert isinstance(on, OWNSoundDiffusionEvent)
+    assert on.is_on is True
+    assert on.audio_channel == 2
+    assert on.is_standby is False
+    assert on.human_readable_log == "Speaker 3#7#5 (Zone 75) is ON, audio channel 2."
+    assert OWNMessage.parse("*#22*3#7#6*12*1*1##").audio_channel == 1
+
+
+def test_dimension_12_state_0_type_10_is_standby() -> None:
+    """After an atomic OFF and while paging mutes the house, the zone reports ``12*0*10``."""
+    standby = OWNMessage.parse("*#22*3#7#5*12*0*10##")
+    assert isinstance(standby, OWNSoundDiffusionEvent)
+    assert standby.is_standby is True
+    assert standby.is_off is True
+    assert standby.audio_channel is None
+    assert standby.multimedia_type == 10
+    assert standby.human_readable_log == "Speaker 3#7#5 (Zone 75) is in standby (OFF or muted by a priority call)."
+    # A state 0 with another type is a plain OFF, not standby.
+    plain = OWNMessage.parse("*#22*3#1#1*12*0*4##")
+    assert plain.is_standby is False
+    assert plain.human_readable_log == "Speaker 3#1#1 (Zone 11) device state is OFF."
+
+
+def test_power_on_with_source() -> None:
+    event = OWNMessage.parse("*22*1#4#1*3#7#5##")
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event.is_on is True
+    assert event.requested_source == 1
+    assert event.is_atomic_off is False
+    assert event.human_readable_log == "Speaker 3#7#5 (Zone 75) is switched ON with source 1."
+    assert OWNMessage.parse("*22*1*3#7#5##").requested_source is None
+
+
+def test_atomic_off() -> None:
+    event = OWNMessage.parse("*22*0#4#0*3#7#5##")
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event.is_off is True
+    assert event.is_atomic_off is True
+    assert event.human_readable_log == "Speaker 3#7#5 (Zone 75) is switched OFF (atomic)."
+    plain = OWNMessage.parse("*22*0*3#7#5##")
+    assert plain.is_off is True
+    assert plain.is_atomic_off is False
+
+
+def test_matrix_route_to_source() -> None:
+    event = OWNMessage.parse("*22*35#4#1#2*3#7#5##")
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event.is_route_source is True
+    assert event.requested_source == 2
+    assert event.target_type == "speaker"
+    assert event.human_readable_log == "Speaker 3#7#5 (Zone 75) is routed to source 2."
+    assert OWNMessage.parse("*22*35#4#1#1*3#7#6##").requested_source == 1
+    # Too few parameters name no source.
+    assert OWNMessage.parse("*22*35*3#7#6##").requested_source is None
+
+
+def test_whole_house_paging() -> None:
+    opened = OWNMessage.parse("*22*19#1*5#3#0#0##")
+    assert isinstance(opened, OWNSoundDiffusionEvent)
+    assert opened.target_type == "zone_control"
+    assert opened.is_all_zones is True
+    assert (opened.area, opened.point) == (0, 0)
+    assert opened.equivalent_who16_where is None
+    assert opened.is_paging_open is True
+    assert opened.paging_channel == 1
+    assert opened.human_readable_log == "Sound diffusion device 5#3#0#0 opens paging channel 1."
+
+    voice = OWNMessage.parse("*22*20#1*5#3#0#0##")
+    assert voice.is_paging_voice is True
+    assert voice.paging_channel == 1
+    assert voice.human_readable_log == "Sound diffusion device 5#3#0#0 starts paging voice on channel 1."
+    assert OWNMessage.parse("*22*19*5#3#0#0##").paging_channel is None
+    assert OWNMessage.parse("*22*9*2#1##").paging_channel is None
+
+
+def test_wall_unit_keypress_is_not_a_station_change() -> None:
+    press = OWNMessage.parse("*22*9*5#3#7#6##")
+    assert isinstance(press, OWNSoundDiffusionEvent)
+    assert press.target_type == "zone_control"
+    assert (press.area, press.point) == (7, 6)
+    assert press.is_all_zones is False
+    assert press.is_keypress is True
+    assert press.is_next_station is False
+    assert press.human_readable_log == "Sound diffusion device 5#3#7#6 keypad pressed."
+    # The same WHAT on a tuner source is still next station.
+    station = OWNMessage.parse("*22*9*2#1##")
+    assert station.is_next_station is True
+    assert station.is_keypress is False
+
+
+def test_paging_ducking_and_volume_restore_replay() -> None:
+    for zone in ("3#5#1", "3#7#2", "3#1#8"):
+        ducked = OWNMessage.parse(f"*#22*{zone}*12*0*10##")
+        assert ducked.is_standby is True
+    restored = OWNMessage.parse("*#22*3#5#1*1*1##")
+    assert restored.volume == 1 and restored.is_standby is False
+
+
+def test_new_command_builders_match_the_traces() -> None:
+    assert str(OWNSoundDiffusionCommand.turn_on_with_source("3#7#5", 1)) == "*22*1#4#1*3#7#5##"
+    assert str(OWNSoundDiffusionCommand.turn_on_with_source("3#7#6", 2, multimedia_type=4)) == "*22*1#4#2*3#7#6##"
+    assert str(OWNSoundDiffusionCommand.turn_off_atomic("3#7#5")) == "*22*0#4#0*3#7#5##"
+    assert str(OWNSoundDiffusionCommand.route_source("3#7#5", 2)) == "*22*35#4#1#2*3#7#5##"
+    assert str(OWNSoundDiffusionCommand.open_paging()) == "*22*19#1*5#3#0#0##"
+    assert str(OWNSoundDiffusionCommand.start_paging_voice()) == "*22*20#1*5#3#0#0##"
+    assert str(OWNSoundDiffusionCommand.open_paging("5#3#7#6", 2)) == "*22*19#2*5#3#7#6##"
+    assert str(OWNSoundDiffusionCommand.start_paging_voice("5#3#7#6", 2)) == "*22*20#2*5#3#7#6##"
+    cmd = OWNSoundDiffusionCommand.route_source("3#7#5", 2)
+    assert cmd.human_readable_log == "Routing sound diffusion device 3#7#5 to source 2."
+    assert OWNSoundDiffusionCommand.turn_on_with_source("3#7#5", 1).human_readable_log == (
+        "Turning ON sound diffusion device 3#7#5 with source 1."
+    )
+    assert OWNSoundDiffusionCommand.turn_off_atomic("3#7#5").human_readable_log == (
+        "Turning OFF sound diffusion device 3#7#5 (atomic)."
+    )
+    assert OWNSoundDiffusionCommand.open_paging().human_readable_log == "Opening paging channel 1 on 5#3#0#0."
+    assert OWNSoundDiffusionCommand.start_paging_voice().human_readable_log == (
+        "Starting paging voice on channel 1 on 5#3#0#0."
+    )
+
+
+def test_builder_inputs_are_validated() -> None:
+    with pytest.raises(ValueError):
+        OWNSoundDiffusionCommand.turn_on_with_source("3#7#5", 0)
+    with pytest.raises(ValueError):
+        OWNSoundDiffusionCommand.route_source("3#7#5", 0)
+    assert OWNSoundDiffusionCommand.zone_control_address(0, 0) == "5#3#0#0"
+    assert OWNSoundDiffusionCommand.zone_control_address(7, 6) == "5#3#7#6"
+    with pytest.raises(ValueError):
+        OWNSoundDiffusionCommand.zone_control_address(10, 0)
+    with pytest.raises(ValueError):
+        OWNSoundDiffusionCommand.zone_control_address(0, -1)
