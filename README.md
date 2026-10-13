@@ -15,10 +15,10 @@
 It powers the [Home Assistant MyHOME integration](https://github.com/OpenWebNet-HA/MyHOME) and serves as a standalone Python client for discovering, monitoring, and controlling OpenWebNet bus devices over TCP/IP gateways and serial USB interfaces.
 
 > [!TIP]
-> **🚀 V2 Phase 2 Architecture Now Live**: Phase 2 architecture is active across **OWNd** and **MyHOME**! Featuring strongly typed CEN / CEN+ scenario command builders and device triggers (**P2**), Thermoregulation Central Unit (3550 / 4695) master mode and zone coordination (**P4**), Multi-Gateway routing and plant isolation (**P6**), DALI Tunable White support, and 100.0% test coverage verified against the OpenWebNet Golden Corpus.
+> **🚀 Phase 2 Architecture**: Phase 2 architecture powers **OWNd** and **MyHOME**! Featuring strongly typed CEN / CEN+ scenario command builders and device triggers (**P2**), Thermoregulation Central Unit (3550 / 4695) master mode and zone coordination (**P4**), Multi-Gateway routing and plant isolation (**P6**), DALI Tunable White support, and 100.0% test coverage verified against the OpenWebNet Golden Corpus.
 
 > [!NOTE]
-> **🔒 Full `mypy --strict` compliance (2.0.0-b7)**: every module now passes strict static typing with zero suppressions, and the package ships a [PEP 561](https://peps.python.org/pep-0561/) `py.typed` marker so type checkers pick up OWNd's types in consuming projects (this is what unblocks the Home Assistant Platinum `strict-typing` quality-scale rule for MyHOME). Also in this release: a public `OWNSession.is_open` property, one canonical line ending across the repository, and a CI gate that replays [MyHOME](https://github.com/OpenWebNet-HA/MyHOME)'s golden corpus and test suite against every OWNd change before it ships.
+> **🔒 Full `mypy --strict` compliance**: Every module passes strict static typing with zero suppressions, and the package ships a [PEP 561](https://peps.python.org/pep-0561/) `py.typed` marker so type checkers pick up OWNd's types in consuming projects (unblocking the Home Assistant Platinum `strict-typing` quality-scale rule for MyHOME). OWNd maintains a public `OWNSession.is_open` property, canonical line endings, and a CI gate that replays [MyHOME](https://github.com/OpenWebNet-HA/MyHOME)'s golden corpus and test suite against every OWNd change before it ships.
 
 ---
 
@@ -36,7 +36,7 @@ It powers the [Home Assistant MyHOME integration](https://github.com/OpenWebNet-
   - Periodic application-level keepalives and passive watchdogs.
   - Non-blocking bounded timeouts on handshakes and commands to prevent event loop stalls.
   - Multi-frame response collection for large bus status sweeps (up to 256 frames).
-- **Declarative Hardware Profiles**: Tailored queue pacing, session concurrency, and subsystem limits for known Legrand/BTicino hardware (F454, F455, MH200, MH200N, MH201, MH202, MyHomeServer1, and conservative generic fallbacks).
+- **Declarative Hardware Profiles**: Tailored queue pacing, session concurrency, and subsystem limits for known Legrand/BTicino hardware (MyHomeServer1, F452, F452V, F453, F453AV, F454, F455, F461, H4890, MH202, MH201, MH200, MH200N, and conservative generic fallbacks).
 - **Modern Python & Strict 100% Test Coverage**: Designed for Python **3.11+**, tested continuously against Python 3.11, 3.12, 3.13, and 3.14 with strict **100.0% line coverage** unconditionally enforced across all core modules.
 
 ---
@@ -72,19 +72,25 @@ pip install --pre OWNd
 
 OWNd parses OpenWebNet frames and dispatches typed commands and events across the full MyHOME spectrum:
 
+<!-- START_WHO_CATALOG_TABLE -->
 | WHO | Subsystem | Description & Capabilities | Event / Command Classes |
 |:---:|:---|:---|:---|
+| **0** | Scenarios | Basic scenario execution (1–32) from control panels, scenario module programming and memory lock states | `OWNScenarioEvent` |
 | **1** | Lighting | On/off switching, dimming level (0–100%), DALI Tunable White (Dimension 14, 2000K–6535K / mireds), status queries | `OWNLightingCommand`, `OWNLightingEvent` |
 | **2** | Automation | Shutters, blinds, motorized curtains, tilt angles, short & full replies | `OWNAutomationCommand`, `OWNAutomationEvent` |
 | **3** | Load Control | Load shedding status, circuit priority management | `OWNCommand`, `OWNEvent` |
 | **4** | Thermoregulation / Climate | Multi-zone temperature readouts, target adjustments, HVAC modes (Heat/Cool/Auto/Off), local offsets, fan coil speeds, valve states, Central Unit 3550/4695 master coordination | `OWNHeatingCommand`, `OWNHeatingEvent` |
 | **5** | Burglar Alarm | Zone status, system arming / disarming states | `OWNAlarmCommand`, `OWNAlarmEvent` |
+| **6** | Door Entry & Lock | Door entry unit and electric lock status, door open/close events, lock release commands | `OWNDoorEntryCommand`, `OWNDoorEntryEvent` |
+| **8** | Intercom / Video Door Entry | Video door entry and intercom call signaling, answering, camera and audio control | `OWNIntercomCommand`, `OWNIntercomEvent` |
+| **9** | Auxiliary | Auxiliary channel status (aux 1–9) for remote relays and inter-system signaling | `OWNAuxEvent` |
 | **13** | Gateway Diagnostics & Clock | Gateway date/time synchronization, timezone offsets, firmware metadata | `OWNGatewayCommand`, `OWNGatewayEvent` |
-| **15** | CEN Scenarios | Scenario control, pushbutton push/release/extended press events, strongly typed command builders | `OWNCenCommand`, `OWNCENEvent`, `OWNScenarioEvent` |
+| **15** | CEN Scenarios | Scenario control, pushbutton push/release/extended press events, strongly typed command builders | `OWNCenCommand`, `OWNCENEvent` |
 | **16** / **22** | Sound Diffusion | Multi-source selection, zone activation, volume adjustment, F441 matrix | `OWNSoundCommand`, `OWNSoundEvent`, `OWNAVCommand` |
-| **17** | Scenario Programmer | MH200N / MH202 scenario activation and state monitoring | `OWNSceneEvent` |
+| **17** | Scenario Programmer | MH200N / MH202 scenario activation and state monitoring | `OWNSceneCommand`, `OWNSceneEvent` |
 | **18** | Energy Management | Active power (W), hourly/daily/monthly consumption (kWh), Stop & Go breaker diagnostics | `OWNEnergyCommand`, `OWNEnergyEvent` |
 | **25** | CEN+ & Dry Contacts | 32-button keypads, rotary knob encoders (CW/CCW), dry contacts, PIR sensors, strongly typed command builders | `OWNCenPlusCommand`, `OWNCENPlusEvent`, `OWNDryContactCommand`, `OWNDryContactEvent` |
+<!-- END_WHO_CATALOG_TABLE -->
 
 ---
 
@@ -312,7 +318,7 @@ This project is licensed under the **Apache License 2.0**, the same license as H
 
 ## 📊 Code Coverage & Quality Assurance
 
-OWNd maintains an automated test suite with strict **100.0% line coverage** (3,087 / 3,087 statements covered with 0 missing lines across all 9 core modules) verified continuously in CI across Python 3.11, 3.12, 3.13, and 3.14:
+OWNd maintains an automated test suite with strict **100.0% line coverage** verified continuously in CI across Python 3.11, 3.12, 3.13, and 3.14:
 
 <!-- START_COVERAGE_TABLE -->
 
@@ -337,7 +343,7 @@ OWNd maintains an automated test suite with strict **100.0% line coverage** (3,0
 | [`OWNd/message/lighting.py`](OWNd/message/lighting.py) | **100%** | WHO 1: Lighting controls, dimming, RGB/HSV color, and motion/PIR sensors |
 | [`OWNd/message/scenario.py`](OWNd/message/scenario.py) | **100%** | WHO 0, WHO 9, WHO 17: Scenario activation, auxiliary commands, and MH200/MH202 scenes |
 | [`OWNd/message/sound.py`](OWNd/message/sound.py) | **100%** | WHO 16: Sound system and audio/video matrix routing (WHO 22 is not implemented) |
-| [`OWNd/profiles.py`](OWNd/profiles.py) | **100%** | Declarative hardware gateway models (F454, MH200, MH200N, MH201, MH202, MyHomeServer1) |
+| [`OWNd/profiles.py`](OWNd/profiles.py) | **100%** | Declarative hardware gateway models across 14 canonical hardware profiles |
 | [`OWNd/transport/__init__.py`](OWNd/transport/__init__.py) | **100%** | Transport subpackage exports |
 | [`OWNd/transport/base.py`](OWNd/transport/base.py) | **100%** | Abstract transport layer and event listener notification contracts |
 | [`OWNd/transport/serial.py`](OWNd/transport/serial.py) | **100%** | Async Serial/USB transport for Legrand 3578 interface with in-band demux |

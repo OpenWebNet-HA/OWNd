@@ -168,9 +168,17 @@ class OWNEnergyEvent(OWNEvent):
                 # 719-726). type: 1 electricity, 2 gas, 3 heat, 4 water
                 # (energy_device.cpp:50-56).
                 self._type = MESSAGE_TYPE_AUTO_UPDATE_INTERVAL
-                self._update_interval = _integer_value(self._dimension_value, 0)
-                self._energy_type = _integer_value(self._dimension_param, 0, 0) if self._dimension_param else None
-                self._human_readable_log = f"Sensor {self._sensor} automatic updates every {self._update_interval} minutes (0 = stopped)."  # pylint: disable=line-too-long
+                parsed_interval = _integer_value(self._dimension_value, 0)
+                self._update_interval = max(0, parsed_interval)
+                self._energy_type = (
+                    max(0, _integer_value(self._dimension_param, 0, 0))
+                    if self._dimension_param
+                    else None
+                )
+                if self._update_interval == 0:
+                    self._human_readable_log = f"Sensor {self._sensor} automatic updates stopped."
+                else:
+                    self._human_readable_log = f"Sensor {self._sensor} automatic updates for {self._update_interval} minutes."
             elif self._dimension == 53:
                 self._type = MESSAGE_TYPE_CURRENT_MONTH_CONSUMPTION
                 self._current_month_partial_consumption = _integer_value(
@@ -188,12 +196,27 @@ class OWNEnergyEvent(OWNEvent):
 
     @property
     def update_interval(self) -> int | None:
-        """Time field of a 1200 reply (minutes per Legrand WHO 18), 0 when stopped."""
+        """Time field of a 1200 reply (stream duration in minutes per Legrand WHO 18), 0 when stopped.
+
+        Retained for backward compatibility; prefer :attr:`stream_duration`.
+        """
         return self._update_interval
 
     @property
+    def stream_duration(self) -> int | None:
+        """Time field of a 1200 reply (stream duration in minutes, 0..255 per Legrand WHO 18), 0 when stopped."""
+        return self._update_interval
+
+    @property
+    def is_streaming_active(self) -> bool | None:
+        """True if automatic updates are streaming (> 0 minutes), False if stopped (0 minutes), None if not a 1200 event."""
+        if self._update_interval is None:
+            return None
+        return self._update_interval > 0
+
+    @property
     def energy_type(self) -> int | None:
-        """Energy type of a 1200 reply (1 electricity, 2 gas, 3 heat, 4 water)."""
+        """Energy type of a 1200 reply (1 electricity per Legrand WHO 18; 2 gas, 3 heat, 4 water per libqtdevices)."""
         return self._energy_type
 
     @property
@@ -225,9 +248,34 @@ class OWNEnergyEvent(OWNEvent):
         return self._current_month_partial_consumption
 
     @property
+    def target_address(self) -> str:
+        """The full target address including any actuator channel suffix (#0)."""
+        if self._where and self._where_param:
+            return f"{self._where}#{'#'.join(self._where_param)}"
+        return self._where or ""
+
+    @property
+    def is_actuator(self) -> bool:
+        """True if the event originates from an energy management actuator (7N#0)."""
+        return bool(
+            self._where
+            and (
+                self._where.startswith("7")
+                or (self._where_param and self._where_param == ["0"])
+            )
+        )
+
+    @property
     def human_readable_log(self) -> str:
         return self._human_readable_log
 
+
+def _normalize_actuator_where(where: str | int) -> str:
+    """Normalize actuator address by ensuring #0 suffix per WHO 18 specification."""
+    target = str(where).strip()
+    if target.startswith("7") and not target.endswith("#0"):
+        return f"{target}#0"
+    return target
 
 
 class OWNEnergyCommand(OWNCommand):
@@ -241,10 +289,13 @@ class OWNEnergyCommand(OWNCommand):
         the meter answers *#18*W*1200#type*time##). ``energy_type`` 1 is
         electricity, 2 gas, 3 heat, 4 water (libqtdevices energy_device.cpp:50-56).
         """
-        where = f"{where}#0" if str(where).startswith("7") else str(where)
-        duration = 255 if duration > 255 else duration
+        where = _normalize_actuator_where(where)
+        duration = 255 if duration > 255 else max(0, int(duration))
         message = cls(f"*#18*{where}*#1200#{energy_type}*{duration}##")
-        message._human_readable_log = f"Requesting instant power draw update from sensor {where} for {duration} minutes."  # pylint: disable=line-too-long
+        if duration == 0:
+            message._human_readable_log = f"Stopping instant power draw updates from sensor {where}."  # pylint: disable=line-too-long
+        else:
+            message._human_readable_log = f"Requesting instant power draw update from sensor {where} for {duration} minutes."  # pylint: disable=line-too-long
         return message
 
     @classmethod
@@ -256,16 +307,32 @@ class OWNEnergyCommand(OWNCommand):
         Firmware replay on bt_supervisione: *#18*51*#1200#1*0## ACK, bus
         D1 A1 02 32 00 02 1D 00; the meter then reports *#18*W*1200#type*0##.
         """
-        where = f"{where}#0" if str(where).startswith("7") else str(where)
+        where = _normalize_actuator_where(where)
         message = cls(f"*#18*{where}*#1200#{energy_type}*0##")
         message._human_readable_log = f"Stopping instant power draw updates from sensor {where}."  # pylint: disable=line-too-long
         return message
 
     @classmethod
+    def request_active_power(cls, where: str | int) -> OWNEnergyCommand:
+        """Request instantaneous active power: *#18*W*113##.
+
+        Legrand WHO 18 section 5.2.18 Dimension 113.
+        """
+        where = _normalize_actuator_where(where)
+        message = cls(f"*#18*{where}*113##")
+        message._human_readable_log = (
+            f"Requesting active power from sensor {where}."
+        )
+        return message
+
+    # Alias for API symmetry with get_total_consumption / downstream integrations
+    get_instant_power = request_active_power
+
+    @classmethod
     def get_hourly_consumption(
         cls, where: str | int, date: datetime.date
     ) -> OWNEnergyCommand | None:
-        where = f"{where}#0" if str(where).startswith("7") else str(where)
+        where = _normalize_actuator_where(where)
         today = datetime.date.today()
         one_year_ago = today - relativedelta(years=1)
         if date < one_year_ago:
@@ -278,7 +345,7 @@ class OWNEnergyCommand(OWNCommand):
 
     @classmethod
     def get_partial_daily_consumption(cls, where: str | int) -> OWNEnergyCommand:
-        where = f"{where}#0" if str(where).startswith("7") else str(where)
+        where = _normalize_actuator_where(where)
         message = cls(f"*#18*{where}*54##")
         message._human_readable_log = (
             f"Requesting today's partial power consumption from sensor {where}."
@@ -289,7 +356,7 @@ class OWNEnergyCommand(OWNCommand):
     def get_daily_consumption(
         cls, where: str | int, year: int, month: int
     ) -> OWNEnergyCommand | None:
-        where = f"{where}#0" if str(where).startswith("7") else str(where)
+        where = _normalize_actuator_where(where)
         today = datetime.date.today()
         one_year_ago = today - relativedelta(years=1)
         two_year_ago = today - relativedelta(years=2)
@@ -307,7 +374,7 @@ class OWNEnergyCommand(OWNCommand):
 
     @classmethod
     def get_partial_monthly_consumption(cls, where: str | int) -> OWNEnergyCommand:
-        where = f"{where}#0" if str(where).startswith("7") else str(where)
+        where = _normalize_actuator_where(where)
         message = cls(f"*#18*{where}*53##")
         message._human_readable_log = (
             f"Requesting this month's partial power consumption from sensor {where}."
@@ -318,14 +385,14 @@ class OWNEnergyCommand(OWNCommand):
     def get_monthly_consumption(
         cls, where: str | int, year: int, month: int
     ) -> OWNEnergyCommand:
-        where = f"{where}#0" if str(where).startswith("7") else str(where)
+        where = _normalize_actuator_where(where)
         message = cls(f"*#18*{where}*52#{str(year)[2:]}#{month}##")
         message._human_readable_log = f"Requesting monthly power consumption for {year}-{month} from sensor {where}."  # pylint: disable=line-too-long
         return message
 
     @classmethod
     def get_total_consumption(cls, where: str | int) -> OWNEnergyCommand:
-        where = f"{where}#0" if str(where).startswith("7") else str(where)
+        where = _normalize_actuator_where(where)
         message = cls(f"*#18*{where}*51##")
         message._human_readable_log = (
             f"Requesting total power consumption from sensor {where}."

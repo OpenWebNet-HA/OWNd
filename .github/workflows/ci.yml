@@ -66,6 +66,8 @@ jobs:
         run: mypy OWNd tests/typing
       - name: Enforce PyPI library standards & clean decoupling
         run: python scripts/verify_library_standards.py
+      - name: Check documentation synchronization
+        run: python scripts/sync_documentation.py --check
 
   package:
     name: Build package
