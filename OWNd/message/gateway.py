@@ -47,14 +47,10 @@ WHO13_DEVICE_TYPES: dict[str, str] = {
     "16": "F453",
     "17": "INTERF2FIP",
     "18": "LGRF452",
-    "19": "H4684",
+    "19": "LGRMH200",
     "20": "LGRH4684",
     "23": "H4684",
-    "24": "LGRF452",
-    "25": "LGRMH200",
-    "26": "LGRH4684",
     "27": "L4686SDK",
-    "29": "H4684",
     "44": "MH200N",
     "51": "F454",
     "200": "F454",
@@ -69,17 +65,16 @@ WHO1013_DEVICE_TYPES: dict[str, str] = {
     "8": "F455",
     "11": "MHServer2",
     "12": "F453AV",
-    "13": "H4684",
     "19": "H4684",
-    "20": "LGRH4684",
     "22": "F453",
-    "23": "H4684",
+    "23": "INTERF2FIP",
     "24": "LGRF452",
     "25": "LGRMH200",
     "26": "LGRH4684",
     "29": "H4684",
     "30": "H4890",
     "35": "BMNE500",
+    "38": "573992",
     "42": "F453",
     "44": "MH200N",
     "51": "F454",
@@ -559,6 +554,11 @@ class OWNGatewayDiagnosticEvent(OWNEvent):
 
 class OWNGatewayDiagnosticCommand(OWNCommand):
     """WHO 1013: Gateway diagnostic requests and commands."""
+
+    @classmethod
+    def request_diagnostic_object_model(cls) -> OWNGatewayDiagnosticCommand:
+        """Request the gateway diagnostic object model code (Dimension 1)."""
+        return cls("*#1013**1##")
 
 
 register_event_parser(1013, OWNGatewayDiagnosticEvent)

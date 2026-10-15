@@ -737,28 +737,35 @@ class TestGatewayDeviceTypes:
         assert isinstance(msg, OWNGatewayEvent)
         assert msg.device_type == "H4684"
 
-        for code in ("13", "19", "23", "29"):
+        for code in ("13", "23"):
             evt = OWNEvent.parse(f"*#13**15*{code}##")
             assert isinstance(evt, OWNGatewayEvent)
             assert evt.device_type == "H4684"
 
-        for code in ("20", "26"):
-            evt = OWNEvent.parse(f"*#13**15*{code}##")
-            assert isinstance(evt, OWNGatewayEvent)
-            assert evt.device_type == "LGRH4684"
+        evt_lgr = OWNEvent.parse("*#13**15*20##")
+        assert isinstance(evt_lgr, OWNGatewayEvent)
+        assert evt_lgr.device_type == "LGRH4684"
+
+        evt_lgrmh = OWNEvent.parse("*#13**15*19##")
+        assert isinstance(evt_lgrmh, OWNGatewayEvent)
+        assert evt_lgrmh.device_type == "LGRMH200"
 
     def test_who1013_h4684_diagnostics(self):
-        for code in ("13", "19", "23", "29"):
+        for code in ("19", "29"):
             evt = OWNEvent.parse(f"*#1013**1*{code}##")
             assert isinstance(evt, OWNGatewayDiagnosticEvent)
             assert evt.device_type == "H4684"
             assert evt.object_model == code
 
-        for code in ("20", "26"):
-            evt = OWNEvent.parse(f"*#1013**1*{code}##")
-            assert isinstance(evt, OWNGatewayDiagnosticEvent)
-            assert evt.device_type == "LGRH4684"
-            assert evt.object_model == code
+        evt_lgr = OWNEvent.parse("*#1013**1*26##")
+        assert isinstance(evt_lgr, OWNGatewayDiagnosticEvent)
+        assert evt_lgr.device_type == "LGRH4684"
+        assert evt_lgr.object_model == "26"
+
+        evt_fip = OWNEvent.parse("*#1013**1*23##")
+        assert isinstance(evt_fip, OWNGatewayDiagnosticEvent)
+        assert evt_fip.device_type == "INTERF2FIP"
+        assert evt_fip.object_model == "23"
 
         # 4-field WHO 1013 response
         evt = OWNEvent.parse("*#1013**1*19*15*5*0##")

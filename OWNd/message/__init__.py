@@ -222,7 +222,6 @@ __all__ = [
     # Burglar Alarm (WHO 5)
     "OWNAlarmEvent",
     "OWNAlarmCommand",
-<<<<<<< HEAD
     # Door Entry & Lock / Intercom (WHO 6 & 8)
     "OWNDoorEntryEvent",
     "OWNDoorEntryCommand",
