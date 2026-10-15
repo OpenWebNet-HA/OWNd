@@ -84,7 +84,7 @@ OWNd parses OpenWebNet frames and dispatches typed commands and events across th
 | **6** | Door Entry & Lock | Door entry unit and electric lock status, door open/close events, lock release commands | `OWNDoorEntryCommand`, `OWNDoorEntryEvent` |
 | **8** | Intercom / Video Door Entry | Video door entry and intercom call signaling, answering, camera and audio control | `OWNIntercomCommand`, `OWNIntercomEvent` |
 | **9** | Auxiliary | Auxiliary channel status (aux 1–9) for remote relays and inter-system signaling | `OWNAuxEvent` |
-| **13** | Gateway Diagnostics & Clock | Gateway date/time synchronization, timezone offsets, firmware metadata | `OWNGatewayCommand`, `OWNGatewayEvent` |
+| **13** / **1013** | Gateway Diagnostics & Clock | Gateway date/time synchronization, timezone offsets, firmware and diagnostic object model metadata | `OWNGatewayCommand`, `OWNGatewayDiagnosticCommand`, `OWNGatewayEvent`, `OWNGatewayDiagnosticEvent` |
 | **15** | CEN Scenarios | Scenario control, pushbutton push/release/extended press events, strongly typed command builders | `OWNCenCommand`, `OWNCENEvent` |
 | **16** / **22** | Sound Diffusion | Multi-source selection, zone activation, volume adjustment, F441 matrix | `OWNSoundCommand`, `OWNSoundEvent`, `OWNAVCommand` |
 | **17** | Scenario Programmer | MH200N / MH202 scenario activation and state monitoring | `OWNSceneCommand`, `OWNSceneEvent` |
