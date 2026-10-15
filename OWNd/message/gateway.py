@@ -35,6 +35,10 @@ def _gateway_timezone(values: list[str]) -> str:
     return f"{sign}{value[1:]}:00"
 
 
+# WHO 13 Dimension 15: Functional gateway model/device type (*#13**15*<TYPE>##).
+# Grounded in published BTicino protocol tables, physical plant captures,
+# and firmware reverse engineering (bt_device dispatch table at VA 0x02003194,
+# selector r4 == 0).
 WHO13_DEVICE_TYPES: dict[str, str] = {
     "2": "MHServer",
     "4": "MH200",
@@ -56,6 +60,10 @@ WHO13_DEVICE_TYPES: dict[str, str] = {
     "200": "F454",
 }
 
+# WHO 1013 Dimension 1: Diagnostic object model (*#1013**1*<MODEL>*<N_CONF>*<BRAND>*<LINE>##).
+# Grounded in firmware reverse engineering (bt_device dispatch table at VA 0x02003194,
+# selector r4 != 0), canonical MHCatalogue.db AS_ITEM_SYSTEM.modobj cross-referencing,
+# and corroborated live gateway captures (OpenWebNet-Encyclopedia / guides/identify-openwebnet-gateway.md).
 WHO1013_DEVICE_TYPES: dict[str, str] = {
     "2": "MHServer",
     "4": "MH200",

@@ -2,16 +2,27 @@
 
 Verifies deterministic replay of gateway model identification frames synthesized
 from static disassembly of Legrand/BTicino bt_device daemon (firmware 2.0.54,
-TiDisplayColorIP):
-1. WHO 13 Dimension 15 device type resolution:
-   - Code 13 (official 2006 table & bt_device) -> H4684
-   - Code 20 (bt_device Legrand variant) -> LGRH4684
-2. WHO 1013 Dimension 1 diagnostic object model resolution:
-   - Code 19 (bt_device primary dispatch) -> H4684
-   - Code 26 (bt_device Legrand primary dispatch) -> LGRH4684
-   - Code 29 (MHCatalogue.db AS_ITEM_SYSTEM) -> H4684
+catalogued in own-firmware-oracle PR #26):
+
+1. WHO 13 Dimension 15 device type resolution (*#13**15*<TYPE>##):
+   - Code 13 (official 2006 table & bt_device VA 0x02003264) -> H4684
+   - Code 20 (bt_device Legrand variant VA 0x02003310) -> LGRH4684
+   - Code 23 (legacy scan compatibility) -> H4684
+
+2. WHO 1013 Dimension 1 diagnostic object model resolution (*#1013**1*<MODEL>*...##):
+   - Code 19 (bt_device primary dispatch VA 0x02003268) -> H4684
+   - Code 26 (bt_device Legrand primary dispatch VA 0x02003314) -> LGRH4684
+   - Code 29 (MHCatalogue.db AS_ITEM_SYSTEM modobj) -> H4684
+
 3. Profile mapping:
    - H4684 and aliases (L4684, N4684, NT4684, LGRH4684, LGR4684) resolve to H4684Profile.
+
+Independent Firmware Reproduction:
+   - Source: Version_2_0.zip (SHA-256: 41511712796cee61704f9d9cd1c85a14ce4fd6c8f5cea3b529d92117daf60e17)
+   - Extracted binary: bt_device (SHA-256: 5b0768d672719f2952a14d898c825266b02703b6db407c0c0ad3bc8a9712b246)
+   - Disassembly dispatch: VA 0x02003194 switches on caller selector r4:
+     * r4 == 0 (WHO 13): returns string "13" (H4684) or "20" (LGRH4684)
+     * r4 != 0 (WHO 1013): returns string "19" (H4684) or "26" (LGRH4684)
 """
 
 from __future__ import annotations
