@@ -57,7 +57,10 @@ WHO13_DEVICE_TYPES: dict[str, str] = {
     "27": "L4686SDK",
     "44": "MH200N",
     "51": "F454",
-    "200": "F454",
+    # Code 200 is shared by every Linux-based gateway generation seen so
+    # far (F454, MyHomeServer1, MH202, F461, H4890; MyHOME #370, #466 and
+    # the F461 plant capture). WHO 1013 dimension 1 tells them apart.
+    "200": "F454 / MyHomeServer1 / MH202 / F461 / H4890",
 }
 
 # WHO 1013 Dimension 1: Diagnostic object model (*#1013**1*<MODEL>*<N_CONF>*<BRAND>*<LINE>##).
@@ -71,6 +74,7 @@ WHO1013_DEVICE_TYPES: dict[str, str] = {
     "6": "F452",
     "7": "F452V",
     "8": "F455",
+    "10": "MH201",
     "11": "MHServer2",
     "12": "F453AV",
     "19": "H4684",
@@ -291,6 +295,13 @@ class OWNGatewayEvent(OWNEvent):
     def device_type(self) -> str | None:
         """Return the decoded gateway device type string."""
         return self._device_type
+
+    @property
+    def device_type_code(self) -> str | None:
+        """Return the raw WHO 13 dimension 15 code (``"200"`` on an F454, F461, ...)."""
+        if self._dimension == 15 and self._dimension_value:
+            return str(self._dimension_value[0])
+        return None
 
     @property
     def kernel_version(self) -> str | None:
@@ -564,9 +575,11 @@ class OWNGatewayDiagnosticCommand(OWNCommand):
     """WHO 1013: Gateway diagnostic requests and commands."""
 
     @classmethod
-    def request_diagnostic_object_model(cls) -> OWNGatewayDiagnosticCommand:
+    def request_diagnostic_object_model(
+        cls, where: str = ""
+    ) -> OWNGatewayDiagnosticCommand:
         """Request the gateway diagnostic object model code (Dimension 1)."""
-        return cls("*#1013**1##")
+        return cls(f"*#1013*{where}*1##")
 
 
 register_event_parser(1013, OWNGatewayDiagnosticEvent)

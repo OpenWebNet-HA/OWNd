@@ -102,7 +102,7 @@ def test_lgrh4684_synthetic_identification_trace_sequence():
 
 
 def test_h4684_catalogue_backward_compatibility():
-    """Verify MHCatalogue.db modobj code 29 and Nmap code 23 compatibility."""
+    """Verify MHCatalogue.db modobj code 29, Nmap code 23, and MH201 code 10."""
     evt_cat = OWNEvent.parse("*#1013**1*29##")
     assert isinstance(evt_cat, OWNGatewayDiagnosticEvent)
     assert evt_cat.device_type == "H4684"
@@ -111,3 +111,38 @@ def test_h4684_catalogue_backward_compatibility():
     evt_nmap = OWNEvent.parse("*#13**15*23##")
     assert isinstance(evt_nmap, OWNGatewayEvent)
     assert evt_nmap.device_type == "H4684"
+
+    evt_mh201 = OWNEvent.parse("*#1013**1*10##")
+    assert isinstance(evt_mh201, OWNGatewayDiagnosticEvent)
+    assert evt_mh201.device_type == "MH201"
+    assert evt_mh201.object_model == "10"
+
+
+def test_h4684_qemu_oracle_trace_corpus_outputs():
+    """Verify exact frames emitted by H4684 020054 in own-firmware-oracle trace-corpus."""
+    cmd_diag_where0 = OWNGatewayDiagnosticCommand.request_diagnostic_object_model("0")
+    assert str(cmd_diag_where0) == "*#1013*0*1##"
+    assert isinstance(OWNCommand.parse("*#1013*0*1##"), OWNGatewayDiagnosticCommand)
+
+    evt_dev = OWNEvent.parse("*#13**15*13##")
+    assert isinstance(evt_dev, OWNGatewayEvent)
+    assert evt_dev.device_type == "H4684"
+    assert evt_dev.device_type_code == "13"
+
+    evt_fw = OWNEvent.parse("*#13**16*2*0*54##")
+    assert isinstance(evt_fw, OWNGatewayEvent)
+    assert evt_fw.firmware_version == "2.0.54"
+
+    evt_kernel = OWNEvent.parse("*#13**23*2*0*5##")
+    assert isinstance(evt_kernel, OWNGatewayEvent)
+    assert evt_kernel.kernel_version == "2.0.5"
+
+    evt_distro = OWNEvent.parse("*#13**24*3*0*0##")
+    assert isinstance(evt_distro, OWNGatewayEvent)
+    assert evt_distro.distribution_version == "3.0.0"
+
+    evt_diag = OWNEvent.parse("*#1013**1*19##")
+    assert isinstance(evt_diag, OWNGatewayDiagnosticEvent)
+    assert evt_diag.device_type == "H4684"
+    assert evt_diag.object_model == "19"
+

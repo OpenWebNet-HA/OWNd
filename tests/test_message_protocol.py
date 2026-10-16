@@ -330,22 +330,24 @@ def test_shutter_level_outside_0_100_is_an_unknown_position() -> None:
     assert closed.is_position_unknown is False
 
 
-def test_lighting_what_19_is_an_unknown_state() -> None:
-    # MH200, 2026-09-24: *#1*74## answers *1*19*74## plus a WHO 1001
-    # DIMENSION 11 fault mask. 19 is not in the WHO 1 WHAT table.
+def test_lighting_what_19_is_an_anomaly_state() -> None:
+    # MH200N bt_luci binary disassembly: byte 'E' (0x45) on SCS bus maps
+    # to decimal 19 on load anomalies/overloads (findings/MH200N/what19.md).
     msg = OWNEvent.parse("*1*19*74##")
 
     assert isinstance(msg, OWNLightingEvent)
     assert msg.is_on is None
+    assert msg.is_anomaly is True
     assert msg.unknown_state == 19
-    assert msg.human_readable_log == "Light 74 reports unknown lighting WHAT 19."
+    assert msg.human_readable_log == "Light 74 reports anomaly (WHAT 19)."
 
 
-@pytest.mark.parametrize("what", [19, 32, 33, 35, 39, 99])
+@pytest.mark.parametrize("what", [32, 33, 35, 39, 99])
 def test_lighting_what_outside_the_table_is_an_unknown_state(what: int) -> None:
     msg = OWNLightingEvent(f"*1*{what}*21##")
 
     assert msg.is_on is None
+    assert msg.is_anomaly is False
     assert msg.unknown_state == what
     assert msg.is_sensor is False
     assert f"unknown lighting WHAT {what}" in msg.human_readable_log

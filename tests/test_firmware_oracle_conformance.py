@@ -494,13 +494,14 @@ def test_what19_fault_emitted_event():
 
     assert found_fault_event, f"Expected *1*19*74## in emitted_own for {frame} on MH200N"
 
-    # Verify OWNd parses *1*19*74## as OWNLightingEvent with unknown_state=19
+    # Verify OWNd parses *1*19*74## as OWNLightingEvent with unknown_state=19 and anomaly flag
     msg = OWNMessage.parse("*1*19*74##")
     assert isinstance(msg, OWNLightingEvent)
     assert msg.who == 1
     assert msg.where == "74"
     assert msg.unknown_state == 19
     assert msg.is_on is None
+    assert msg.is_anomaly is True
 
 
 def test_all_gateway_responses_conform_to_openwebnet_protocol():

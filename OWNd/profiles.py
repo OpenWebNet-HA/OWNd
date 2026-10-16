@@ -519,14 +519,32 @@ class H4890Profile(GatewayProfile):
 
 
 class H4684Profile(GatewayProfile):
-    """The H4684 colour touch screen family (H4684, L4684, N4684, NT4684, LGRH4684)."""
+    """The H4684 colour touch screen family (H4684, L4684, N4684, NT4684, LGRH4684).
+
+    Verified in the 22-suite firmware oracle against H4684 firmware 2.0.54
+    (``*#13**15*13##``, ``*#13**16*2*0*54##``, ``*#13**23*2*0*5##``,
+    ``*#13**24*3*0*0##``, ``*#1013**1*19##``):
+    - Ships ``bt_autom``, ``bt_termoreg``, ``bt_energia`` and ``bt_difson``
+      (WHO 1, 2, 3, 4, 15, 16, 18).
+    - Does not ship ``bt_multi`` or ``bt_supervisione``, and NACKs all WHO 17
+      (``scenario-who17``), WHO 22 (``sound-who22``), and WHO 25
+      (``who25-messages``) frames, so WHO 17, 22, and 25 are excluded.
+    """
 
     def __init__(self) -> None:
         super().__init__(
             model_name="H4684",
             auth_measured=False,
             audio_measured=False,
-            supported_who=DEFAULT_SUPPORTED_WHO,
+            supported_who=(
+                WHO_LIGHTING,
+                WHO_AUTOMATION,
+                WHO_LOAD_CONTROL,
+                WHO_HEATING,
+                WHO_CEN,
+                WHO_SOUND,
+                WHO_ENERGY,
+            ),
         )
 
 

@@ -15,6 +15,9 @@ MESSAGE_TYPE_PIR_SENSITIVITY = "pir_sensitivity"
 MESSAGE_TYPE_ILLUMINANCE = "illuminance_value"
 MESSAGE_TYPE_MOTION_TIMEOUT = "motion_timeout"
 
+# WHAT 19 anomaly status per MH200N bt_luci binary disassembly (findings/MH200N/what19.md)
+LIGHTING_STATE_ANOMALY = 19
+
 PIR_SENSITIVITY_MAPPING = ["low", "medium", "high", "very high"]
 
 
@@ -33,6 +36,7 @@ class OWNLightingEvent(OWNEvent):
         self._blinker: float | None = None
         self._illuminance: int | None = None
         self._motion: bool = False
+        self._is_anomaly: bool = False
         self._pir_sensitivity: int | None = None
         self._motion_timeout: datetime.timedelta | None = None
         self._color_temp: int | None = None
@@ -85,6 +89,13 @@ class OWNLightingEvent(OWNEvent):
             elif self._state == 18:  # Timer at 0.5s
                 self._timer = 0.5
                 self._human_readable_log = f"Light {self._where}{self._interface_log_text} is switched on for {self._timer}s."
+            elif self._state == LIGHTING_STATE_ANOMALY:
+                # Byte 'E' (0x45) on SCS bus maps to decimal 19 in bt_luci
+                # during load anomalies/overloads (findings/MH200N/what19.md)
+                self._is_anomaly = True
+                self._unknown_state = self._state
+                self._state = None
+                self._human_readable_log = f"Light {self._where}{self._interface_log_text} reports anomaly (WHAT 19)."
             elif self._state >= 20 and self._state <= 29:  # Light blinking
                 self._blinker = 0.5 * (self._state - 19)
                 self._human_readable_log = f"Light {self._where}{self._interface_log_text} is blinking every {self._blinker}s."
@@ -96,8 +107,7 @@ class OWNLightingEvent(OWNEvent):
                 self._motion = True
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} detected motion"
             else:
-                # Not in the WHO 1 WHAT table (e.g. 19, seen from an MH200
-                # actuator next to a WHO 1001 autodiagnostic mask): the on/off
+                # Not in the WHO 1 WHAT table: the on/off
                 # state is unknown, not "on".
                 self._unknown_state = self._state
                 self._state = None
@@ -200,10 +210,15 @@ class OWNLightingEvent(OWNEvent):
     def is_on(self) -> bool | None:
         """True/False when the on/off state is known, None otherwise (e.g. a
         motion event, a reply carrying only a dimension such as illuminance
-        or a timer, or a WHAT outside the published table; see unknown_state)."""
-        if self._state is None or self._motion:
+        or a timer, an anomaly state, or a WHAT outside the published table; see unknown_state)."""
+        if self._state is None or self._motion or self._is_anomaly:
             return None
         return 0 < self._state < 32
+
+    @property
+    def is_anomaly(self) -> bool:
+        """True if the light actuator reports an anomaly / fault state (WHAT 19)."""
+        return self._is_anomaly
 
     @property
     def unknown_state(self) -> int | None:
