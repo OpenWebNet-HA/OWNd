@@ -208,6 +208,14 @@ def test_who22_command_builders() -> None:
     assert str(OWNSoundDiffusionCommand.volume_down(speaker, step=2)) == "*22*4#2*3#4#1##"
     assert str(OWNSoundDiffusionCommand.set_volume(speaker, 20)) == "*#22*3#4#1*#1*20##"
 
+    with pytest.raises(ValueError, match="step must be positive"):
+        OWNSoundDiffusionCommand.volume_up(speaker, step=0)
+    with pytest.raises(ValueError, match="step must be positive"):
+        OWNSoundDiffusionCommand.volume_up(speaker, step=-1)
+    with pytest.raises(ValueError, match="step must be positive"):
+        OWNSoundDiffusionCommand.volume_down(speaker, step=0)
+    with pytest.raises(ValueError, match="step must be positive"):
+        OWNSoundDiffusionCommand.volume_down(speaker, step=-1)
     with pytest.raises(ValueError, match="volume must be between 0 and 31"):
         OWNSoundDiffusionCommand.set_volume(speaker, -1)
     with pytest.raises(ValueError, match="volume must be between 0 and 31"):
