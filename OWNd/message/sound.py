@@ -1062,16 +1062,22 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def volume_up(cls, where: str | int, step: int = 1) -> OWNSoundDiffusionCommand:
+        s = int(step)
+        if s < 1:
+            raise ValueError("step must be positive")
         target = str(where).strip()
-        what = f"3#{int(step)}" if int(step) > 1 else "3"
+        what = f"3#{s}" if s > 1 else "3"
         message = cls(f"*22*{what}*{target}##")
         message._human_readable_log = f"Increasing sound diffusion device {target} volume."
         return message
 
     @classmethod
     def volume_down(cls, where: str | int, step: int = 1) -> OWNSoundDiffusionCommand:
+        s = int(step)
+        if s < 1:
+            raise ValueError("step must be positive")
         target = str(where).strip()
-        what = f"4#{int(step)}" if int(step) > 1 else "4"
+        what = f"4#{s}" if s > 1 else "4"
         message = cls(f"*22*{what}*{target}##")
         message._human_readable_log = f"Decreasing sound diffusion device {target} volume."
         return message
