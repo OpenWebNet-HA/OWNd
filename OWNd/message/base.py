@@ -51,6 +51,17 @@ def register_command_parser(who: int, parser: Callable[[str], OWNCommand]) -> No
     _COMMAND_DISPATCH[who] = parser
 
 
+def require_non_empty_where(where: str | int) -> str:
+    """Reject empty or wildcard-polluted WHERE strings."""
+    w = str(where).strip()
+    if not w or "*" in w:
+        raise ValueError("where must be a non-empty address without '*'")
+    return w
+
+
+_require_non_empty_where = require_non_empty_where
+
+
 
 class OWNMessage:
     _ACK = re.compile(r"^\*#\*1##$")  #  *#*1##

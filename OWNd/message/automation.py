@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import re
 
-from .base import OWNCommand, OWNEvent, register_command_parser, register_event_parser
+from .base import (
+    OWNCommand,
+    OWNEvent,
+    register_command_parser,
+    register_event_parser,
+    require_non_empty_where,
+)
 
 
 class OWNAutomationEvent(OWNEvent):
@@ -169,8 +175,12 @@ class OWNAutomationCommand(OWNCommand):
 
     @classmethod
     def set_shutter_level(cls, where: str | int, level: int = 30) -> OWNAutomationCommand:
-        message = cls(f"*#2*{where}*#11#001*{level}##")
-        message._human_readable_log = f"Setting shutter {message._where}{message._interface_log_text} position to {level}%."
+        target = require_non_empty_where(where)
+        lvl = int(level)
+        if not 0 <= lvl <= 100:
+            raise ValueError("shutter level must be between 0 and 100")
+        message = cls(f"*#2*{target}*#11#001*{lvl}##")
+        message._human_readable_log = f"Setting shutter {message._where}{message._interface_log_text} position to {lvl}%."
         return message
 
 

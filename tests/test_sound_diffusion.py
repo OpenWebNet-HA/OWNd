@@ -735,3 +735,53 @@ def test_who22_firmware_oracle_conformance(
     assert _decoded_bus_frames(mhs_row) == expected_bus
 
 
+def test_who22_infeasible_input_validation() -> None:
+    """Verify WHO 22 command builders reject infeasible parameters."""
+    with pytest.raises(ValueError, match="multimedia_type must be non-negative"):
+        OWNSoundDiffusionCommand.turn_on_with_source("3#1#1", 1, multimedia_type=-1)
+    with pytest.raises(ValueError, match="multimedia_type must be non-negative"):
+        OWNSoundDiffusionCommand.turn_off_atomic("3#1#1", multimedia_type=-1)
+    with pytest.raises(ValueError, match="matrix_area must be non-negative"):
+        OWNSoundDiffusionCommand.route_source("3#1#1", 1, matrix_area=-1)
+    with pytest.raises(ValueError, match="multimedia_type must be non-negative"):
+        OWNSoundDiffusionCommand.route_source("3#1#1", 1, multimedia_type=-1)
+
+    with pytest.raises(ValueError, match="frequency must be finite"):
+        OWNSoundDiffusionCommand.set_frequency("2#1", float("nan"))
+    with pytest.raises(ValueError, match="frequency must be at least 10 kHz"):
+        OWNSoundDiffusionCommand.set_frequency("2#1", 5)
+    with pytest.raises(ValueError, match="band must be between 1 and 4"):
+        OWNSoundDiffusionCommand.set_frequency("2#1", 101500, band=0)
+    with pytest.raises(ValueError, match="band must be between 1 and 4"):
+        OWNSoundDiffusionCommand.set_frequency("2#1", 101500, band=5)
+
+    with pytest.raises(ValueError, match="frequency must be finite"):
+        OWNSoundDiffusionCommand.set_preset("2#1", 1, frequency_khz=float("inf"))
+    with pytest.raises(ValueError, match="frequency must be positive"):
+        OWNSoundDiffusionCommand.set_preset("2#1", 1, frequency_khz=0)
+    with pytest.raises(ValueError, match="frequency must be at least 10 kHz"):
+        OWNSoundDiffusionCommand.set_preset("2#1", 1, frequency_khz=5)
+    with pytest.raises(ValueError, match="band must be between 1 and 4"):
+        OWNSoundDiffusionCommand.set_preset("2#1", 1, frequency_khz=101500, band=0)
+
+    with pytest.raises(ValueError, match="preset must be positive"):
+        OWNSoundDiffusionCommand.store_preset("2#1", 0)
+    with pytest.raises(ValueError, match="channel must be positive"):
+        OWNSoundDiffusionCommand.open_paging("5#3#0#0", channel=0)
+    with pytest.raises(ValueError, match="channel must be positive"):
+        OWNSoundDiffusionCommand.start_paging_voice("5#3#0#0", channel=0)
+
+    for bad_step in (0, -1, 32):
+        with pytest.raises(ValueError, match="step must be positive and between 1 and 31"):
+            OWNSoundDiffusionCommand.volume_up("3#1#1", step=bad_step)
+        with pytest.raises(ValueError, match="step must be positive and between 1 and 31"):
+            OWNSoundDiffusionCommand.volume_down("3#1#1", step=bad_step)
+    assert str(OWNSoundDiffusionCommand.volume_down("3#1#1", step=5)) == "*22*4#5*3#1#1##"
+
+    # Dimension 1 volume reports outside 0..31 are ignored
+    assert OWNSoundDiffusionEvent("*#22*3#4#1*1*0##").volume == 0
+    assert OWNSoundDiffusionEvent("*#22*3#4#1*1*31##").volume == 31
+    assert OWNSoundDiffusionEvent("*#22*3#4#1*1*32##").volume is None
+    assert OWNSoundDiffusionEvent("*#22*3#4#1*1*-1##").volume is None
+
+

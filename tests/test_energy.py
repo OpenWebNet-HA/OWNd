@@ -34,3 +34,25 @@ def test_hourly_consumption_window_handles_leap_day() -> None:
 
     assert str(command) == "*#18*51*511#2#28##"
     assert too_old is None
+
+
+def test_energy_command_infeasible_inputs() -> None:
+    import pytest
+
+    for bad_where in ("", "   ", "51*1"):
+        with pytest.raises(ValueError, match="where must be a non-empty address without '\\*'"):
+            OWNEnergyCommand.request_active_power(bad_where)
+
+    for bad_type in (0, 5, -1):
+        with pytest.raises(ValueError, match="energy_type must be between 1 and 4"):
+            OWNEnergyCommand.start_sending_instant_power("51", energy_type=bad_type)
+        with pytest.raises(ValueError, match="energy_type must be between 1 and 4"):
+            OWNEnergyCommand.stop_sending_instant_power("51", energy_type=bad_type)
+
+    for bad_year in (1999, 2100, 99):
+        with pytest.raises(ValueError, match="year must be between 2000 and 2099"):
+            OWNEnergyCommand.get_monthly_consumption("51", bad_year, 1)
+
+    for bad_month in (0, 13, -1):
+        with pytest.raises(ValueError, match="month must be between 1 and 12"):
+            OWNEnergyCommand.get_monthly_consumption("51", 2026, bad_month)

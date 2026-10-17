@@ -226,16 +226,17 @@ class OWNLightingEvent(OWNEvent):
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} has timeout set to {self._motion_timeout}."  # pylint: disable=line-too-long
             elif self._dimension == 12:  # HSV Color (BTicino F429 DALI)
                 if len(self._dimension_value) >= 3:
-                    h, s, v = (
-                        int(self._dimension_value[0]),
-                        int(self._dimension_value[1]),
-                        int(self._dimension_value[2]),
-                    )
+                    try:
+                        h = int(self._dimension_value[0])
+                        s = int(self._dimension_value[1])
+                        v = int(self._dimension_value[2])
+                    except (TypeError, ValueError):
+                        h = s = v = -1
                     if (h, s, v) == (511, 127, 255):
                         self._supports_hsv = False
                         self._supports_rgb = False
                         self._human_readable_log = f"Light {self._where}{self._interface_log_text} reports HSV color is not supported."
-                    else:
+                    elif 0 <= h <= 360 and 0 <= s <= 100 and 0 <= v <= 100:
                         self._supports_hsv = True
                         self._supports_rgb = True
                         self._hue = h
@@ -430,7 +431,7 @@ class OWNLightingCommand(OWNCommand):
                 v = int(self._dimension_value[2])
             except (TypeError, ValueError):
                 return None
-            if 0 <= h <= 360 and 0 <= s <= 100 and (h, s, v) != (511, 127, 255):
+            if 0 <= h <= 360 and 0 <= s <= 100 and 0 <= v <= 100:
                 return (h, s)
         return None
 

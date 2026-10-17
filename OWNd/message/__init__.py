@@ -27,6 +27,7 @@ from .base import (
     _ensure_all_subsystems_registered,
     register_command_parser,
     register_event_parser,
+    require_non_empty_where,
 )
 from .cen import (
     OWNCENEvent,
@@ -216,6 +217,7 @@ __all__ = [
     "OWNStatusRequest",
     "register_event_parser",
     "register_command_parser",
+    "require_non_empty_where",
     "_ensure_all_subsystems_registered",
     # Lighting (WHO 1)
     "LIGHTING_STATE_ANOMALY",

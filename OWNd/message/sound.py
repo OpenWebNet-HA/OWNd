@@ -2,9 +2,20 @@
 
 from __future__ import annotations
 
+import math
 import re
 
-from .base import OWNCommand, OWNEvent, register_command_parser, register_event_parser
+from .base import (
+    OWNCommand,
+    OWNEvent,
+    register_command_parser,
+    register_event_parser,
+    require_non_empty_where,
+)
+
+
+_require_non_empty_where = require_non_empty_where
+
 
 
 class OWNSoundEvent(OWNEvent):
@@ -217,9 +228,13 @@ class OWNAVCommand(OWNCommand):
     def receive_video(cls, where: str | int) -> OWNAVCommand | None:
         camera_id: str | int = where
         where_str = str(where)
-        if int(where) < 100:
+        try:
+            val = int(where)
+        except (ValueError, TypeError):
+            return None
+        if 0 <= val < 100:
             where_str = f"40{camera_id}"
-        elif int(where) >= 4000 and int(where) < 5000:
+        elif 4000 <= val < 5000:
             camera_id = where_str[2:]
         else:
             return None
@@ -242,20 +257,23 @@ class OWNSoundCommand(OWNCommand):
     @classmethod
     def status(cls, where: str | int) -> OWNSoundCommand:
         # WHO 16 status is dimension 5: gateways NACK the bare `*#16*WHERE##`.
-        message = cls(f"*#16*{where}*5##")
-        message._human_readable_log = f"Requesting sound system status of {where}."
+        target = _require_non_empty_where(where)
+        message = cls(f"*#16*{target}*5##")
+        message._human_readable_log = f"Requesting sound system status of {target}."
         return message
 
     @classmethod
     def turn_on(cls, where: str | int) -> OWNSoundCommand:
-        message = cls(f"*16*3*{where}##")
-        message._human_readable_log = f"Turning on audio zone {where}."
+        target = _require_non_empty_where(where)
+        message = cls(f"*16*3*{target}##")
+        message._human_readable_log = f"Turning on audio zone {target}."
         return message
 
     @classmethod
     def turn_off(cls, where: str | int) -> OWNSoundCommand:
-        message = cls(f"*16*13*{where}##")
-        message._human_readable_log = f"Turning off audio zone {where}."
+        target = _require_non_empty_where(where)
+        message = cls(f"*16*13*{target}##")
+        message._human_readable_log = f"Turning off audio zone {target}."
         return message
 
     @classmethod
@@ -309,66 +327,73 @@ class OWNSoundCommand(OWNCommand):
 
     @classmethod
     def volume_up(cls, where: str | int) -> OWNSoundCommand:
-        message = cls(f"*16*1001*{where}##")
-        message._human_readable_log = f"Increasing audio zone {where} volume."
+        target = _require_non_empty_where(where)
+        message = cls(f"*16*1001*{target}##")
+        message._human_readable_log = f"Increasing audio zone {target} volume."
         return message
 
     @classmethod
     def volume_down(cls, where: str | int) -> OWNSoundCommand:
         # 1101 = volume down by one step (1101..1115); 1000 is not a WHO 16 WHAT.
-        message = cls(f"*16*1101*{where}##")
-        message._human_readable_log = f"Decreasing audio zone {where} volume."
+        target = _require_non_empty_where(where)
+        message = cls(f"*16*1101*{target}##")
+        message._human_readable_log = f"Decreasing audio zone {target} volume."
         return message
 
     @classmethod
     def set_volume(cls, where: str | int, volume: int | str) -> OWNSoundCommand:
+        target = _require_non_empty_where(where)
         level = int(volume)
         if not 0 <= level <= 100:
             raise ValueError("volume must be between 0 and 100")
-        message = cls(f"*#16*{where}*#1*{level}##")
+        message = cls(f"*#16*{target}*#1*{level}##")
         message._human_readable_log = (
-            f"Setting audio zone {where} volume to {level}."
+            f"Setting audio zone {target} volume to {level}."
         )
         return message
 
     @classmethod
     def next_track(cls, where: str | int, step: int = 1) -> OWNSoundCommand:
         """Advance track or station forward (1..15 steps)."""
+        target = _require_non_empty_where(where)
         s = int(step)
         if not 1 <= s <= 15:
             raise ValueError(f"step must be between 1 and 15, got {step}")
         what = 6000 + s
-        message = cls(f"*16*{what}*{where}##")
+        message = cls(f"*16*{what}*{target}##")
         message._human_readable_log = (
-            f"Advancing track/station on {where} by {s} step(s)."
+            f"Advancing track/station on {target} by {s} step(s)."
         )
         return message
 
     @classmethod
     def previous_track(cls, where: str | int, step: int = 1) -> OWNSoundCommand:
         """Return track or station backward (1..15 steps)."""
+        target = _require_non_empty_where(where)
         s = int(step)
         if not 1 <= s <= 15:
             raise ValueError(f"step must be between 1 and 15, got {step}")
         what = 6100 + s
-        message = cls(f"*16*{what}*{where}##")
+        message = cls(f"*16*{what}*{target}##")
         message._human_readable_log = (
-            f"Returning track/station on {where} by {s} step(s)."
+            f"Returning track/station on {target} by {s} step(s)."
         )
         return message
 
     @classmethod
     def seek_up(cls, where: str | int) -> OWNSoundCommand:
         """Seek forward to next receivable FM station."""
-        message = cls(f"*16*5000*{where}##")
-        message._human_readable_log = f"Seeking forward on {where}."
+        target = _require_non_empty_where(where)
+        message = cls(f"*16*5000*{target}##")
+        message._human_readable_log = f"Seeking forward on {target}."
         return message
 
     @classmethod
     def seek_down(cls, where: str | int) -> OWNSoundCommand:
         """Seek backward to previous receivable FM station."""
-        message = cls(f"*16*5100*{where}##")
-        message._human_readable_log = f"Seeking backward on {where}."
+        target = _require_non_empty_where(where)
+        message = cls(f"*16*5100*{target}##")
+        message._human_readable_log = f"Seeking backward on {target}."
         return message
 
     @classmethod
@@ -381,20 +406,22 @@ class OWNSoundCommand(OWNCommand):
             as F500N). For CD or external media sources, track numbers can be
             greater (>= 1).
         """
+        target = _require_non_empty_where(where)
         t = int(track)
         if t < 1:
             raise ValueError(f"track must be greater than or equal to 1, got {track}")
-        message = cls(f"*#16*{where}*#7*{t}##")
+        message = cls(f"*#16*{target}*#7*{t}##")
         message._human_readable_log = (
-            f"Selecting station/track {t} on {where}."
+            f"Selecting station/track {t} on {target}."
         )
         return message
 
     @classmethod
     def request_track(cls, where: str | int) -> OWNSoundCommand:
         """Request currently playing station or track number."""
-        message = cls(f"*#16*{where}*7##")
-        message._human_readable_log = f"Requesting station/track of {where}."
+        target = _require_non_empty_where(where)
+        message = cls(f"*#16*{target}*7##")
+        message._human_readable_log = f"Requesting station/track of {target}."
         return message
 
     @classmethod
@@ -409,41 +436,49 @@ class OWNSoundCommand(OWNCommand):
         Examples:
             `107000` tunes to 107.00 MHz FM, `96200` to 96.20 MHz.
         """
-        khz = int(round(float(kilohertz)))
+        target = _require_non_empty_where(where)
+        val = float(kilohertz)
+        if not math.isfinite(val):
+            raise ValueError(f"frequency in kHz must be finite, got {kilohertz}")
+        khz = int(round(val))
         if khz <= 0:
             raise ValueError(f"frequency in kHz must be positive, got {kilohertz}")
-        message = cls(f"*#16*{where}*#6*0*{khz}##")
+        message = cls(f"*#16*{target}*#6*0*{khz}##")
         message._human_readable_log = (
-            f"Tuning {where} to {khz} kHz."
+            f"Tuning {target} to {khz} kHz."
         )
         return message
 
     @classmethod
     def request_frequency(cls, where: str | int) -> OWNSoundCommand:
         """Request tuned frequency."""
-        message = cls(f"*#16*{where}*6##")
-        message._human_readable_log = f"Requesting frequency of {where}."
+        target = _require_non_empty_where(where)
+        message = cls(f"*#16*{target}*6##")
+        message._human_readable_log = f"Requesting frequency of {target}."
         return message
 
     @classmethod
     def start_rds(cls, where: str | int) -> OWNSoundCommand:
         """Start autonomous RDS station name reporting."""
-        message = cls(f"*16*101*{where}##")
-        message._human_readable_log = f"Starting RDS reporting on {where}."
+        target = _require_non_empty_where(where)
+        message = cls(f"*16*101*{target}##")
+        message._human_readable_log = f"Starting RDS reporting on {target}."
         return message
 
     @classmethod
     def stop_rds(cls, where: str | int) -> OWNSoundCommand:
         """Stop autonomous RDS station name reporting."""
-        message = cls(f"*16*102*{where}##")
-        message._human_readable_log = f"Stopping RDS reporting on {where}."
+        target = _require_non_empty_where(where)
+        message = cls(f"*16*102*{target}##")
+        message._human_readable_log = f"Stopping RDS reporting on {target}."
         return message
 
     @classmethod
     def request_rds(cls, where: str | int) -> OWNSoundCommand:
         """Request RDS station text."""
-        message = cls(f"*#16*{where}*8##")
-        message._human_readable_log = f"Requesting RDS text of {where}."
+        target = _require_non_empty_where(where)
+        message = cls(f"*#16*{target}*8##")
+        message._human_readable_log = f"Requesting RDS text of {target}."
         return message
 
 
@@ -535,7 +570,7 @@ class OWNSoundDiffusionEvent(OWNEvent):
 
         # Dimensions
         if self._dimension == 1 and self._dimension_value:
-            if self._dimension_value[0].isdigit():
+            if self._dimension_value[0].isdigit() and 0 <= int(self._dimension_value[0]) <= 31:
                 self._volume = int(self._dimension_value[0])
         elif self._dimension == 12 and self._dimension_value:
             if self._dimension_value[0].isdigit():
@@ -867,21 +902,21 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def status(cls, where: str | int) -> OWNSoundDiffusionCommand:
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*#22*{target}##")
         message._human_readable_log = f"Requesting status of sound diffusion device {target}."
         return message
 
     @classmethod
     def turn_on(cls, where: str | int) -> OWNSoundDiffusionCommand:
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*22*1*{target}##")
         message._human_readable_log = f"Turning ON sound diffusion device {target}."
         return message
 
     @classmethod
     def turn_off(cls, where: str | int) -> OWNSoundDiffusionCommand:
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*22*0*{target}##")
         message._human_readable_log = f"Turning OFF sound diffusion device {target}."
         return message
@@ -891,19 +926,25 @@ class OWNSoundDiffusionCommand(OWNCommand):
         cls, where: str | int, source_id: int | str, multimedia_type: int | str = 4
     ) -> OWNSoundDiffusionCommand:
         """Power a zone on and play a source: ``*22*1#TYPE#SOURCE*WHERE##`` (TYPE 4 on the traced plant)."""
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         source = int(source_id)
         if source < 1:
             raise ValueError("source must be positive")
-        message = cls(f"*22*1#{int(multimedia_type)}#{source}*{target}##")
+        mm_type = int(multimedia_type)
+        if mm_type < 0:
+            raise ValueError("multimedia_type must be non-negative")
+        message = cls(f"*22*1#{mm_type}#{source}*{target}##")
         message._human_readable_log = f"Turning ON sound diffusion device {target} with source {source}."
         return message
 
     @classmethod
     def turn_off_atomic(cls, where: str | int, multimedia_type: int | str = 4) -> OWNSoundDiffusionCommand:
         """Power a zone off in one frame: ``*22*0#TYPE#0*WHERE##``."""
-        target = str(where).strip()
-        message = cls(f"*22*0#{int(multimedia_type)}#0*{target}##")
+        target = _require_non_empty_where(where)
+        mm_type = int(multimedia_type)
+        if mm_type < 0:
+            raise ValueError("multimedia_type must be non-negative")
+        message = cls(f"*22*0#{mm_type}#0*{target}##")
         message._human_readable_log = f"Turning OFF sound diffusion device {target} (atomic)."
         return message
 
@@ -923,12 +964,16 @@ class OWNSoundDiffusionCommand(OWNCommand):
             matrix_area: Matrix distribution channel/area (default 1; area 0 on plant broadcast).
             multimedia_type: Audio routing mode (default 4 = Stereo).
         """
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         source = int(source_id)
         if source < 1:
             raise ValueError("source must be positive")
         area = int(matrix_area)
+        if area < 0:
+            raise ValueError("matrix_area must be non-negative")
         mm_type = int(multimedia_type)
+        if mm_type < 0:
+            raise ValueError("multimedia_type must be non-negative")
         message = cls(f"*22*35#{mm_type}#{area}#{source}*{target}##")
         area_str = f" on matrix area {area}" if area != 1 else ""
         message._human_readable_log = f"Routing sound diffusion device {target} to source {source}{area_str}."
@@ -946,19 +991,27 @@ class OWNSoundDiffusionCommand(OWNCommand):
         Frequency is transmitted in 10 kHz units per gateway firmware specification
         (e.g., 101.50 MHz = 101500 kHz -> 10150).
         """
-        target = str(where).strip()
-        khz = int(round(float(frequency_khz)))
+        target = _require_non_empty_where(where)
+        val = float(frequency_khz)
+        if not math.isfinite(val):
+            raise ValueError("frequency must be finite")
+        khz = int(round(val))
         if khz <= 0:
             raise ValueError("frequency must be positive")
         freq_10k = khz // 10
-        message = cls(f"*#22*{target}*#5*{int(band)}*{freq_10k}##")
+        if freq_10k < 1:
+            raise ValueError("frequency must be at least 10 kHz")
+        b = int(band)
+        if not 1 <= b <= 4:
+            raise ValueError("band must be between 1 and 4")
+        message = cls(f"*#22*{target}*#5*{b}*{freq_10k}##")
         message._human_readable_log = f"Tuning sound diffusion device {target} to {khz} kHz ({khz/1000.0:.2f} MHz)."
         return message
 
     @classmethod
     def request_frequency(cls, where: str | int) -> OWNSoundDiffusionCommand:
         """Request tuned frequency: ``*#22*WHERE*5##``."""
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*#22*{target}*5##")
         message._human_readable_log = f"Requesting frequency for sound diffusion device {target}."
         return message
@@ -972,14 +1025,24 @@ class OWNSoundDiffusionCommand(OWNCommand):
         band: int = 1,
     ) -> OWNSoundDiffusionCommand:
         """Select or store a preset station: ``*#22*WHERE*#6*PRESET##`` or ``*#22*WHERE*#11*BAND*FREQ*PRESET##``."""
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         p = int(preset)
         if p < 1:
             raise ValueError("preset must be positive")
         if frequency_khz is not None:
-            khz = int(round(float(frequency_khz)))
+            val = float(frequency_khz)
+            if not math.isfinite(val):
+                raise ValueError("frequency must be finite")
+            khz = int(round(val))
+            if khz <= 0:
+                raise ValueError("frequency must be positive")
             freq_10k = khz // 10
-            message = cls(f"*#22*{target}*#11*{int(band)}*{freq_10k}*{p}##")
+            if freq_10k < 1:
+                raise ValueError("frequency must be at least 10 kHz")
+            b = int(band)
+            if not 1 <= b <= 4:
+                raise ValueError("band must be between 1 and 4")
+            message = cls(f"*#22*{target}*#11*{b}*{freq_10k}*{p}##")
             message._human_readable_log = f"Programming preset {p} on {target} to {khz} kHz."
         else:
             message = cls(f"*#22*{target}*#6*{p}##")
@@ -989,7 +1052,7 @@ class OWNSoundDiffusionCommand(OWNCommand):
     @classmethod
     def request_preset(cls, where: str | int) -> OWNSoundDiffusionCommand:
         """Request active preset: ``*#22*WHERE*6##``."""
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*#22*{target}*6##")
         message._human_readable_log = f"Requesting preset for sound diffusion device {target}."
         return message
@@ -997,7 +1060,7 @@ class OWNSoundDiffusionCommand(OWNCommand):
     @classmethod
     def start_rds(cls, where: str | int) -> OWNSoundDiffusionCommand:
         """Start RDS reporting: ``*22*31*WHERE##``."""
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*22*31*{target}##")
         message._human_readable_log = f"Starting RDS reporting on sound diffusion device {target}."
         return message
@@ -1005,7 +1068,7 @@ class OWNSoundDiffusionCommand(OWNCommand):
     @classmethod
     def stop_rds(cls, where: str | int) -> OWNSoundDiffusionCommand:
         """Stop RDS reporting: ``*22*32*WHERE##``."""
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*22*32*{target}##")
         message._human_readable_log = f"Stopping RDS reporting on sound diffusion device {target}."
         return message
@@ -1013,8 +1076,10 @@ class OWNSoundDiffusionCommand(OWNCommand):
     @classmethod
     def store_preset(cls, where: str | int, preset: int | str) -> OWNSoundDiffusionCommand:
         """Store current tuned frequency into preset: ``*22*33#PRESET*WHERE##``."""
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         p = int(preset)
+        if p < 1:
+            raise ValueError("preset must be positive")
         message = cls(f"*22*33#{p}*{target}##")
         message._human_readable_log = f"Storing current frequency into preset {p} on {target}."
         return message
@@ -1029,7 +1094,7 @@ class OWNSoundDiffusionCommand(OWNCommand):
         no SCS bus output. Use ``start_rds``, ``stop_rds``, and ``request_rds`` for
         client-to-gateway RDS control.
         """
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         formatted = text[:8].ljust(8)
         codes = [str(ord(c)) for c in formatted]
         message = cls(f"*#22*{target}*#10*{'*'.join(codes)}##")
@@ -1039,7 +1104,7 @@ class OWNSoundDiffusionCommand(OWNCommand):
     @classmethod
     def request_rds(cls, where: str | int) -> OWNSoundDiffusionCommand:
         """Request RDS station text: ``*#22*WHERE*10##``."""
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*#22*{target}*10##")
         message._human_readable_log = f"Requesting RDS text for sound diffusion device {target}."
         return message
@@ -1047,38 +1112,50 @@ class OWNSoundDiffusionCommand(OWNCommand):
     @classmethod
     def open_paging(cls, where: str | int = "5#3#0#0", channel: int | str = 1) -> OWNSoundDiffusionCommand:
         """Open a paging channel: ``*22*19#CHANNEL*WHERE##`` (``5#3#0#0`` is the whole house)."""
-        target = str(where).strip()
-        message = cls(f"*22*19#{int(channel)}*{target}##")
-        message._human_readable_log = f"Opening paging channel {int(channel)} on {target}."
+        target = _require_non_empty_where(where)
+        ch = int(channel)
+        if ch < 1:
+            raise ValueError("channel must be positive")
+        message = cls(f"*22*19#{ch}*{target}##")
+        message._human_readable_log = f"Opening paging channel {ch} on {target}."
         return message
 
     @classmethod
     def start_paging_voice(cls, where: str | int = "5#3#0#0", channel: int | str = 1) -> OWNSoundDiffusionCommand:
         """Start the paging voice transmission: ``*22*20#CHANNEL*WHERE##``."""
-        target = str(where).strip()
-        message = cls(f"*22*20#{int(channel)}*{target}##")
-        message._human_readable_log = f"Starting paging voice on channel {int(channel)} on {target}."
+        target = _require_non_empty_where(where)
+        ch = int(channel)
+        if ch < 1:
+            raise ValueError("channel must be positive")
+        message = cls(f"*22*20#{ch}*{target}##")
+        message._human_readable_log = f"Starting paging voice on channel {ch} on {target}."
         return message
 
     @classmethod
     def volume_up(cls, where: str | int, step: int = 1) -> OWNSoundDiffusionCommand:
-        target = str(where).strip()
-        what = f"3#{int(step)}" if int(step) > 1 else "3"
+        s = int(step)
+        if not 1 <= s <= 31:
+            raise ValueError("step must be positive and between 1 and 31")
+        target = _require_non_empty_where(where)
+        what = f"3#{s}" if s > 1 else "3"
         message = cls(f"*22*{what}*{target}##")
         message._human_readable_log = f"Increasing sound diffusion device {target} volume."
         return message
 
     @classmethod
     def volume_down(cls, where: str | int, step: int = 1) -> OWNSoundDiffusionCommand:
-        target = str(where).strip()
-        what = f"4#{int(step)}" if int(step) > 1 else "4"
+        s = int(step)
+        if not 1 <= s <= 31:
+            raise ValueError("step must be positive and between 1 and 31")
+        target = _require_non_empty_where(where)
+        what = f"4#{s}" if s > 1 else "4"
         message = cls(f"*22*{what}*{target}##")
         message._human_readable_log = f"Decreasing sound diffusion device {target} volume."
         return message
 
     @classmethod
     def set_volume(cls, where: str | int, volume: int | str) -> OWNSoundDiffusionCommand:
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         level = int(volume)
         if not 0 <= level <= 31:
             raise ValueError("volume must be between 0 and 31 per WHO 22 specification")
@@ -1088,42 +1165,42 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def request_volume(cls, where: str | int) -> OWNSoundDiffusionCommand:
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*#22*{target}*1##")
         message._human_readable_log = f"Requesting volume status for sound diffusion device {target}."
         return message
 
     @classmethod
     def request_device_state(cls, where: str | int) -> OWNSoundDiffusionCommand:
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*#22*{target}*12##")
         message._human_readable_log = f"Requesting device state for sound diffusion device {target}."
         return message
 
     @classmethod
     def next_track(cls, where: str | int = "6") -> OWNSoundDiffusionCommand:
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*22*11*{target}##")
         message._human_readable_log = f"Next track on sound diffusion device {target}."
         return message
 
     @classmethod
     def previous_track(cls, where: str | int = "6") -> OWNSoundDiffusionCommand:
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*22*12*{target}##")
         message._human_readable_log = f"Previous track on sound diffusion device {target}."
         return message
 
     @classmethod
     def next_station(cls, where: str | int = "6") -> OWNSoundDiffusionCommand:
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*22*9*{target}##")
         message._human_readable_log = f"Next station on sound diffusion device {target}."
         return message
 
     @classmethod
     def previous_station(cls, where: str | int = "6") -> OWNSoundDiffusionCommand:
-        target = str(where).strip()
+        target = _require_non_empty_where(where)
         message = cls(f"*22*10*{target}##")
         message._human_readable_log = f"Previous station on sound diffusion device {target}."
         return message

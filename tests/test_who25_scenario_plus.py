@@ -60,3 +60,28 @@ def test_other_who25_whats_stay_bare_events_and_commands():
     """WHATs outside 11-15, 21-28 and 31/32 keep the PR 82 rule: a bare event / command."""
     assert type(OWNEvent.parse("*25*16*1##")) is OWNEvent
     assert type(OWNCommand.parse("*25*16*1##")) is OWNCommand
+
+
+def test_who15_and_who25_infeasible_inputs():
+    import pytest
+    from OWNd.message import OWNCenCommand, OWNCenPlusCommand, OWNDryContactCommand
+
+    for bad_where in ("", "  ", "11*2"):
+        with pytest.raises(ValueError, match="where must be a non-empty address without '\\*'"):
+            OWNScenarioPlusCommand.turn_on(bad_where)
+        with pytest.raises(ValueError, match="where must be a non-empty address without '\\*'"):
+            OWNDryContactCommand.status(bad_where)
+        with pytest.raises(ValueError, match="where must be a non-empty address without '\\*'"):
+            OWNCenCommand.press(bad_where, 1)
+        with pytest.raises(ValueError, match="where must be a non-empty address without '\\*'"):
+            OWNCenPlusCommand.press(bad_where, 1)
+
+    for bad_btn in (-1, 32):
+        with pytest.raises(ValueError, match="CEN\\+ button must be between 0 and 31"):
+            OWNCenPlusCommand.press("21", bad_btn)
+        with pytest.raises(ValueError, match="CEN\\+ button must be between 0 and 31"):
+            OWNCenPlusCommand.start_long_press("21", bad_btn)
+        with pytest.raises(ValueError, match="CEN\\+ button must be between 0 and 31"):
+            OWNCenPlusCommand.release("21", bad_btn)
+        with pytest.raises(ValueError, match="CEN\\+ button must be between 0 and 31"):
+            OWNCenPlusCommand.still_held("21", bad_btn)

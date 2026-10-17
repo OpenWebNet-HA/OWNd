@@ -296,3 +296,16 @@ def test_who16_volume_step_delta_events() -> None:
     vol_down_15 = OWNMessage.parse("*16*1115*21##")
     assert isinstance(vol_down_15, OWNSoundEvent)
     assert vol_down_15.volume_step_delta == -15
+
+
+def test_who16_infeasible_input_validation() -> None:
+    """Verify WHO 16 command builders reject empty/wildcard where and non-finite frequency."""
+    for bad_where in ("", "   ", "21*1"):
+        with pytest.raises(ValueError, match="where must be a non-empty address without '\\*'"):
+            OWNSoundCommand.turn_on(bad_where)
+        with pytest.raises(ValueError, match="where must be a non-empty address without '\\*'"):
+            OWNSoundCommand.set_frequency(bad_where, 107000)
+
+    for bad_freq in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError, match="frequency in kHz must be finite"):
+            OWNSoundCommand.set_frequency("101", bad_freq)

@@ -457,4 +457,22 @@ def test_invalid_temperature_width_and_sign_return_none(invalid_raw: str) -> Non
     assert dim7_event.set_temperature is None
 
 
+def test_heating_command_infeasible_temperature_and_mode() -> None:
+    for bad_temp in (float("nan"), float("inf"), float("-inf")):
+        with pytest.raises(ValueError, match="temperature must be finite"):
+            OWNHeatingCommand.set_temperature("1", bad_temp, "heat")
+        with pytest.raises(ValueError, match="temperature must be finite"):
+            OWNHeatingCommand.set_central_temperature("#0", bad_temp, "heat")
+        with pytest.raises(ValueError, match="temperature must be finite"):
+            OWNHeatingCommand.set_timed_manual("1", bad_temp, hours=2)
+
+    with pytest.raises(ValueError, match="mode must be"):
+        OWNHeatingCommand.set_temperature("1", 21.0, "invalid")
+    with pytest.raises(ValueError, match="mode must be"):
+        OWNHeatingCommand.set_central_temperature("#0", 21.0, "invalid")
+
+    assert str(OWNHeatingCommand.set_central_temperature("#0", 21.0, "cool")) == "*#4*#0*#14*0210*2##"
+    assert str(OWNHeatingCommand.set_central_temperature("#0", 21.0, "auto")) == "*#4*#0*#14*0210*3##"
+
+
 

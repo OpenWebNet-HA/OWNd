@@ -610,3 +610,22 @@ def test_gateway_uses_profile_default_port() -> None:
     gateway = OWNGateway({"address": "192.0.2.1", "modelName": "MH201"})
 
     assert gateway.port == 20000
+
+
+@pytest.mark.asyncio
+async def test_command_session_rejects_invalid_or_empty_message() -> None:
+    from OWNd.message import OWNMessage, OWNSignaling
+
+    session, _ = make_session(OWNCommandSession)
+    assert isinstance(session, OWNCommandSession)
+    logger = MagicMock()
+    session._logger = logger
+
+    assert await session.send(OWNMessage("not-a-frame")) is None
+    assert await session.send("not-a-frame") is None
+    assert await session.send("   ") is None
+    assert await session.send(OWNSignaling("*#*1##")) is None
+    assert await session.send("*#*1##") is None
+    assert await session.send("*#123456789##") is None
+    assert logger.error.call_count == 6
+

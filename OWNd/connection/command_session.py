@@ -183,6 +183,24 @@ class OWNCommandSession(OWNSession):
     async def _locked_send(
         self, message: str | OWNMessage, is_status_request: bool = False
     ) -> list[OWNMessage | str] | bool | None:
+        msg_obj = (
+            message
+            if isinstance(message, OWNMessage)
+            else OWNMessage.parse(str(message))
+        )
+        is_valid_frame = (
+            msg_obj is not None
+            and msg_obj.is_valid
+            and not isinstance(msg_obj, OWNSignaling)
+        )
+        if not is_valid_frame:
+            self._logger.error(
+                "%s Refusing to send invalid OpenWebNet frame `%s`.",
+                self._log_id,
+                message,
+            )
+            return None
+
         # One retry is enough for a command NACK or for a connection that was
         # already unavailable.  A NACKed status request is not retried: the
         # gateway has answered (the device or subsystem is absent), and on an

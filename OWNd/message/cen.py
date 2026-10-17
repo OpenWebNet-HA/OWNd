@@ -4,7 +4,13 @@ from __future__ import annotations
 
 import re
 
-from .base import OWNCommand, OWNEvent, register_command_parser, register_event_parser
+from .base import (
+    OWNCommand,
+    OWNEvent,
+    register_command_parser,
+    register_event_parser,
+    require_non_empty_where,
+)
 
 
 class OWNCENEvent(OWNEvent):
@@ -181,6 +187,9 @@ class OWNScenarioPlusEvent(OWNEvent):
         return self._action
 
 
+_require_non_empty_where = require_non_empty_where
+
+
 class OWNScenarioPlusCommand(OWNCommand):
     """Builders for the five WHO 25 frames libqtdevices ScenarioPlusDevice sends."""
 
@@ -198,30 +207,31 @@ class OWNScenarioPlusCommand(OWNCommand):
 
     @classmethod
     def turn_on(cls, where: str | int) -> OWNScenarioPlusCommand:
-        return cls(f"*25*11#0*{where}##")
+        return cls(f"*25*11#0*{_require_non_empty_where(where)}##")
 
     @classmethod
     def turn_off(cls, where: str | int) -> OWNScenarioPlusCommand:
-        return cls(f"*25*12*{where}##")
+        return cls(f"*25*12*{_require_non_empty_where(where)}##")
 
     @classmethod
     def increase(cls, where: str | int) -> OWNScenarioPlusCommand:
-        return cls(f"*25*13#0#5*{where}##")
+        return cls(f"*25*13#0#5*{_require_non_empty_where(where)}##")
 
     @classmethod
     def decrease(cls, where: str | int) -> OWNScenarioPlusCommand:
-        return cls(f"*25*14#0#5*{where}##")
+        return cls(f"*25*14#0#5*{_require_non_empty_where(where)}##")
 
     @classmethod
     def stop(cls, where: str | int) -> OWNScenarioPlusCommand:
-        return cls(f"*25*15*{where}##")
+        return cls(f"*25*15*{_require_non_empty_where(where)}##")
 
 
 class OWNDryContactCommand(OWNCommand):
     @classmethod
     def status(cls, where: str | int) -> OWNDryContactCommand:
-        message = cls(f"*#25*{where}##")
-        message._human_readable_log = f"Requesting dry contact {where} status."
+        w = _require_non_empty_where(where)
+        message = cls(f"*#25*{w}##")
+        message._human_readable_log = f"Requesting dry contact {w} status."
         return message
 
 
@@ -245,27 +255,30 @@ class OWNCenCommand(OWNCommand):
     @classmethod
     def press(cls, where: str, button: int | str = 1) -> OWNCenCommand:
         """Pressure on CEN button (*15*<button>*<where>##)."""
-        message = cls(f"*15*{cls._button(button)}*{where}##")
+        w = _require_non_empty_where(where)
+        message = cls(f"*15*{cls._button(button)}*{w}##")
         message._human_readable_log = (
-            f"Press on button {button} of CEN object {where}."
+            f"Press on button {button} of CEN object {w}."
         )
         return message
 
     @classmethod
     def release_short_press(cls, where: str, button: int | str = 1) -> OWNCenCommand:
         """Release after short pressure on CEN button (*15*<button>#1*<where>##)."""
-        message = cls(f"*15*{cls._button(button)}#1*{where}##")
+        w = _require_non_empty_where(where)
+        message = cls(f"*15*{cls._button(button)}#1*{w}##")
         message._human_readable_log = (
-            f"Release after short press on button {button} of CEN object {where}."
+            f"Release after short press on button {button} of CEN object {w}."
         )
         return message
 
     @classmethod
     def start_long_press(cls, where: str, button: int | str = 1) -> OWNCenCommand:
         """Extended pressure on CEN button (*15*<button>#3*<where>##)."""
-        message = cls(f"*15*{cls._button(button)}#3*{where}##")
+        w = _require_non_empty_where(where)
+        message = cls(f"*15*{cls._button(button)}#3*{w}##")
         message._human_readable_log = (
-            f"Long press on button {button} of CEN object {where}."
+            f"Long press on button {button} of CEN object {w}."
         )
         return message
 
@@ -282,9 +295,10 @@ class OWNCenCommand(OWNCommand):
     @classmethod
     def release(cls, where: str, button: int | str = 1) -> OWNCenCommand:
         """Release after extended pressure on CEN button (*15*<button>#2*<where>##)."""
-        message = cls(f"*15*{cls._button(button)}#2*{where}##")
+        w = _require_non_empty_where(where)
+        message = cls(f"*15*{cls._button(button)}#2*{w}##")
         message._human_readable_log = (
-            f"Release after long press on button {button} of CEN object {where}."
+            f"Release after long press on button {button} of CEN object {w}."
         )
         return message
 
@@ -293,39 +307,54 @@ class OWNCenCommand(OWNCommand):
 class OWNCenPlusCommand(OWNCommand):
     """Command builder for WHO=25 CEN+ scenario pushbuttons."""
 
+    @staticmethod
+    def _button(button: int | str) -> int:
+        value = int(button)
+        if not 0 <= value <= 31:
+            raise ValueError("CEN+ button must be between 0 and 31")
+        return value
+
     @classmethod
     def press(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
         """CEN+ short press event (*25*21#<button>*<where>##)."""
-        message = cls(f"*25*21#{button}*{where}##")
+        w = _require_non_empty_where(where)
+        btn = cls._button(button)
+        message = cls(f"*25*21#{btn}*{w}##")
         message._human_readable_log = (
-            f"CEN+ short press on button {button} of module {where}."
+            f"CEN+ short press on button {btn} of module {w}."
         )
         return message
 
     @classmethod
     def start_long_press(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
         """CEN+ start long press event (*25*22#<button>*<where>##)."""
-        message = cls(f"*25*22#{button}*{where}##")
+        w = _require_non_empty_where(where)
+        btn = cls._button(button)
+        message = cls(f"*25*22#{btn}*{w}##")
         message._human_readable_log = (
-            f"CEN+ start long press on button {button} of module {where}."
+            f"CEN+ start long press on button {btn} of module {w}."
         )
         return message
 
     @classmethod
     def release(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
         """CEN+ release after long press (*25*24#<button>*<where>##)."""
-        message = cls(f"*25*24#{button}*{where}##")
+        w = _require_non_empty_where(where)
+        btn = cls._button(button)
+        message = cls(f"*25*24#{btn}*{w}##")
         message._human_readable_log = (
-            f"CEN+ release button {button} of module {where}."
+            f"CEN+ release button {btn} of module {w}."
         )
         return message
 
     @classmethod
     def still_held(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
         """CEN+ heartbeat while still held (*25*23#<button>*<where>##)."""
-        message = cls(f"*25*23#{button}*{where}##")
+        w = _require_non_empty_where(where)
+        btn = cls._button(button)
+        message = cls(f"*25*23#{btn}*{w}##")
         message._human_readable_log = (
-            f"CEN+ button {button} of module {where} still held."
+            f"CEN+ button {btn} of module {w} still held."
         )
         return message
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import re
 import warnings
 
@@ -969,7 +970,10 @@ class OWNHeatingCommand(OWNCommand):
     ) -> OWNHeatingCommand:
         zone, zone_name = _zone_address_and_name(where, standalone=standalone)
 
-        temperature = round(temperature * 2) / 2
+        temp_val = float(temperature)
+        if not math.isfinite(temp_val):
+            raise ValueError("temperature must be finite")
+        temperature = round(temp_val * 2) / 2
         if temperature < 5.0:
             temperature = 5.0
         elif temperature > 40.0:
@@ -978,11 +982,16 @@ class OWNHeatingCommand(OWNCommand):
         temperature_code = int(temperature * 10)
 
         mode_name = mode
-        mode_code = 3
-        if mode == CLIMATE_MODE_HEAT:
+        if mode in (CLIMATE_MODE_HEAT, 1, "1"):
             mode_code = 1
-        elif mode == CLIMATE_MODE_COOL:
+        elif mode in (CLIMATE_MODE_COOL, 2, "2"):
             mode_code = 2
+        elif mode in (CLIMATE_MODE_AUTO, "generic", 3, "3"):
+            mode_code = 3
+        else:
+            raise ValueError(
+                "mode must be 'heat' (1), 'cool' (2), or 'auto'/'generic' (3)"
+            )
 
         message = cls(f"*#4*{zone}*#14*{temperature_code:04d}*{mode_code}##")
         message._human_readable_log = (
@@ -1055,10 +1064,22 @@ class OWNHeatingCommand(OWNCommand):
         cls, where: str = "#0", temperature: float = 20.0, mode: str = CLIMATE_MODE_HEAT
     ) -> OWNHeatingCommand:
         """Set master setpoint temperature on Central Unit."""
-        temperature = round(temperature * 2) / 2
+        temp_val = float(temperature)
+        if not math.isfinite(temp_val):
+            raise ValueError("temperature must be finite")
+        temperature = round(temp_val * 2) / 2
         temperature = max(5.0, min(40.0, temperature))
         temp_code = int(temperature * 10)
-        mode_code = 1 if mode == CLIMATE_MODE_HEAT else 2
+        if mode in (CLIMATE_MODE_HEAT, 1, "1"):
+            mode_code = 1
+        elif mode in (CLIMATE_MODE_COOL, 2, "2"):
+            mode_code = 2
+        elif mode in (CLIMATE_MODE_AUTO, "generic", 3, "3"):
+            mode_code = 3
+        else:
+            raise ValueError(
+                "mode must be 'heat' (1), 'cool' (2), or 'auto'/'generic' (3)"
+            )
         message = cls(f"*#4*{where}*#14*{temp_code:04d}*{mode_code}##")
         message._human_readable_log = (
             f"Setting Central Unit {where} setpoint to {temperature}°C in mode '{mode}'."
@@ -1127,7 +1148,10 @@ class OWNHeatingCommand(OWNCommand):
         sends *4*312#TTTT#H*WHERE##.
         """
         zone, zone_name = _zone_address_and_name(where, standalone=standalone)
-        temperature = round(temperature * 2) / 2
+        temp_val = float(temperature)
+        if not math.isfinite(temp_val):
+            raise ValueError("temperature must be finite")
+        temperature = round(temp_val * 2) / 2
         temperature = max(5.0, min(40.0, temperature))
         temp_code = int(temperature * 10)
         try:
