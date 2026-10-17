@@ -547,6 +547,36 @@ class H4890Profile(GatewayProfile):
         )
 
 
+class H4684Profile(GatewayProfile):
+    """The H4684 colour touch screen family (H4684, L4684, N4684, NT4684, LGRH4684).
+
+    Verified in the 22-suite firmware oracle against H4684 firmware 2.0.54
+    (``*#13**15*13##``, ``*#13**16*2*0*54##``, ``*#13**23*2*0*5##``,
+    ``*#13**24*3*0*0##``, ``*#1013**1*19##``):
+    - Ships ``bt_autom``, ``bt_termoreg``, ``bt_energia`` and ``bt_difson``
+      (WHO 1, 2, 3, 4, 15, 16, 18; ``*#16*0*5##`` answers ``ack``/``out`` in
+      ``sound-who16-source.tsv``), with legacy OPEN password authentication
+      in ``openserver``.
+    - Does not ship ``bt_multi`` or ``bt_supervisione``, and NACKs all WHO 17
+      (``scenario-who17``), WHO 22 (``sound-who22``), and WHO 25
+      (``who25-messages``) frames, so WHO 17, 22, and 25 are excluded.
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            model_name="H4684",
+            supported_who=(
+                WHO_LIGHTING,
+                WHO_AUTOMATION,
+                WHO_LOAD_CONTROL,
+                WHO_HEATING,
+                WHO_CEN,
+                WHO_SOUND,
+                WHO_ENERGY,
+            ),
+        )
+
+
 class MyHomeServer1Profile(GatewayProfile):
     """The MyHomeServer1 (Eliot / Legrand Living Now gateway).
 
@@ -590,6 +620,7 @@ _PROFILES = {
     "f454": F454Profile(),
     "f455": F455Profile(),
     "f461": F461Profile(),
+    "h4684": H4684Profile(),
     "h4890": H4890Profile(),
     "mh200": MH200Profile(),
     "mh200n": MH200NProfile(),
@@ -607,6 +638,7 @@ CANONICAL_PROFILE_ORDER = (
     "f454",
     "f455",
     "f461",
+    "h4684",
     "h4890",
     "mh202",
     "mh201",
@@ -627,6 +659,11 @@ _ALIASES = {
     "ln4890": "h4890",
     "ln4890a": "h4890",
     "4890": "h4890",
+    "l4684": "h4684",
+    "n4684": "h4684",
+    "nt4684": "h4684",
+    "lgrh4684": "h4684",
+    "lgr4684": "h4684",
     # Item numbers. MHCatalogue.db (MyHOME_Suite 3.5.38, fingerprinted in
     # OpenWebNet-Encyclopedia sources/manifest.yaml) gives each gateway a name
     # row and a number row sharing one EN_DEVICE.id_item: MH202/003535 (1902),

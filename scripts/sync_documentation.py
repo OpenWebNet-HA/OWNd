@@ -153,10 +153,10 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
         dispatch_who_keys=(9,),
     ),
     WhoCatalogDefinition(
-        who="**13**",
+        who="**13** / **1013**",
         name="Gateway Diagnostics & Clock",
-        description="Gateway date/time synchronization, timezone offsets, firmware metadata",
-        dispatch_who_keys=(13,),
+        description="Gateway date/time synchronization, timezone offsets, firmware and diagnostic object model metadata",
+        dispatch_who_keys=(13, 1013),
     ),
     WhoCatalogDefinition(
         who="**15**",

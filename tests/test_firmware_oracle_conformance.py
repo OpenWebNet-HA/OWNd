@@ -555,7 +555,7 @@ def test_gateway_profiles_match_oracle_gateways():
     gateways = data.get("gateways", [])
     assert len(gateways) == 17, "Expected all 17 gateway entries in oracle fixture"
 
-    generic_gateways = {"3550", "F450", "F459", "F460", "H4684", "L4561N", "L4686SDK"}
+    generic_gateways = {"3550", "F450", "F459", "F460", "L4561N", "L4686SDK"}
 
     for gw in gateways:
         product = gw["product"]

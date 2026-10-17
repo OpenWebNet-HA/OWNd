@@ -31,6 +31,7 @@ from OWNd.profiles import (
     F454Profile,
     F455Profile,
     GatewayProfile,
+    H4684Profile,
     H4890Profile,
     MH200NProfile,
     MH200Profile,
@@ -229,13 +230,21 @@ def test_sound_system_feature_matches_capabilities() -> None:
 
 
 def test_sound_is_measured_only_where_a_reply_is_captured() -> None:
-    """MH200, MH200N, H4890, F453, F453AV, and F454 have captured/oracle WHO 16 replies."""
+    """MH200, MH200N, H4890, F453, F453AV, F454, and H4684 have captured/oracle WHO 16 replies."""
     measured = {
         key
         for key, profile in _PROFILES.items()
         if "Sound system (WHO 16)" in profile.features_summary
     }
-    assert measured == {"f453", "f453av", "f454", "mh200", "mh200n", "h4890"}
+    assert measured == {
+        "f453",
+        "f453av",
+        "f454",
+        "h4684",
+        "h4890",
+        "mh200",
+        "mh200n",
+    }
     for key in (
         "f452",
         "f452v",
@@ -570,7 +579,10 @@ def test_owngateway_event_properties() -> None:
     assert evt_fw.device_type is None
 
     evt_dev = OWNGatewayEvent("*#13**15*200##")
-    assert evt_dev.device_type == "F454 / MyHomeServer1 / MH202 / F461 / H4890 / MH201"
+    assert (
+        evt_dev.device_type
+        == "F454 / MyHomeServer1 / MH202 / F461 / H4890 / F450 / F459 / F460 / MH201"
+    )
     assert evt_dev.device_type_code == "200"
     assert evt_dev.firmware_version is None
 
@@ -587,3 +599,22 @@ def test_profile_no_auth_features() -> None:
     assert "HMAC-SHA2" not in profile.features_summary
 
 
+@pytest.mark.parametrize("name", ["H4684", "h4684", "L4684", "N4684", "NT4684", "LGRH4684", "LGR4684"])
+def test_h4684_profile(name: str) -> None:
+    """H4684 colour touch screen and brand variants resolve to H4684Profile."""
+    profile = get_gateway_profile(name)
+    assert isinstance(profile, H4684Profile)
+    assert profile.model_name == "H4684"
+    assert profile.auth_measured is True
+    assert profile.audio_measured is True
+    assert profile.features_summary == "Legacy password auth, Sound system (WHO 16)"
+    assert profile.supports_who(WHO_LIGHTING) is True
+    assert profile.supports_who(WHO_AUTOMATION) is True
+    assert profile.supports_who(WHO_LOAD_CONTROL) is True
+    assert profile.supports_who(WHO_HEATING) is True
+    assert profile.supports_who(WHO_CEN) is True
+    assert profile.supports_who(WHO_SOUND) is True
+    assert profile.supports_who(WHO_ENERGY) is True
+    assert not profile.supports_who(WHO_SCENARIO)
+    assert not profile.supports_who(WHO_SOUND_DIFFUSION)
+    assert not profile.supports_who(WHO_CEN_PLUS)

@@ -35,6 +35,74 @@ def _gateway_timezone(values: list[str]) -> str:
     return f"{sign}{value[1:]}:00"
 
 
+# WHO 13 Dimension 15: Functional gateway model/device type (*#13**15*<TYPE>##).
+# Grounded in published BTicino protocol tables, physical plant captures,
+# and firmware reverse engineering (bt_device dispatch table at VA 0x02003194,
+# selector r4 == 0).
+WHO13_DEVICE_TYPES: dict[str, str] = {
+    "2": "MHServer",
+    "4": "MH200",
+    "6": "F452",
+    "7": "F452V",
+    "11": "MHServer2",
+    "12": "F453AV",
+    "13": "H4684",
+    "15": "F427",
+    "16": "F453",
+    "17": "INTERF2FIP",
+    "18": "LGRF452",
+    "19": "LGRMH200",
+    "20": "LGRH4684",
+    "23": "H4684",
+    "27": "L4686SDK",
+    "44": "MH200N",
+    "51": "F454",
+    # Code 200 is shared across modern gateways (F454, MyHomeServer1,
+    # MH202, F461, H4890; plus emulated F450/F459/F460 in trace-corpus.tsv)
+    # and MH201 (fw 3.3.6, 3.6.27; MyHOME #370, #466 and plant fixtures;
+    # catalogued on 030644 outside the Linux QEMU fleet). WHO 1013
+    # dimension 1 tells them apart (the MH201 on 3.6.27 answers only
+    # *#1013**1##, model 10, and NACKs *#1013*0*1##).
+    "200": (
+        "F454 / MyHomeServer1 / MH202 / F461 / H4890 / F450 / F459 / F460 / MH201"
+    ),
+}
+
+# WHO 1013 Dimension 1: Diagnostic object model (*#1013**1*<MODEL>*<N_CONF>*<BRAND>*<LINE>##).
+# Grounded in firmware reverse engineering (bt_device dispatch table at VA 0x02003194,
+# selector r4 != 0), canonical MHCatalogue.db AS_ITEM_SYSTEM.modobj cross-referencing,
+# and corroborated live gateway captures (OpenWebNet-Encyclopedia / guides/identify-openwebnet-gateway.md).
+WHO1013_DEVICE_TYPES: dict[str, str] = {
+    "2": "MHServer",
+    "4": "MH200",
+    "5": "MH202",
+    "6": "F452",
+    "7": "F452V",
+    "8": "F455",
+    "10": "MH201",
+    "11": "MHServer2",
+    "12": "F453AV",
+    "19": "H4684",
+    "22": "F453",
+    "23": "INTERF2FIP",
+    "24": "LGRF452",
+    "25": "LGRMH200",
+    "26": "LGRH4684",
+    "29": "H4684",
+    "30": "H4890",
+    "35": "BMNE500",
+    "38": "573992",
+    "42": "F453",
+    "44": "MH200N",
+    "51": "F454",
+    "54": "MH4892",
+    "55": "MH4892C",
+    "65": "F459",
+    "67": "MyHomeServer1",
+    "105": "F458",
+    "134": "F461",
+}
+
 
 class OWNGatewayEvent(OWNEvent):
     def __init__(self, data: str) -> None:
@@ -110,30 +178,8 @@ class OWNGatewayEvent(OWNEvent):
                 pass
 
         elif self._dimension == 15 and self._dimension_value:
-            if self._dimension_value[0] == "2":
-                self._device_type = "MHServer"
-            elif self._dimension_value[0] == "4":
-                self._device_type = "MH200"
-            elif self._dimension_value[0] == "6":
-                self._device_type = "F452"
-            elif self._dimension_value[0] == "7":
-                self._device_type = "F452V"
-            elif self._dimension_value[0] == "11":
-                self._device_type = "MHServer2"
-            elif self._dimension_value[0] == "13":
-                self._device_type = "H4684"
-            elif self._dimension_value[0] == "200":
-                # Code 200 is shared across modern gateways (F454, MyHomeServer1,
-                # MH202, F461, H4890; plus emulated F450/F459/F460 in trace-corpus.tsv)
-                # and MH201 (fw 3.3.6, 3.6.27; MyHOME #370, #466 and plant fixtures;
-                # catalogued on 030644 outside the Linux QEMU fleet). WHO 1013
-                # dimension 1 tells them apart (the MH201 on 3.6.27 answers only
-                # *#1013**1##, model 10, and NACKs *#1013*0*1##).
-                self._device_type = (
-                    "F454 / MyHomeServer1 / MH202 / F461 / H4890 / MH201"
-                )
-            else:
-                self._device_type = f"Unknown ({self._dimension_value[0]})"
+            code = self._dimension_value[0]
+            self._device_type = WHO13_DEVICE_TYPES.get(code, f"Unknown ({code})")
             self._human_readable_log = f"Gateway device type is: {self._device_type}."
 
         elif self._dimension == 16 and len(self._dimension_value) >= 3:
@@ -474,3 +520,73 @@ class OWNGatewayCommand(OWNCommand):
 
 register_event_parser(13, OWNGatewayEvent)
 register_command_parser(13, OWNGatewayCommand)
+
+
+class OWNGatewayDiagnosticEvent(OWNEvent):
+    """WHO 1013: Gateway diagnostic events (dimension 1: object model)."""
+
+    def __init__(self, data: str) -> None:
+        super().__init__(data)
+
+        self._device_type: str | None = None
+        self._object_model: str | None = None
+        self._n_conf: str | None = None
+        self._brand: str | None = None
+        self._line: str | None = None
+
+        if self._dimension == 1 and self._dimension_value:
+            self._object_model = self._dimension_value[0]
+            if len(self._dimension_value) >= 2:
+                self._n_conf = self._dimension_value[1]
+            if len(self._dimension_value) >= 3:
+                self._brand = self._dimension_value[2]
+            if len(self._dimension_value) >= 4:
+                self._line = self._dimension_value[3]
+
+            self._device_type = WHO1013_DEVICE_TYPES.get(
+                self._object_model, f"Unknown ({self._object_model})"
+            )
+            self._human_readable_log = (
+                f"Gateway diagnostic object model is: {self._device_type} ({self._object_model})."
+            )
+
+    @property
+    def device_type(self) -> str | None:
+        """Return the decoded gateway device type string."""
+        return self._device_type
+
+    @property
+    def object_model(self) -> str | None:
+        """Return the raw diagnostic object model code."""
+        return self._object_model
+
+    @property
+    def n_conf(self) -> str | None:
+        """Return the diagnostic N_CONF field."""
+        return self._n_conf
+
+    @property
+    def brand(self) -> str | None:
+        """Return the diagnostic BRAND field."""
+        return self._brand
+
+    @property
+    def line(self) -> str | None:
+        """Return the diagnostic LINE field."""
+        return self._line
+
+
+class OWNGatewayDiagnosticCommand(OWNCommand):
+    """WHO 1013: Gateway diagnostic requests and commands."""
+
+    @classmethod
+    def request_diagnostic_object_model(
+        cls, where: str = ""
+    ) -> OWNGatewayDiagnosticCommand:
+        """Request the gateway diagnostic object model code (Dimension 1)."""
+        return cls(f"*#1013*{where}*1##")
+
+
+register_event_parser(1013, OWNGatewayDiagnosticEvent)
+register_command_parser(1013, OWNGatewayDiagnosticCommand)
+
