@@ -347,7 +347,7 @@ class OWNLightingEvent(OWNEvent):
                 # Specified by the ZigBee OpenWebNet WHO 1 table (34 movement, 39 end of
                 # movement); seven emulated gateways (F454, F459, F460, F461, MH200N,
                 # MH202, MyHomeServer1) turn the SCS presence status B8 <A/PL> 1D 01
-                # into it (own-firmware-oracle who1-motion-detector);
+                # into it (OpenWebNet-HA/own-firmware-oracle#56, who1-motion-detector);
                 # observed on SCS from an F454 + Legrand 067226, ~45 s (its
                 # DIMENSION 7 timeout) after the last WHAT 34 (MyHOME#777). Kept as
                 # MESSAGE_TYPE_MOTION with motion False so consumers that only act on

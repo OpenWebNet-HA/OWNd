@@ -8,7 +8,7 @@ Evidence:
   address 52 sends ``*1*39*52##`` about 45 s (its DIMENSION 7 timeout) after the last
   ``*1*34*52##``, followed by the detector's ``*1*1000#0*52##`` and the F411's
   ``*1*0*52##`` (OpenWebNet-HA/MyHOME#777);
-- firmware-observed (OpenWebNet-HA/own-firmware-oracle suite ``who1-motion-detector``,
+- firmware-observed (OpenWebNet-HA/own-firmware-oracle#56, merged; suite ``who1-motion-detector``,
   emulated F454 2.0.51, F459, F460, F461, MH200N, MH202 and MyHomeServer1): the gateway
   translator turns the SCS presence status frame ``B8 52 1D 00`` into ``*1*34*52##`` and
   ``B8 52 1D 01`` into ``*1*39*52##``. F453 / F453AV decode WHAT 34 but not 39.
