@@ -1,10 +1,16 @@
 """WHO 1 WHAT 39: end of movement reported by a motion detector.
 
-Firmware evidence (F461 ``bt_luci`` SCS -> OWN translator, ``oracle2/hex2own_corpus.tsv``):
-the SCS presence-status frame of class ``0x1D`` decodes to ``*1*34*31##`` for value
-``00`` (``B8 31 1D 00``) and to ``*1*39*31##`` for value ``01`` (``B8 31 1D 01``).
-A Legrand 067226 detector driving an F411 channel at its own address emits both on
-that address (OpenWebNet-HA/MyHOME#777).
+Evidence:
+
+- specified: the ZigBee OpenWebNet WHO 1 table defines WHAT 34 "movement detected"
+  and WHAT 39 "end of movement detected";
+- observed on SCS: an F454 with a Legrand 067226 driving an F411 channel at its own
+  address 52 sends ``*1*39*52##`` about 45 s (its DIMENSION 7 timeout) after the last
+  ``*1*34*52##``, followed by the detector's ``*1*1000#0*52##`` and the F411's
+  ``*1*0*52##`` (OpenWebNet-HA/MyHOME#777);
+- reported, not reproduced in the OpenWebNet-HA firmware oracle: the gateway
+  translator decodes the SCS presence status frame (class ``0x1D``) value ``00`` as
+  WHAT 34 and ``01`` as WHAT 39.
 """
 
 from OWNd.message import (
@@ -48,3 +54,19 @@ def test_plain_light_frames_are_not_motion_end():
         msg = OWNLightingEvent(frame)
         assert msg.motion_end is False
         assert msg.message_type != MESSAGE_TYPE_MOTION
+
+
+def test_reporter_trace_end_of_movement_cycle():
+    """MyHOME#777 F454 capture: end of movement, detector command, F411 state."""
+    end, command, state = (OWNEvent.parse(f) for f in ("*1*39*52##", "*1*1000#0*52##", "*1*0*52##"))
+    assert end.motion_end is True and end.is_on is None
+    assert command.motion_end is False and command.is_sensor is False
+    assert state.motion_end is False and state.is_on is False and state.is_sensor is False
+
+
+def test_what_39_is_not_motion_for_consumers_that_check_motion():
+    """Consumers that act on ``message_type == motion_detected and motion`` keep ignoring WHAT 39."""
+    msg = OWNLightingEvent("*1*39*52##")
+    assert not (msg.message_type == MESSAGE_TYPE_MOTION and msg.motion)
+    assert msg.is_anomaly is False
+    assert msg.brightness is None and msg.timer is None

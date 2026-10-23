@@ -344,8 +344,11 @@ class OWNLightingEvent(OWNEvent):
                 self._motion = True
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} detected motion"
             elif self._state == 39:  # End of movement (the detector's occupancy timer ran out)
-                # bt_luci decodes the SCS presence status frame (class 0x1D) with
-                # value 00 as *1*34*WHERE## and value 01 as *1*39*WHERE##.
+                # Specified by the ZigBee OpenWebNet WHO 1 table (34 movement, 39 end of
+                # movement); observed on SCS from an F454 + Legrand 067226, ~45 s (its
+                # DIMENSION 7 timeout) after the last WHAT 34 (MyHOME#777). Kept as
+                # MESSAGE_TYPE_MOTION with motion False so consumers that only act on
+                # ``motion is True`` ignore it as they did when it was unknown_state 39.
                 self._type = MESSAGE_TYPE_MOTION
                 self._motion = False
                 self._motion_end = True
@@ -471,7 +474,7 @@ class OWNLightingEvent(OWNEvent):
     @property
     def is_on(self) -> bool | None:
         """True/False when the on/off state is known, None otherwise (e.g. a
-        motion event, a reply carrying only a dimension such as illuminance
+        motion or end-of-movement event, a reply carrying only a dimension such as illuminance
         or a timer, an anomaly state, or a WHAT outside the published table; see unknown_state)."""
         if self._state is None or self._motion or self._motion_end or self._is_anomaly:
             return None
@@ -520,11 +523,13 @@ class OWNLightingEvent(OWNEvent):
 
     @property
     def motion(self) -> bool:
+        """True for ``*1*34*WHERE##`` (movement detected). False for every other frame,
+        WHAT 39 included: use :attr:`motion_end` to tell an end of movement apart."""
         return self._motion
 
     @property
     def motion_end(self) -> bool:
-        """True for ``*1*39*WHERE##``: the sensor reports the end of movement."""
+        """True for ``*1*39*WHERE##``: the detector reports the end of movement."""
         return self._motion_end
 
     @property
