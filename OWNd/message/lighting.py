@@ -264,6 +264,7 @@ class OWNLightingEvent(OWNEvent):
         self._blinker: float | None = None
         self._illuminance: int | None = None
         self._motion: bool = False
+        self._motion_end: bool = False
         self._is_anomaly: bool = False
         self._pir_sensitivity: int | None = None
         self._motion_timeout: datetime.timedelta | None = None
@@ -342,6 +343,19 @@ class OWNLightingEvent(OWNEvent):
                 self._type = MESSAGE_TYPE_MOTION
                 self._motion = True
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} detected motion"
+            elif self._state == 39:  # End of movement (the detector's occupancy timer ran out)
+                # Specified by the ZigBee OpenWebNet WHO 1 table (34 movement, 39 end of
+                # movement); seven emulated gateways (F454, F459, F460, F461, MH200N,
+                # MH202, MyHomeServer1) turn the SCS presence status B8 <A/PL> 1D 01
+                # into it (OpenWebNet-HA/own-firmware-oracle#56, who1-motion-detector);
+                # observed on SCS from an F454 + Legrand 067226, ~45 s (its
+                # DIMENSION 7 timeout) after the last WHAT 34 (MyHOME#777). Kept as
+                # MESSAGE_TYPE_MOTION with motion False so consumers that only act on
+                # ``motion is True`` ignore it as they did when it was unknown_state 39.
+                self._type = MESSAGE_TYPE_MOTION
+                self._motion = False
+                self._motion_end = True
+                self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} no longer detects motion"
             else:
                 # Not in the WHO 1 WHAT table: the on/off
                 # state is unknown, not "on".
@@ -463,9 +477,9 @@ class OWNLightingEvent(OWNEvent):
     @property
     def is_on(self) -> bool | None:
         """True/False when the on/off state is known, None otherwise (e.g. a
-        motion event, a reply carrying only a dimension such as illuminance
+        motion or end-of-movement event, a reply carrying only a dimension such as illuminance
         or a timer, an anomaly state, or a WHAT outside the published table; see unknown_state)."""
-        if self._state is None or self._motion or self._is_anomaly:
+        if self._state is None or self._motion or self._motion_end or self._is_anomaly:
             return None
         return 0 < self._state < 32
 
@@ -487,7 +501,7 @@ class OWNLightingEvent(OWNEvent):
     def is_sensor(self) -> bool:
         return (
             self._motion
-            or self._state == 34
+            or self._state in (34, 39)
             or (self._dimension is not None and self._dimension in (5, 6, 7))
             or self._type
             in (
@@ -512,7 +526,14 @@ class OWNLightingEvent(OWNEvent):
 
     @property
     def motion(self) -> bool:
+        """True for ``*1*34*WHERE##`` (movement detected). False for every other frame,
+        WHAT 39 included: use :attr:`motion_end` to tell an end of movement apart."""
         return self._motion
+
+    @property
+    def motion_end(self) -> bool:
+        """True for ``*1*39*WHERE##``: the detector reports the end of movement."""
+        return self._motion_end
 
     @property
     def pir_sensitivity(self) -> int | None:
