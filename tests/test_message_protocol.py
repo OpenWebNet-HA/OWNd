@@ -342,7 +342,7 @@ def test_lighting_what_19_is_an_anomaly_state() -> None:
     assert msg.human_readable_log == "Light 74 reports anomaly (WHAT 19)."
 
 
-@pytest.mark.parametrize("what", [32, 33, 35, 39, 99])
+@pytest.mark.parametrize("what", [32, 33, 35, 38, 99])
 def test_lighting_what_outside_the_table_is_an_unknown_state(what: int) -> None:
     msg = OWNLightingEvent(f"*1*{what}*21##")
 

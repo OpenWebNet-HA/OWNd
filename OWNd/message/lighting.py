@@ -264,6 +264,7 @@ class OWNLightingEvent(OWNEvent):
         self._blinker: float | None = None
         self._illuminance: int | None = None
         self._motion: bool = False
+        self._motion_end: bool = False
         self._is_anomaly: bool = False
         self._pir_sensitivity: int | None = None
         self._motion_timeout: datetime.timedelta | None = None
@@ -342,6 +343,13 @@ class OWNLightingEvent(OWNEvent):
                 self._type = MESSAGE_TYPE_MOTION
                 self._motion = True
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} detected motion"
+            elif self._state == 39:  # End of movement (the detector's occupancy timer ran out)
+                # bt_luci decodes the SCS presence status frame (class 0x1D) with
+                # value 00 as *1*34*WHERE## and value 01 as *1*39*WHERE##.
+                self._type = MESSAGE_TYPE_MOTION
+                self._motion = False
+                self._motion_end = True
+                self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} no longer detects motion"
             else:
                 # Not in the WHO 1 WHAT table: the on/off
                 # state is unknown, not "on".
@@ -465,7 +473,7 @@ class OWNLightingEvent(OWNEvent):
         """True/False when the on/off state is known, None otherwise (e.g. a
         motion event, a reply carrying only a dimension such as illuminance
         or a timer, an anomaly state, or a WHAT outside the published table; see unknown_state)."""
-        if self._state is None or self._motion or self._is_anomaly:
+        if self._state is None or self._motion or self._motion_end or self._is_anomaly:
             return None
         return 0 < self._state < 32
 
@@ -487,7 +495,7 @@ class OWNLightingEvent(OWNEvent):
     def is_sensor(self) -> bool:
         return (
             self._motion
-            or self._state == 34
+            or self._state in (34, 39)
             or (self._dimension is not None and self._dimension in (5, 6, 7))
             or self._type
             in (
@@ -513,6 +521,11 @@ class OWNLightingEvent(OWNEvent):
     @property
     def motion(self) -> bool:
         return self._motion
+
+    @property
+    def motion_end(self) -> bool:
+        """True for ``*1*39*WHERE##``: the sensor reports the end of movement."""
+        return self._motion_end
 
     @property
     def pir_sensitivity(self) -> int | None:
