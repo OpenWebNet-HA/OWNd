@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+import contextvars
 import importlib
 import re
 import sys
@@ -10,6 +11,14 @@ from typing import Any
 
 _EVENT_DISPATCH: dict[int, Callable[[str], OWNEvent]] = {}
 _COMMAND_DISPATCH: dict[int, Callable[[str], OWNCommand]] = {}
+_PARSE_GATEWAY_CTX: contextvars.ContextVar[Any] = contextvars.ContextVar(
+    "ownd_parse_gateway", default=None
+)
+
+
+def get_parse_gateway() -> Any:
+    """Return the active gateway context during ``OWNMessage.parse`` / ``OWNEvent.parse``."""
+    return _PARSE_GATEWAY_CTX.get()
 
 _WHO_SUBMODULES: tuple[str, ...] = (
     "actuator_lock",
@@ -120,6 +129,7 @@ class OWNMessage:
         self._dimension: int | None = None
         self._dimension_param: list[str] = []
         self._dimension_value: list[str] = []
+        self._gateway: Any = get_parse_gateway()
 
         if match := self._STATUS.match(self._raw):
             self._is_valid_message = True
@@ -203,7 +213,7 @@ class OWNMessage:
             self._dimension_value = match.group("dimension_value").split("*")[1:]
 
     @classmethod
-    def parse(cls, data: str) -> OWNMessage | None:
+    def parse(cls, data: str, *, gateway: Any = None) -> OWNMessage | None:
         if (
             cls._ACK.match(data)
             or cls._NACK.match(data)
@@ -219,13 +229,13 @@ class OWNMessage:
             or cls._DOOR_ENTRY_SHORT.match(data)
             or cls._DIMENSION_REQUEST_REPLY.match(data)
         ):
-            return OWNEvent.parse(data)
+            return OWNEvent.parse(data, gateway=gateway)
         if (
             cls._STATUS_REQUEST.match(data)
             or cls._DIMENSION_REQUEST.match(data)
             or cls._DIMENSION_WRITING.match(data)
         ):
-            return OWNCommand.parse(data)
+            return OWNCommand.parse(data, gateway=gateway)
         return None
 
     @property
@@ -438,16 +448,20 @@ class OWNEvent(OWNMessage):
     """
 
     @classmethod
-    def parse(cls, data: str) -> OWNEvent | None:
+    def parse(cls, data: str, *, gateway: Any = None) -> OWNEvent | None:
         _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.+)?##$", data)
 
         if _match:
             _who = int(_match.group("who"))
             _ensure_all_subsystems_registered()
             parser = _EVENT_DISPATCH.get(_who)
-            if parser is not None:
-                return parser(data)
-            return cls(data)
+            token = _PARSE_GATEWAY_CTX.set(gateway)
+            try:
+                if parser is not None:
+                    return parser(data)
+                return cls(data)
+            finally:
+                _PARSE_GATEWAY_CTX.reset(token)
 
         return None
 
@@ -460,23 +474,27 @@ class OWNCommand(OWNMessage):
     """
 
     @classmethod
-    def parse(cls, data: str) -> OWNCommand | None:
+    def parse(cls, data: str, *, gateway: Any = None) -> OWNCommand | None:
         _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.+)?##$", data)
 
         if _match:
             _who = int(_match.group("who"))
             _ensure_all_subsystems_registered()
             parser = _COMMAND_DISPATCH.get(_who)
-            if parser is not None:
-                return parser(data)
-            if _who in (0, 24) or _who > 1000:
-                return cls(data)
-            if _who in (7, 9):
-                return (
-                    OWNStatusRequest(data)
-                    if cls._STATUS_REQUEST.match(data)
-                    else cls(data)
-                )
+            token = _PARSE_GATEWAY_CTX.set(gateway)
+            try:
+                if parser is not None:
+                    return parser(data)
+                if _who in (0, 24) or _who > 1000:
+                    return cls(data)
+                if _who in (7, 9):
+                    return (
+                        OWNStatusRequest(data)
+                        if cls._STATUS_REQUEST.match(data)
+                        else cls(data)
+                    )
+            finally:
+                _PARSE_GATEWAY_CTX.reset(token)
 
         return None
 

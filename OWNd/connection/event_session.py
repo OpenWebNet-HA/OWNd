@@ -262,7 +262,7 @@ class OWNEventSession(OWNSession):
         # down (and lose bus events) over a frame we could not make sense of.
         try:
             _decoded_data = data.decode()
-            _message = OWNMessage.parse(_decoded_data)
+            _message = OWNMessage.parse(_decoded_data, gateway=self._gateway)
             return _message if _message else _decoded_data
         except (UnicodeDecodeError, ValueError, IndexError, TypeError) as error:
             _decoded_data = data.decode(errors="replace")

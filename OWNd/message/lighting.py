@@ -10,6 +10,7 @@ from typing import Any
 from .base import (
     OWNCommand,
     OWNEvent,
+    get_parse_gateway,
     register_command_parser,
     register_event_parser,
     require_non_empty_where,
@@ -24,7 +25,76 @@ MESSAGE_TYPE_MOTION_TIMEOUT = "motion_timeout"
 # WHAT 19 anomaly status per MH200N bt_luci binary disassembly (findings/MH200N/what19.md)
 LIGHTING_STATE_ANOMALY = 19
 
+# Legacy coarse-only dimmer transition-speed byte (0xF0 = 240) reported in WHO 1
+# DIMENSION 1 (*#1*WHERE*1*LEVEL100*240##) by pre-09W29 BTicino F414 dimmers
+# that only actuate live output on coarse WHAT 2..10 commands (MyHOME#767).
+DIMMER_SPEED_COARSE_ONLY = 240
+
+# Canonical BTicino libqtdevices (TS10_1_0_23, lighting_device.cpp) mapping
+# between coarse WHO 1 WHAT 2..10 presets and fine 1..100 % levels.
+COARSE_PRESET_TO_PERCENT: dict[int, int] = {
+    2: 1,
+    3: 10,
+    4: 20,
+    5: 30,
+    6: 40,
+    7: 50,
+    8: 60,
+    9: 75,
+    10: 100,
+}
+
+# Per-(gateway_key, normalized_where) coarse-only dimmer registry.
+# ``gateway_key`` is ``None`` for unscoped parse/command calls, or a normalized
+# gateway identifier (serial/MAC or host) when scoped to a specific plant.
+_COARSE_DIMMER_BY_GATEWAY: dict[tuple[str | None, str], bool] = {}
+
 PIR_SENSITIVITY_MAPPING = ["low", "medium", "high", "very high"]
+
+
+def brightness_preset_to_percent(preset: int) -> int:
+    """Convert a coarse WHO 1 WHAT 2..10 preset to its canonical 1..100 % level.
+
+    Matches ``libqtdevices`` ``dimmerLevelTo100`` (``2->1, 3->10, 4->20, 5->30,
+    6->40, 7->50, 8->60, 9->75, 10->100``).
+    """
+    if isinstance(preset, bool) or (isinstance(preset, float) and preset % 1 != 0):
+        raise ValueError("preset must be an integer between 2 and 10")
+    preset_int = int(preset)
+    if preset_int not in COARSE_PRESET_TO_PERCENT:
+        raise ValueError("preset must be between 2 and 10")
+    return COARSE_PRESET_TO_PERCENT[preset_int]
+
+
+def percent_to_brightness_preset(level: int) -> int:
+    """Convert a 0..100 % level to the coarse WHO 1 WHAT value (0 or 2..10).
+
+    Matches ``libqtdevices`` ``dimmer100LevelTo10`` (``lighting_device.cpp:240-245``):
+    ``<=0 -> 0``, ``1..4 -> 2``, ``5..15 -> 3``, ``16..25 -> 4``, ``26..35 -> 5``,
+    ``36..45 -> 6``, ``46..53 -> 7``, ``54..67 -> 8``, ``68..85 -> 9``, ``>=86 -> 10``.
+    """
+    if isinstance(level, bool) or (isinstance(level, float) and level % 1 != 0):
+        raise ValueError("level must be an integer")
+    lvl = int(level)
+    if lvl <= 0:
+        return 0
+    if lvl <= 4:
+        return 2
+    if lvl <= 15:
+        return 3
+    if lvl <= 25:
+        return 4
+    if lvl <= 35:
+        return 5
+    if lvl <= 45:
+        return 6
+    if lvl <= 53:
+        return 7
+    if lvl <= 67:
+        return 8
+    if lvl <= 85:
+        return 9
+    return 10
 
 
 def is_apl_address(base: str) -> bool:
@@ -96,6 +166,89 @@ def normalize_where(where: str | int | None) -> str:
     return f"{norm_base}#{parts[1]}" if len(parts) > 1 else norm_base
 
 
+def _normalize_gateway_key(gateway: Any = None) -> str | None:
+    """Resolve an optional gateway identifier or ``OWNGateway`` object to a lowercase key."""
+    target = get_parse_gateway() if gateway is None else gateway
+    if target is None:
+        return None
+    if isinstance(target, str):
+        stripped = target.strip().lower()
+        return stripped if stripped else None
+    for attr in ("serial", "unique_id", "host", "address"):
+        val = getattr(target, attr, None)
+        if isinstance(val, str) and val.strip():
+            return val.strip().lower()
+    return None
+
+
+def is_coarse_dimmer_where(
+    where: str | int | None, *, gateway: Any = None
+) -> bool:
+    """Return True if ``where`` reported the 240 (0xF0) coarse-only dimmer speed.
+
+    Learning is reactive: a WHO 1 ``DIMENSION 1`` or ``DIMENSION 4`` reply carrying
+    ``transition == 240`` (``*#1*WHERE*1*LEVEL100*240##``) must be observed first
+    (or registered via :func:`register_coarse_dimmer_where`).
+
+    Resolution rules:
+      - **Scoped lookup** (``gateway`` provided or active via ``OWNMessage.parse``):
+        returns the state recorded for ``(gateway_key, normalize_where(where))`` if
+        present, otherwise falls back to the unscoped ``(None, normalize_where(where))``
+        entry (defaulting to ``False``).
+      - **Unscoped lookup** (``gateway=None`` outside a scoped parse context):
+        returns the explicit ``(None, normalize_where(where))`` entry if present;
+        otherwise returns ``True`` if and only if at least one gateway has recorded
+        ``where`` and **all** gateways that have observed ``where`` agree it is a
+        coarse-only dimmer (``bool(scoped) and all(scoped)``).
+    """
+    norm = normalize_where(where)
+    if not norm:
+        return False
+    gw_key = _normalize_gateway_key(gateway)
+    if gw_key is not None:
+        if (gw_key, norm) in _COARSE_DIMMER_BY_GATEWAY:
+            return _COARSE_DIMMER_BY_GATEWAY[(gw_key, norm)]
+        return _COARSE_DIMMER_BY_GATEWAY.get((None, norm), False)
+    if (None, norm) in _COARSE_DIMMER_BY_GATEWAY:
+        return _COARSE_DIMMER_BY_GATEWAY[(None, norm)]
+    scoped = [
+        v
+        for (g, w), v in _COARSE_DIMMER_BY_GATEWAY.items()
+        if g is not None and w == norm
+    ]
+    return bool(scoped) and all(scoped)
+
+
+def register_coarse_dimmer_where(
+    where: str | int | None,
+    is_coarse: bool = True,
+    *,
+    gateway: Any = None,
+) -> None:
+    """Record or clear ``where`` as a coarse-only dimmer (speed 240 / 0xF0).
+
+    Pass ``gateway`` (an :class:`OWNGateway` instance or gateway identifier string)
+    to scope the entry to a specific plant in multi-gateway deployments.
+    """
+    norm = normalize_where(where)
+    if not norm:
+        return
+    gw_key = _normalize_gateway_key(gateway)
+    _COARSE_DIMMER_BY_GATEWAY[(gw_key, norm)] = bool(is_coarse)
+
+
+def clear_coarse_dimmer_wheres(gateway: Any = None) -> None:
+    """Clear learned coarse-only dimmer WHERE addresses (all gateways, or one gateway)."""
+    if gateway is None:
+        _COARSE_DIMMER_BY_GATEWAY.clear()
+        return
+    gw_key = _normalize_gateway_key(gateway)
+    if gw_key is None:
+        return
+    for key in [k for k in _COARSE_DIMMER_BY_GATEWAY if k[0] == gw_key]:
+        del _COARSE_DIMMER_BY_GATEWAY[key]
+
+
 class OWNLightingEvent(OWNEvent):
     def __init__(self, data: str) -> None:
         super().__init__(data)
@@ -106,6 +259,7 @@ class OWNLightingEvent(OWNEvent):
         self._brightness: int | None = None
         self._brightness_preset: int | None = None
         self._transition: int | None = None
+        self._is_coarse_dimmer: bool = False
         self._timer: float | None = None
         self._blinker: float | None = None
         self._illuminance: int | None = None
@@ -124,6 +278,12 @@ class OWNLightingEvent(OWNEvent):
         self._rgb: tuple[int, int, int] | None = None
         self._supports_rgb: bool | None = None
 
+        full_where = (
+            f"{self._where}#{'#'.join(self._where_param)}"
+            if self._where and self._where_param
+            else self._where
+        )
+
         if self._what is not None and self._what != 1000:
             self._state = self._what
 
@@ -137,7 +297,9 @@ class OWNLightingEvent(OWNEvent):
                 )
             elif self._state > 1 and self._state < 11:  # Light dimmed to preset value
                 self._brightness_preset = self._state
-                # self._brightness = self._state * 10
+                if is_coarse_dimmer_where(full_where):
+                    self._is_coarse_dimmer = True
+                    self._brightness = brightness_preset_to_percent(self._state)
                 self._human_readable_log = f"Light {self._where}{self._interface_log_text} is switched on at brightness level {self._state}."  # pylint: disable=line-too-long
             elif self._state == 11:  # Timer at 1m
                 self._timer = 60
@@ -196,6 +358,11 @@ class OWNLightingEvent(OWNEvent):
                     if len(self._dimension_value) > 1
                     else None
                 )
+                if self._transition is not None:
+                    self._is_coarse_dimmer = (
+                        self._transition == DIMMER_SPEED_COARSE_ONLY
+                    )
+                    register_coarse_dimmer_where(full_where, self._is_coarse_dimmer)
                 if self._brightness == 0:
                     self._state = 0
                     self._human_readable_log = f"Light {self._where}{self._interface_log_text} is switched off."
@@ -274,12 +441,24 @@ class OWNLightingEvent(OWNEvent):
         return self._brightness_preset
 
     @property
+    def brightness_preset_percent(self) -> int | None:
+        """Fine 1..100 % equivalent for a coarse WHAT 2..10 preset, else None."""
+        if self._brightness_preset is None:
+            return None
+        return COARSE_PRESET_TO_PERCENT.get(self._brightness_preset)
+
+    @property
     def brightness(self) -> int | None:
         return self._brightness
 
     @property
     def transition(self) -> int | None:
         return self._transition
+
+    @property
+    def is_coarse_dimmer(self) -> bool:
+        """True if this event indicates a coarse-only dimmer (speed 240 / 0xF0)."""
+        return self._is_coarse_dimmer
 
     @property
     def is_on(self) -> bool | None:
@@ -397,9 +576,25 @@ class OWNLightingEvent(OWNEvent):
 
 
 class OWNLightingCommand(OWNCommand):
+    def __init__(self, data: str) -> None:
+        super().__init__(data)
+        self._is_coarse_dimmer: bool = False
+
+    @property
+    def is_coarse_dimmer(self) -> bool:
+        """True if this command was built for or targets a coarse-only dimmer."""
+        return self._is_coarse_dimmer
+
+    @property
+    def brightness_preset(self) -> int | None:
+        """Coarse WHO 1 preset (2..10) for WHAT 2..10 commands, else None."""
+        if self._what is not None and 2 <= self._what <= 10:
+            return self._what
+        return None
+
     @property
     def brightness(self) -> int | None:
-        """Decoded brightness percentage (0..100) for Dimension 1/4 write commands."""
+        """Decoded brightness percentage (0..100) for Dimension 1/4 writes or coarse WHAT 2..10 commands."""
         if self._dimension in (1, 4) and self._dimension_value:
             try:
                 raw = int(self._dimension_value[0])
@@ -407,6 +602,16 @@ class OWNLightingCommand(OWNCommand):
                 return None
             if 100 <= raw <= 200:
                 return raw - 100
+        if self._what is not None and 2 <= self._what <= 10:
+            full_where = (
+                f"{self._where}#{'#'.join(self._where_param)}"
+                if self._where and self._where_param
+                else self._where
+            )
+            if self._is_coarse_dimmer or is_coarse_dimmer_where(
+                full_where, gateway=self._gateway
+            ):
+                return brightness_preset_to_percent(self._what)
         return None
 
     @property
@@ -562,6 +767,8 @@ class OWNLightingCommand(OWNCommand):
     def set_brightness_preset(cls, where: str | int, preset: int) -> OWNLightingCommand:
         """Dimmer preset WHAT 2..10 (20 %..100 %), the frame libqtdevices
         DimmerDevice::setLevel100 sends (lighting_device.cpp:240-245)."""
+        if isinstance(preset, bool) or (isinstance(preset, float) and preset % 1 != 0):
+            raise ValueError("preset must be an integer between 2 and 10")
         preset = int(preset)
         if not 2 <= preset <= 10:
             raise ValueError("preset must be between 2 and 10")
@@ -637,13 +844,51 @@ class OWNLightingCommand(OWNCommand):
 
     @classmethod
     def set_brightness(
-        cls, where: str | int, _level: int = 30, _transition: int = 0
+        cls,
+        where: str | int,
+        _level: int = 30,
+        _transition: int = 0,
+        *,
+        coarse: bool | None = None,
+        gateway: Any = None,
     ) -> OWNLightingCommand:
-        transition_speed = _transition if 0 <= _transition <= 255 else 0
+        """Build a brightness command for ``where`` at ``_level`` % (0..100).
+
+        By default (``coarse=None``), checks :func:`is_coarse_dimmer_where` for
+        ``where`` (scoped to ``gateway`` when provided, or using the unscoped
+        all-agree rule when ``gateway=None``). If ``where`` has reported the
+        legacy ``SPEED = 240`` (``0xF0``) coarse-only sentinel in a prior
+        ``DIMENSION 1``/``4`` reply — or if ``coarse=True`` is passed explicitly —
+        emits ``*1*0*WHERE##`` for ``_level <= 0`` and ``*1*2..10*WHERE##`` via
+        :func:`percent_to_brightness_preset` for ``1..100 %``. Otherwise emits the
+        standard ``DIMENSION 1`` write ``*#1*WHERE*#1*<100+level>*<speed>##``.
+        """
+        if any(
+            isinstance(x, bool) or (isinstance(x, float) and x % 1 != 0)
+            for x in (_level, _transition)
+        ):
+            raise ValueError("brightness level and transition must be integers")
+        use_coarse = (
+            is_coarse_dimmer_where(where, gateway=gateway)
+            if coarse is None
+            else bool(coarse)
+        )
+        trans_int = int(_transition)
+        transition_speed = trans_int if 0 <= trans_int <= 255 else 0
         if int(_level) <= 0:
             return cls.switch_off(
-                where, transition_speed if transition_speed > 0 else None
+                where,
+                None
+                if use_coarse
+                else (transition_speed if transition_speed > 0 else None),
             )
+        if use_coarse:
+            cmd = cls.set_brightness_preset(
+                where, percent_to_brightness_preset(int(_level))
+            )
+            cmd._is_coarse_dimmer = True
+            cmd._gateway = gateway
+            return cmd
         level = min(int(_level), 100)
         command_level = level + 100
         message = cls(f"*#1*{where}*#1*{command_level}*{transition_speed}##")

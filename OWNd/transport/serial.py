@@ -105,7 +105,7 @@ class AsyncSerialTransport(OWNTransport):
                 pending.set_result(None)
 
     def _process_frame(self, frame: str) -> None:
-        parsed = OWNMessage.parse(frame)
+        parsed = OWNMessage.parse(frame, gateway=self.port)
         message = parsed or frame
         unsolicited = frame.startswith("*") and not frame.startswith("*#")
 
@@ -151,7 +151,9 @@ class AsyncSerialTransport(OWNTransport):
         async with self._command_lock:
             loop = asyncio.get_running_loop()
             self._pending_future = loop.create_future()
-            self._pending_request = OWNMessage.parse(str(message))
+            self._pending_request = OWNMessage.parse(
+                str(message), gateway=self.port
+            )
             self._pending_frames = []
             try:
                 frame = str(message).encode()

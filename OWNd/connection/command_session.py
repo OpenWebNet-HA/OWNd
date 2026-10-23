@@ -156,7 +156,9 @@ class OWNCommandSession(OWNSession):
             for _ in range(COMMAND_RESPONSE_MAX_FRAMES):
                 raw_response = await self._read_frame(COMMAND_TIMEOUT)
                 try:
-                    resulting_message = OWNMessage.parse(raw_response)
+                    resulting_message = OWNMessage.parse(
+                        raw_response, gateway=self._gateway
+                    )
                 except (ValueError, IndexError, TypeError) as error:
                     self._logger.warning(
                         "%s Malformed command response %r: %s",
@@ -228,7 +230,7 @@ class OWNCommandSession(OWNSession):
         msg_obj = (
             message
             if isinstance(message, OWNMessage)
-            else OWNMessage.parse(str(message))
+            else OWNMessage.parse(str(message), gateway=self._gateway)
         )
         is_valid_frame = (
             msg_obj is not None

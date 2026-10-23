@@ -176,6 +176,8 @@ from .heating import (
     OWNHeatingEvent,
 )
 from .lighting import (
+    COARSE_PRESET_TO_PERCENT,
+    DIMMER_SPEED_COARSE_ONLY,
     LIGHTING_STATE_ANOMALY,
     MESSAGE_TYPE_ACTION,
     MESSAGE_TYPE_ILLUMINANCE,
@@ -184,8 +186,13 @@ from .lighting import (
     MESSAGE_TYPE_PIR_SENSITIVITY,
     PIR_SENSITIVITY_MAPPING,
     area_of_where,
+    brightness_preset_to_percent,
+    clear_coarse_dimmer_wheres,
     is_apl_address,
+    is_coarse_dimmer_where,
     normalize_where,
+    percent_to_brightness_preset,
+    register_coarse_dimmer_where,
     OWNLightingCommand,
     OWNLightingEvent,
 )
@@ -231,6 +238,8 @@ __all__ = [
     "require_non_empty_where",
     "_ensure_all_subsystems_registered",
     # Lighting (WHO 1)
+    "COARSE_PRESET_TO_PERCENT",
+    "DIMMER_SPEED_COARSE_ONLY",
     "LIGHTING_STATE_ANOMALY",
     "MESSAGE_TYPE_ACTION",
     "MESSAGE_TYPE_MOTION",
@@ -238,6 +247,11 @@ __all__ = [
     "MESSAGE_TYPE_ILLUMINANCE",
     "MESSAGE_TYPE_MOTION_TIMEOUT",
     "PIR_SENSITIVITY_MAPPING",
+    "brightness_preset_to_percent",
+    "percent_to_brightness_preset",
+    "is_coarse_dimmer_where",
+    "register_coarse_dimmer_where",
+    "clear_coarse_dimmer_wheres",
     "is_apl_address",
     "area_of_where",
     "normalize_where",

@@ -708,6 +708,55 @@
     "_file": "who01_lighting.yaml"
   },
   {
+    "id": "light.dim.reply.level.30.speed240.61",
+    "frame": "*#1*61*1*130*240##",
+    "direction": "dimension_response",
+    "who": 1,
+    "what": null,
+    "where": "61",
+    "dimension": 1,
+    "dimension_values": [
+      "130",
+      "240"
+    ],
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Lighting: DIMENSION 1 report from legacy pre-09W29 BTicino F414 coarse-only dimmer 61 on MH200N FW 1.0: reports 30% (LEVEL100 130) with unimplemented transition speed byte 240 (0xF0) (@wave68runner, MyHOME#767)",
+    "roundtrip": true,
+    "builder": {
+      "class": "OWNLightingCommand",
+      "method": "report_brightness",
+      "args": [
+        "61",
+        30,
+        240
+      ]
+    },
+    "_file": "who01_lighting.yaml"
+  },
+  {
+    "id": "light.cmd.preset.7.61",
+    "frame": "*1*7*61##",
+    "direction": "command",
+    "who": 1,
+    "what": "7",
+    "where": "61",
+    "dimension": null,
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Lighting: Coarse dimmer preset WHAT 7 (~50% fine level / 70% 10-step scale) on legacy BTicino F414 dimmer 61 on MH200N FW 1.0 (@wave68runner, MyHOME#767)",
+    "roundtrip": true,
+    "builder": {
+      "class": "OWNLightingCommand",
+      "method": "set_brightness_preset",
+      "args": [
+        "61",
+        7
+      ]
+    },
+    "_file": "who01_lighting.yaml"
+  },
+  {
     "id": "cover.cmd.up.ptp.93",
     "frame": "*2*1*93##",
     "direction": "command",
