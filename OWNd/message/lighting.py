@@ -345,8 +345,9 @@ class OWNLightingEvent(OWNEvent):
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} detected motion"
             elif self._state == 39:  # End of movement (the detector's occupancy timer ran out)
                 # Specified by the ZigBee OpenWebNet WHO 1 table (34 movement, 39 end of
-                # movement); emulated F454 / F461 firmware turns the SCS presence status
-                # B8 <A/PL> 1D 01 into it (own-firmware-oracle who1-motion-detector);
+                # movement); seven emulated gateways (F454, F459, F460, F461, MH200N,
+                # MH202, MyHomeServer1) turn the SCS presence status B8 <A/PL> 1D 01
+                # into it (own-firmware-oracle who1-motion-detector);
                 # observed on SCS from an F454 + Legrand 067226, ~45 s (its
                 # DIMENSION 7 timeout) after the last WHAT 34 (MyHOME#777). Kept as
                 # MESSAGE_TYPE_MOTION with motion False so consumers that only act on
