@@ -103,7 +103,9 @@ def test_profile_lookup_accepts_common_name_variants() -> None:
 
     assert profile.model_name == "MyHomeServer1"
     assert profile.supports_session_count(4)
-    assert profile.supports_who(WHO_SOUND)
+    # Firmware oracle: every WHO 16 frame is refused; sound is WHO 22.
+    assert not profile.supports_who(WHO_SOUND)
+    assert profile.supports_who(WHO_SOUND_DIFFUSION)
     # Firmware oracle proves MyHomeServer1 omits bt_energia and rejects WHO 3
     assert not profile.supports_who(WHO_LOAD_CONTROL)
 
@@ -651,3 +653,27 @@ def test_profile_injection_capability_flags() -> None:
         assert p.supports_who18_response_injection is None
 
 
+@pytest.mark.parametrize("model", ["F461", "MyHomeServer1", "MHS1", "MyHome Server 1"])
+def test_who16_is_not_advertised_where_the_oracle_refuses_it(model: str) -> None:
+    """Every WHO 16 frame of the oracle (86 per gateway, sound-who16-source and
+    others) is ``nack``/``silent`` on F461 020011 and MyHomeServer1 028206: no
+    translator forwards it; a live F461 2.0.11 NACKs ``*#16*0*5##`` within
+    5 ms and a MyHomeServer1 NACKs it in the MyHOME issue_466 trace fixture
+    (MyHOME#459). They forward WHO 22 (``sound-who22``), so sound stays
+    advertised through WHO 22 and ``supports_audio``.
+    """
+    profile = get_gateway_profile(model)
+
+    assert not profile.supports_who(WHO_SOUND)
+    assert profile.supports_who(WHO_SOUND_DIFFUSION)
+    assert profile.supports_audio is True
+
+
+@pytest.mark.parametrize(
+    "model", ["F454", "MH200N", "MH200", "H4684", "F453", "F453AV", "H4890", "MH202"]
+)
+def test_who16_stays_on_gateways_that_forward_it(model: str) -> None:
+    """MH202: the oracle refuses WHO 16 commands, but a live MH202 relays WHO 16
+    state frames from an F441M (``*#16*41*1*1##``, MyHOME#669), so it keeps
+    owning WHO 16 events."""
+    assert get_gateway_profile(model).supports_who(WHO_SOUND)
