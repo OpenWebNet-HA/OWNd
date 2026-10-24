@@ -86,6 +86,13 @@ class OWNCommandSession(OWNSession):
         raise_on_error: bool = False,
     ) -> list[OWNMessage | str] | bool | None:
         connection = cls(gateway)
+        # Refused before connect(): no socket, no handshake, no command slot
+        # on a single-session gateway (MH200N, F453AV...) and no 5-attempt
+        # backoff on an unreachable host for a frame that is never written.
+        frame = str(message)
+        if is_who4_dimension_22(frame):
+            connection._refuse_destructive_frame(frame, raise_on_error=raise_on_error)
+            return None
         try:
             if raise_on_error:
                 await connection.connect(raise_on_error=True)
@@ -236,6 +243,21 @@ class OWNCommandSession(OWNSession):
                 message, is_status_request, raise_on_error=raise_on_error
             )
 
+    def _refuse_destructive_frame(
+        self, frame: str, *, raise_on_error: bool
+    ) -> None:
+        """Record and log the refusal of a WHO 4 dimension 22 frame, never written."""
+        err = destructive_frame_error(frame)
+        self._last_error = err
+        self._logger.error(
+            "%s Refusing to send `%s`: %s.",
+            self._log_id,
+            frame,
+            DESTRUCTIVE_FRAME_REASON,
+        )
+        if raise_on_error:
+            raise err
+
     async def _locked_send(
         self,
         message: str | OWNMessage,
@@ -247,17 +269,7 @@ class OWNCommandSession(OWNSession):
         # Serialised once: the frame checked is the frame written.
         frame = str(message)
         if is_who4_dimension_22(frame):
-            # Never written, whatever the caller: it reboots the gateway.
-            err: OWNError = destructive_frame_error(frame)
-            self._last_error = err
-            self._logger.error(
-                "%s Refusing to send `%s`: %s.",
-                self._log_id,
-                frame,
-                DESTRUCTIVE_FRAME_REASON,
-            )
-            if raise_on_error:
-                raise err
+            self._refuse_destructive_frame(frame, raise_on_error=raise_on_error)
             return None
         msg_obj = (
             message
@@ -270,7 +282,7 @@ class OWNCommandSession(OWNSession):
             and not isinstance(msg_obj, OWNSignaling)
         )
         if not is_valid_frame:
-            err = OWNProtocolError(
+            err: OWNError = OWNProtocolError(
                 f"Invalid OpenWebNet frame `{message}`",
                 frame=str(message),
                 reason="invalid_frame",

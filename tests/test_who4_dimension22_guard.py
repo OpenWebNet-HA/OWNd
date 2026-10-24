@@ -239,24 +239,52 @@ async def test_command_session_refuses_before_reconnecting() -> None:
     connect.assert_not_called()
 
 
+@pytest.mark.parametrize(
+    "message",
+    ["*#4*2*22##", OWNHeatingCommand("*#4*3#2#1*22##")],
+    ids=["str", "OWNHeatingCommand"],
+)
 @pytest.mark.asyncio
-async def test_send_to_gateway_refuses() -> None:
+async def test_send_to_gateway_refuses_without_connecting(
+    message: str | OWNMessage, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Fail fast: no socket, no handshake, no gateway command slot, no
+    # 5-attempt backoff on an unreachable host.
     gateway = OWNGateway({"address": "192.0.2.1", "port": 20000, "password": "12345"})
-    writer = _Writer()
 
-    async def fake_connect(self: OWNCommandSession, *, raise_on_error: bool = False):
-        del raise_on_error
-        self._stream_reader = asyncio.StreamReader()
-        self._stream_writer = writer
-        return {"Success": True}
+    with (
+        patch.object(OWNCommandSession, "connect", new_callable=AsyncMock) as connect,
+        patch.object(OWNCommandSession, "_locked_send", new_callable=AsyncMock) as send,
+        caplog.at_level(logging.ERROR),
+    ):
+        with pytest.raises(OWNProtocolError) as excinfo:
+            await OWNCommandSession.send_to_gateway(message, gateway, raise_on_error=True)
+        assert excinfo.value.reason == "destructive_frame"
+        assert excinfo.value.frame == str(message)
+        assert await OWNCommandSession.send_to_gateway(message, gateway) is None
+    connect.assert_not_called()
+    send.assert_not_called()
+    assert caplog.text.count("bt_termo") == 2
 
-    with patch.object(OWNCommandSession, "connect", fake_connect):
-        with pytest.raises(OWNProtocolError):
-            await OWNCommandSession.send_to_gateway(
-                "*#4*2*22##", gateway, raise_on_error=True
-            )
-        assert await OWNCommandSession.send_to_gateway("*#4*2*22##", gateway) is None
-    assert writer.written == []
+
+@pytest.mark.asyncio
+async def test_send_to_gateway_still_connects_for_other_frames() -> None:
+    gateway = OWNGateway({"address": "192.0.2.1", "port": 20000, "password": "12345"})
+
+    with (
+        patch.object(
+            OWNCommandSession,
+            "connect",
+            new_callable=AsyncMock,
+            return_value={"Success": True},
+        ) as connect,
+        patch.object(
+            OWNCommandSession, "_locked_send", new_callable=AsyncMock, return_value=True
+        ) as send,
+    ):
+        assert await OWNCommandSession.send_to_gateway("*#4*22##", gateway) is True
+    connect.assert_awaited_once()
+    send.assert_awaited_once_with("*#4*22##", False, raise_on_error=False)
 
 
 @pytest.mark.parametrize("frame", SAFE_FRAMES[:3])
