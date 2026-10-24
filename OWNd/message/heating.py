@@ -74,18 +74,39 @@ _ZONE_STATES = {
 
 _WHO4_TEMP_REGEX = re.compile(r"^[01][0-9]{3}$")
 
-# WHO 4 DIMENSION 22 (``*#4*ZONE*22##``) kills the gateway's thermoregulation
-# daemon (bt_termo) and reboots an F461 about 3 minutes later (firmware oracle
-# crash_frames; live F461 2.0.11). Every send path refuses it, in any shape:
-# request, write (``*#22*``) or reply, with or without a dimension parameter.
-_WHO4_DIMENSION_22_REGEX = re.compile(r"\*#0*4\*[^*]*\*#?0*22(?:[#*]|$)")
+# WHO 4 DIMENSION 22 is the published split-unit (air conditioning) IR
+# control: ``*#4*3#Z#N*22##`` requests the current setting and
+# ``*#4*3#Z#N*#22*MOD*SP*VEL*SWING##`` writes it (WHO 4 specification,
+# pp. 66-68). On Linux IP gateways the frame kills the thermoregulation
+# daemon (bt_termo) and the gateway reboots about 3 minutes later (firmware
+# oracle crash_frames; live F461 2.0.11). Every send path refuses it, in any
+# shape: request, write (``*#22*``) or reply, with or without a dimension
+# parameter, and in any ``*#4*ZONE*22##`` spelling.
+#
+# Anchored to the first ``*`` of each ``##``-delimited frame: ``*#4*`` means
+# WHO 4 only there. Mid-frame, ``*#4*`` is WHERE ``#4`` (group 4 in WHO 1, 2,
+# 16 and 22, central-unit zone 4 in WHO 4) or DIMENSION ``#4`` (a dimension 4
+# write), so ``*#2*#4*#11#001*22##`` or ``*#1*14*#4*1*22##`` must not match.
+# The WHO and DIMENSION tokens accept whatever the gateway's atoi() reads as
+# 4 / 22: leading zeros, surrounding whitespace and a ``+`` sign
+# (``*#04*2* 22##``, ``*#4*2*+22##``, ``*#4*2*22 ``).
+_WHO4_DIMENSION_22_REGEX = re.compile(
+    r"^[^*]*\*#\s*\+?0*4\s*\*[^*]*\*\s*#?\s*\+?0*22(?:\s*$|[#*\s])"
+)
 
 
 def is_who4_dimension_22(frame: object) -> bool:
-    """True if ``frame`` (or any frame in it) is a WHO 4 DIMENSION 22 frame."""
-    return any(
-        _WHO4_DIMENSION_22_REGEX.search(chunk) for chunk in str(frame).split("##")
+    """True if ``frame`` (or any ``##``-delimited frame in it) is WHO 4 DIMENSION 22.
+
+    ``bytes``, ``bytearray`` and ``memoryview`` are decoded as latin-1 (the
+    wire encoding); anything else is checked through ``str()``.
+    """
+    raw = (
+        bytes(frame).decode("latin-1")
+        if isinstance(frame, (bytes, bytearray, memoryview))
+        else str(frame)
     )
+    return any(_WHO4_DIMENSION_22_REGEX.search(chunk) for chunk in raw.split("##"))
 
 
 def who4_temperature(raw: str) -> float | None:

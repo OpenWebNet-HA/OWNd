@@ -9,13 +9,23 @@ them before anything is written.
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
 from unittest.mock import AsyncMock, patch
 
 import pytest
 
 from OWNd.connection import OWNCommandSession, OWNGateway
 from OWNd.exceptions import OWNProtocolError
-from OWNd.message import OWNCommand, OWNHeatingCommand, OWNMessage, is_who4_dimension_22
+from OWNd.message import (
+    OWNAutomationCommand,
+    OWNCommand,
+    OWNHeatingCommand,
+    OWNLightingCommand,
+    OWNMessage,
+    OWNSoundCommand,
+    OWNSoundDiffusionCommand,
+    is_who4_dimension_22,
+)
 from OWNd.transport.serial import AsyncSerialTransport
 from OWNd.transport.tcp import AsyncTcpTransport
 
@@ -30,9 +40,23 @@ DIMENSION_22_FRAMES = (
     "*#4*2*22*1##",
     "*#04*2*022##",
     "*1*1*11##*#4*2*22##",
+    # Published split-unit forms (WHO 4 specification, pp. 66-68).
+    "*#4*3#2#1*22##",
+    "*#4*3#2#1*#22*0***##",
+    "*#4*45#1*#22*3**1*1##",
+    # Tokens the gateway's atoi() still reads as 4 / 22: whitespace, sign,
+    # missing terminator (the serial transport appends ``##``).
+    "*#4*2*22 ",
+    "*#4*2*22 ##",
+    "*#4*2* 22##",
+    "*#4*2*+22##",
+    "*# 4*2*22##",
+    "*#+4*2*22##",
+    "*#4*2*22",
 )
 
-# Zone 22, other dimensions, and dimension 22 of other WHOs stay sendable.
+# Zone 22, other dimensions, dimension 22 of other WHOs, and mid-frame
+# ``*#4*`` tokens (WHERE ``#4`` or DIMENSION ``#4``) stay sendable.
 SAFE_FRAMES = (
     "*#4*22##",
     "*#4*22*0##",
@@ -40,9 +64,53 @@ SAFE_FRAMES = (
     "*#4*2*20##",
     "*#4*2*220##",
     "*#4*2*0*0220##",
+    "*#4*2*2 2##",
+    "*#4*2*-22##",
+    "*#44*2*22##",
     "*#13**22##",
     "*#1*22*1##",
     "*4*303*22##",
+    # WHERE ``#4`` (group 4 / central-unit zone 4) with a value of 22.
+    "*#2*#4*#11#001*22##",
+    "*#1*#4*#2*22*0*0##",
+    "*#1*#4*#12*22*100*50##",
+    "*#16*#4*#1*22##",
+    "*#22*#4*#1*22##",
+    "*#22*#4*#19*22##",
+    "*#4*#4*#30*22*10*2026##",
+    "*#4*#4*#31*22*30##",
+    "*#4*#4*#32*22*00##",
+    # DIMENSION ``#4`` write whose second value is 22.
+    "*#1*14*#4*1*22##",
+    # Other subsystems carrying a 22.
+    "*#1004*2*22##",
+    "*#22*3#1#1*1##",
+    # Single-``#`` concatenation: one chunk starting with ``*1*``; the frame
+    # validation of every send path refuses it as invalid instead.
+    "*1*1*11#*#4*2*22##",
+)
+
+# Builders whose WHERE is group / central-unit zone ``#4`` and whose first
+# value is 22: the unanchored detector used to refuse all of them.
+WHERE_HASH_4_BUILDERS = (
+    (lambda: OWNAutomationCommand.set_shutter_level("#4", 22), "*#2*#4*#11#001*22##"),
+    (lambda: OWNLightingCommand.set_variable_timer("#4", 22, 0, 0), "*#1*#4*#2*22*0*0##"),
+    (
+        lambda: OWNLightingCommand.set_hsv_color("#4", 22, 100, 50),
+        "*#1*#4*#12*22*100*50##",
+    ),
+    (lambda: OWNSoundCommand.set_volume("#4", 22), "*#16*#4*#1*22##"),
+    (lambda: OWNSoundDiffusionCommand.set_volume("#4", 22), "*#22*#4*#1*22##"),
+    (lambda: OWNSoundDiffusionCommand.set_preset("#4", 22), "*#22*#4*#6*22##"),
+    (
+        lambda: OWNHeatingCommand.set_holiday_end_date("#4", 22, 10, 2026),
+        "*#4*#4*#30*22*10*2026##",
+    ),
+    (lambda: OWNHeatingCommand.set_holiday_end_time("#4", 22, 30), "*#4*#4*#31*22*30##"),
+    (
+        lambda: OWNHeatingCommand.set_timed_manual_end_time("#4", 22, 0),
+        "*#4*#4*#32*22*00##",
+    ),
 )
 
 
@@ -81,6 +149,46 @@ def test_detector_flags_every_dimension_22_form(frame: str) -> None:
 @pytest.mark.parametrize("frame", SAFE_FRAMES)
 def test_detector_leaves_other_frames_alone(frame: str) -> None:
     assert is_who4_dimension_22(frame) is False
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [b"*#4*2*22##", bytearray(b"*#4*2*22##"), memoryview(b"*#4*2*22##")],
+    ids=["bytes", "bytearray", "memoryview"],
+)
+def test_detector_decodes_buffers(frame: object) -> None:
+    assert is_who4_dimension_22(frame) is True
+    assert is_who4_dimension_22(b"*#4*#4*#30*22*10*2026##") is False
+
+
+@pytest.mark.parametrize(
+    "build, expected",
+    WHERE_HASH_4_BUILDERS,
+    ids=[expected for _, expected in WHERE_HASH_4_BUILDERS],
+)
+def test_detector_leaves_where_hash_4_builders_alone(
+    build: Callable[[], OWNCommand], expected: str
+) -> None:
+    command = build()
+    assert str(command) == expected
+    assert command.is_valid
+    assert is_who4_dimension_22(command) is False
+    assert is_who4_dimension_22(str(command)) is False
+
+
+@pytest.mark.parametrize(
+    "build, expected",
+    WHERE_HASH_4_BUILDERS,
+    ids=[expected for _, expected in WHERE_HASH_4_BUILDERS],
+)
+@pytest.mark.asyncio
+async def test_command_session_still_sends_where_hash_4_builders(
+    build: Callable[[], OWNCommand], expected: str
+) -> None:
+    session, writer = _command_session()
+
+    assert await session.send(build()) is True
+    assert writer.written == [expected.encode()]
 
 
 @pytest.mark.parametrize("frame", DIMENSION_22_FRAMES)
