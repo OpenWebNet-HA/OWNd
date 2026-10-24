@@ -74,6 +74,19 @@ _ZONE_STATES = {
 
 _WHO4_TEMP_REGEX = re.compile(r"^[01][0-9]{3}$")
 
+# WHO 4 DIMENSION 22 (``*#4*ZONE*22##``) kills the gateway's thermoregulation
+# daemon (bt_termo) and reboots an F461 about 3 minutes later (firmware oracle
+# crash_frames; live F461 2.0.11). Every send path refuses it, in any shape:
+# request, write (``*#22*``) or reply, with or without a dimension parameter.
+_WHO4_DIMENSION_22_REGEX = re.compile(r"\*#0*4\*[^*]*\*#?0*22(?:[#*]|$)")
+
+
+def is_who4_dimension_22(frame: object) -> bool:
+    """True if ``frame`` (or any frame in it) is a WHO 4 DIMENSION 22 frame."""
+    return any(
+        _WHO4_DIMENSION_22_REGEX.search(chunk) for chunk in str(frame).split("##")
+    )
+
 
 def who4_temperature(raw: str) -> float | None:
     """Decode WHO 4 temperature ``SXXX`` (tenths of a degree)."""

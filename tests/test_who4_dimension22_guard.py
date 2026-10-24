@@ -1,0 +1,185 @@
+"""WHO 4 DIMENSION 22 never leaves OWNd.
+
+``*#4*ZONE*22##`` kills the gateway's thermoregulation daemon (bt_termo) and
+reboots an F461 about 3 minutes later (firmware oracle crash_frames; live F461
+2.0.11). The frames below are test inputs only: every send path must refuse
+them before anything is written.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from OWNd.connection import OWNCommandSession, OWNGateway
+from OWNd.exceptions import OWNProtocolError
+from OWNd.message import OWNCommand, OWNHeatingCommand, OWNMessage, is_who4_dimension_22
+from OWNd.transport.serial import AsyncSerialTransport
+from OWNd.transport.tcp import AsyncTcpTransport
+
+DIMENSION_22_FRAMES = (
+    "*#4*2*22##",
+    "*#4*#0*22##",
+    "*#4*#1*22##",
+    "*#4*2#1*22##",
+    "*#4**22##",
+    "*#4*2*22#1##",
+    "*#4*2*#22*1##",
+    "*#4*2*22*1##",
+    "*#04*2*022##",
+    "*1*1*11##*#4*2*22##",
+)
+
+# Zone 22, other dimensions, and dimension 22 of other WHOs stay sendable.
+SAFE_FRAMES = (
+    "*#4*22##",
+    "*#4*22*0##",
+    "*#4*#22*14##",
+    "*#4*2*20##",
+    "*#4*2*220##",
+    "*#4*2*0*0220##",
+    "*#13**22##",
+    "*#1*22*1##",
+    "*4*303*22##",
+)
+
+
+class _Writer:
+    def __init__(self) -> None:
+        self.written: list[bytes] = []
+
+    def write(self, data: bytes) -> None:
+        self.written.append(data)
+
+    async def drain(self) -> None:
+        return None
+
+    def close(self) -> None:
+        return None
+
+    async def wait_closed(self) -> None:
+        return None
+
+
+def _command_session() -> tuple[OWNCommandSession, _Writer]:
+    gateway = OWNGateway({"address": "192.0.2.1", "port": 20000, "password": "12345"})
+    session = OWNCommandSession(gateway=gateway)
+    session._stream_reader = asyncio.StreamReader()
+    writer = _Writer()
+    session._stream_writer = writer  # type: ignore[assignment]
+    session._read_frame = AsyncMock(return_value="*#*1##")  # type: ignore[method-assign]
+    return session, writer
+
+
+@pytest.mark.parametrize("frame", DIMENSION_22_FRAMES)
+def test_detector_flags_every_dimension_22_form(frame: str) -> None:
+    assert is_who4_dimension_22(frame) is True
+
+
+@pytest.mark.parametrize("frame", SAFE_FRAMES)
+def test_detector_leaves_other_frames_alone(frame: str) -> None:
+    assert is_who4_dimension_22(frame) is False
+
+
+@pytest.mark.parametrize("frame", DIMENSION_22_FRAMES)
+@pytest.mark.asyncio
+async def test_command_session_refuses_raw_string(frame: str) -> None:
+    session, writer = _command_session()
+
+    assert await session.send(frame) is None
+    assert writer.written == []
+    assert isinstance(session._last_error, OWNProtocolError)
+    assert session._last_error.reason == "destructive_frame"
+
+    with pytest.raises(OWNProtocolError) as excinfo:
+        await session.send(frame, is_status_request=True, raise_on_error=True)
+    assert excinfo.value.reason == "destructive_frame"
+    assert writer.written == []
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        OWNCommand.parse("*#4*2*22##"),
+        OWNMessage.parse("*#4*#0*22##"),
+        OWNHeatingCommand("*#4*2#1*22##"),
+    ],
+    ids=["OWNCommand.parse", "OWNMessage.parse", "OWNHeatingCommand"],
+)
+@pytest.mark.asyncio
+async def test_command_session_refuses_parsed_and_built_messages(message: OWNMessage) -> None:
+    # The parser still reads the frame (it may appear on the bus); only sending is refused.
+    assert isinstance(message, OWNHeatingCommand)
+    assert message.is_valid
+    session, writer = _command_session()
+
+    with pytest.raises(OWNProtocolError, match="dimension 22"):
+        await session.send(message, raise_on_error=True)
+    assert writer.written == []
+
+
+@pytest.mark.asyncio
+async def test_command_session_refuses_before_reconnecting() -> None:
+    session, _ = _command_session()
+    session._stream_writer = None
+    session._stream_reader = None
+    with patch.object(session, "connect", new_callable=AsyncMock) as connect:
+        assert await session.send("*#4*2*22##") is None
+    connect.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_send_to_gateway_refuses() -> None:
+    gateway = OWNGateway({"address": "192.0.2.1", "port": 20000, "password": "12345"})
+    writer = _Writer()
+
+    async def fake_connect(self: OWNCommandSession, *, raise_on_error: bool = False):
+        del raise_on_error
+        self._stream_reader = asyncio.StreamReader()
+        self._stream_writer = writer
+        return {"Success": True}
+
+    with patch.object(OWNCommandSession, "connect", fake_connect):
+        with pytest.raises(OWNProtocolError):
+            await OWNCommandSession.send_to_gateway(
+                "*#4*2*22##", gateway, raise_on_error=True
+            )
+        assert await OWNCommandSession.send_to_gateway("*#4*2*22##", gateway) is None
+    assert writer.written == []
+
+
+@pytest.mark.parametrize("frame", SAFE_FRAMES[:3])
+@pytest.mark.asyncio
+async def test_command_session_still_sends_zone_22(frame: str) -> None:
+    session, writer = _command_session()
+
+    assert await session.send(frame, is_status_request=True) is True
+    assert writer.written == [frame.encode()]
+
+
+@pytest.mark.asyncio
+async def test_tcp_transport_refuses_through_its_command_session() -> None:
+    gateway = OWNGateway({"address": "192.0.2.1", "port": 20000, "password": "12345"})
+    transport = AsyncTcpTransport(gateway=gateway)
+    session, writer = _command_session()
+    transport._command_session = session
+
+    assert await transport.send("*#4*2*22##") is None
+    assert writer.written == []
+
+
+@pytest.mark.parametrize("frame", DIMENSION_22_FRAMES)
+@pytest.mark.asyncio
+async def test_serial_transport_refuses(frame: str) -> None:
+    transport = AsyncSerialTransport(port="/dev/null")
+    writer = _Writer()
+    transport._writer = writer  # type: ignore[assignment]
+    transport._connected = True
+
+    with pytest.raises(OWNProtocolError) as excinfo:
+        await transport.send(frame)
+    assert excinfo.value.reason == "destructive_frame"
+    assert writer.written == []
+    assert transport._pending_future is None

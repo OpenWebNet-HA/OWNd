@@ -25,7 +25,7 @@ from ..exceptions import (
     OWNProtocolError,
     OWNTimeoutError,
 )
-from ..message import OWNMessage, OWNSignaling
+from ..message import OWNMessage, OWNSignaling, is_who4_dimension_22
 
 # Cooldown window (seconds) after an in-send() reconnect attempt fails, so
 # concurrent callers queued behind _send_lock fail fast instead of each
@@ -227,6 +227,25 @@ class OWNCommandSession(OWNSession):
         raise_on_error: bool = False,
     ) -> list[OWNMessage | str] | bool | None:
         self._last_error = None
+        # Serialised once: the frame checked is the frame written.
+        frame = str(message)
+        if is_who4_dimension_22(frame):
+            # Never written, whatever the caller: it reboots the gateway.
+            err: OWNError = OWNProtocolError(
+                f"Refusing to send `{message}`: WHO 4 dimension 22 crashes the "
+                "gateway's thermoregulation and reboots it",
+                frame=str(message),
+                reason="destructive_frame",
+            )
+            self._last_error = err
+            self._logger.error(
+                "%s Refusing to send `%s`: WHO 4 dimension 22 reboots the gateway.",
+                self._log_id,
+                message,
+            )
+            if raise_on_error:
+                raise err
+            return None
         msg_obj = (
             message
             if isinstance(message, OWNMessage)
@@ -238,7 +257,7 @@ class OWNCommandSession(OWNSession):
             and not isinstance(msg_obj, OWNSignaling)
         )
         if not is_valid_frame:
-            err: OWNError = OWNProtocolError(
+            err = OWNProtocolError(
                 f"Invalid OpenWebNet frame `{message}`",
                 frame=str(message),
                 reason="invalid_frame",
@@ -336,7 +355,7 @@ class OWNCommandSession(OWNSession):
 
             written = False
             try:
-                self._stream_writer.write(str(message).encode())
+                self._stream_writer.write(frame.encode())
                 written = True
                 await self._stream_writer.drain()
 

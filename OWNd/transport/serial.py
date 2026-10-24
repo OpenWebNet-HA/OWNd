@@ -7,7 +7,8 @@ import contextlib
 import logging
 
 from ..connection import COMMAND_RESPONSE_MAX_FRAMES, COMMAND_TIMEOUT
-from ..message import OWNMessage, OWNSignaling
+from ..exceptions import OWNProtocolError
+from ..message import OWNMessage, OWNSignaling, is_who4_dimension_22
 from .base import OWNTransport
 
 SEPARATOR = b"##"
@@ -145,6 +146,14 @@ class AsyncSerialTransport(OWNTransport):
         self, message: str | OWNMessage, is_status_request: bool = False
     ) -> list[OWNMessage | str] | bool | None:
         del is_status_request
+        text = str(message)
+        if is_who4_dimension_22(text):
+            raise OWNProtocolError(
+                f"Refusing to send `{message}`: WHO 4 dimension 22 crashes the "
+                "gateway's thermoregulation and reboots it",
+                frame=str(message),
+                reason="destructive_frame",
+            )
         if not self._connected or self._writer is None:
             raise RuntimeError("Serial transport is not connected")
 
@@ -156,7 +165,7 @@ class AsyncSerialTransport(OWNTransport):
             )
             self._pending_frames = []
             try:
-                frame = str(message).encode()
+                frame = text.encode()
                 if not frame.endswith(SEPARATOR):
                     frame += SEPARATOR
                 self._writer.write(frame)
