@@ -271,6 +271,44 @@ async def test_command_session_serialises_once(
 
 
 @pytest.mark.asyncio
+async def test_nack_contract_is_unchanged() -> None:
+    """The NACK path keeps its observable behaviour: result, retries, logging.
+
+    MyHOME's suite (run by the conformance gate against this checkout) asserts
+    the DEBUG / ERROR log calls with the message object, not its string.
+    """
+    session, writer = _command_session()
+    session._read_frame = AsyncMock(return_value="*#*0##")  # type: ignore[method-assign]
+    session._logger = MagicMock()
+
+    # A NACKed status request is final: one write, DEBUG only, None.
+    status = OWNCommand.parse("*#16*0*5##")
+    assert await session.send(status, is_status_request=True) is None
+    assert writer.written == [b"*#16*0*5##"]
+    assert isinstance(session.last_error, OWNNackError)
+    assert session.last_error.frame == "*#16*0*5##"
+    session._logger.debug.assert_any_call(
+        "%s Gateway rejected status request %s (NACK, %s response(s)). Subsystem or device may not be present.",
+        session._log_id,
+        status,
+        0,
+    )
+    session._logger.warning.assert_not_called()
+    session._logger.error.assert_not_called()
+
+    # A NACKed command is retried once, then reported at ERROR with the object.
+    writer.written.clear()
+    command = OWNCommand.parse("*1*1*21##")
+    assert await session.send(command) is None
+    assert writer.written == [b"*1*1*21##", b"*1*1*21##"]
+    session._logger.error.assert_called_with(
+        "%s Could not send message `%s`. No more retries.", session._log_id, command
+    )
+    with pytest.raises(OWNNackError):
+        await session.send(command, raise_on_error=True)
+
+
+@pytest.mark.asyncio
 async def test_command_session_refuses_before_reconnecting() -> None:
     session, _ = _command_session()
     session._stream_writer = None
