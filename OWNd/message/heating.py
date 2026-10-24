@@ -74,6 +74,11 @@ _ZONE_STATES = {
 
 _WHO4_TEMP_REGEX = re.compile(r"^[01][0-9]{3}$")
 
+# A central-unit address: ``#0`` (99-zone central unit), ``#0#N`` (zone N of
+# a 4-zone central unit), ``#Z`` (zone Z addressed through the central
+# unit). ``#Z#N`` is not a central-unit form and is refused.
+_WHO4_CENTRAL_WHERE_REGEX = re.compile(r"#(?:0#[0-9]+|[0-9]+)")
+
 
 def who4_temperature(raw: str) -> float | None:
     """Decode WHO 4 temperature ``SXXX`` (tenths of a degree)."""
@@ -1048,7 +1053,19 @@ class OWNHeatingCommand(OWNCommand):
         would also switch the plant to summer. 311 is the generic automatic
         command libqtdevices sends to zones; on ``#0`` it puts every zone back
         on the central unit's program.
+
+        ``where`` must be a central-unit address (``#0``, ``#0#N``, ``#Z``):
+        central-unit WHATs address the central unit by API contract (OWNd#77
+        fix 3). The plain zone form ``*4*311*Z##`` is ``nack``/``silent`` on
+        all 12 emulated gateways (firmware oracle ``thermo-zone-mode`` and
+        ``ownd-pr82-heating``), and a live F461 2.0.11 NACKs ``*4*311*2##``
+        while it ACKs ``*4*311*#2##``. ``*4*1*Z##`` and ``*4*303*Z##`` are
+        forwarded by some gateways, but as zone commands, not central ones.
         """
+        if not _WHO4_CENTRAL_WHERE_REGEX.fullmatch(str(where)):
+            raise ValueError(
+                f"Central unit mode needs a central unit address such as '#0': {where}"
+            )
         mode_map = {
             CLIMATE_MODE_OFF: 303,
             CLIMATE_MODE_HEAT: 1,
