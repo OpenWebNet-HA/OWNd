@@ -91,7 +91,9 @@ class OWNCommandSession(OWNSession):
         # backoff on an unreachable host for a frame that is never written.
         frame = str(message)
         if is_who4_dimension_22(frame):
-            connection._refuse_destructive_frame(frame, raise_on_error=raise_on_error)
+            connection._refuse_destructive_frame(
+                frame, message, raise_on_error=raise_on_error
+            )
             return None
         try:
             if raise_on_error:
@@ -244,15 +246,20 @@ class OWNCommandSession(OWNSession):
             )
 
     def _refuse_destructive_frame(
-        self, frame: str, *, raise_on_error: bool
+        self, frame: str, message: str | OWNMessage, *, raise_on_error: bool
     ) -> None:
-        """Record and log the refusal of a WHO 4 dimension 22 frame, never written."""
+        """Record and log the refusal of a WHO 4 dimension 22 frame, never written.
+
+        ``frame`` is the serialised string the error carries; ``message`` is
+        the caller's object, passed to the logger like every other send log
+        line (formatted lazily, and what downstream tests assert on).
+        """
         err = destructive_frame_error(frame)
         self._last_error = err
         self._logger.error(
             "%s Refusing to send `%s`: %s.",
             self._log_id,
-            frame,
+            message,
             DESTRUCTIVE_FRAME_REASON,
         )
         if raise_on_error:
@@ -266,10 +273,11 @@ class OWNCommandSession(OWNSession):
         raise_on_error: bool = False,
     ) -> list[OWNMessage | str] | bool | None:
         self._last_error = None
-        # Serialised once: the frame checked is the frame written.
+        # Serialised once: the frame checked is the frame parsed, raised and
+        # written. Log lines keep the caller's object (formatted lazily).
         frame = str(message)
         if is_who4_dimension_22(frame):
-            self._refuse_destructive_frame(frame, raise_on_error=raise_on_error)
+            self._refuse_destructive_frame(frame, message, raise_on_error=raise_on_error)
             return None
         msg_obj = (
             message
@@ -291,7 +299,7 @@ class OWNCommandSession(OWNSession):
             self._logger.error(
                 "%s Refusing to send invalid OpenWebNet frame `%s`.",
                 self._log_id,
-                frame,
+                message,
             )
             if raise_on_error:
                 raise err
@@ -343,7 +351,7 @@ class OWNCommandSession(OWNSession):
                     self._logger.warning(
                         "%s Command session unavailable; message `%s` not sent.",
                         self._log_id,
-                        frame,
+                        message,
                     )
                     if raise_on_error:
                         raise err
@@ -371,7 +379,7 @@ class OWNCommandSession(OWNSession):
                     self._logger.warning(
                         "%s Command session unavailable; message `%s` not sent.",
                         self._log_id,
-                        frame,
+                        message,
                     )
                     if raise_on_error:
                         raise err
@@ -390,7 +398,7 @@ class OWNCommandSession(OWNSession):
                     self._logger.debug(
                         "%s Message `%s` was successfully sent.",
                         self._log_id,
-                        frame,
+                        message,
                     )
                     return collected or True
 
@@ -402,14 +410,14 @@ class OWNCommandSession(OWNSession):
                             self._logger.debug(
                                 "%s Gateway rejected status request %s (NACK, %s response(s)). Subsystem or device may not be present.",
                                 self._log_id,
-                                frame,
+                                message,
                                 len(collected),
                             )
                         else:
                             self._logger.error(
                                 "%s Could not send message `%s`. No more retries.",
                                 self._log_id,
-                                frame,
+                                message,
                             )
                         err = OWNNackError(
                             f"Gateway rejected message `{frame}` with NACK",
@@ -423,7 +431,7 @@ class OWNCommandSession(OWNSession):
                     self._logger.error(
                         "%s Could not send message `%s`. Retrying (%d)...",
                         self._log_id,
-                        frame,
+                        message,
                         attempt,
                     )
                     continue
@@ -432,7 +440,7 @@ class OWNCommandSession(OWNSession):
                     "%s Unexpected response `%s` to message `%s`.",
                     self._log_id,
                     resulting_message,
-                    frame,
+                    message,
                 )
                 err = OWNProtocolError(
                     f"Unexpected response `{resulting_message}` to message `{frame}`",
@@ -460,7 +468,7 @@ class OWNCommandSession(OWNSession):
                     "%s Timed out awaiting the complete response for `%s`; "
                     "command session closed.",
                     self._log_id,
-                    frame,
+                    message,
                 )
                 if raise_on_error:
                     raise err from error
@@ -493,7 +501,7 @@ class OWNCommandSession(OWNSession):
                     "%s Connection lost before acknowledgement of `%s`; "
                     "message will not be replayed.",
                     self._log_id,
-                    frame,
+                    message,
                 )
                 if raise_on_error:
                     raise err from error

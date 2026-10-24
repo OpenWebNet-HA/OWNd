@@ -11,12 +11,12 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from OWNd.connection import OWNCommandSession, OWNGateway
-from OWNd.exceptions import OWNProtocolError
+from OWNd.exceptions import OWNNackError, OWNProtocolError
 from OWNd.message import (
     OWNAutomationCommand,
     OWNCommand,
@@ -230,7 +230,7 @@ async def test_command_session_refuses_parsed_and_built_messages(message: OWNMes
 
 
 class _CountingCommand(OWNHeatingCommand):
-    """Counts serialisations: the string checked must be the one written and logged."""
+    """Counts serialisations: the string checked must be the one parsed, raised and written."""
 
     def __init__(self, raw: str) -> None:
         super().__init__(raw)
@@ -252,21 +252,22 @@ class _CountingCommand(OWNHeatingCommand):
 )
 @pytest.mark.asyncio
 async def test_command_session_serialises_once(
-    raw: str,
-    reply: str,
-    expected: bool | None,
-    writes: int,
-    caplog: pytest.LogCaptureFixture,
+    raw: str, reply: str, expected: bool | None, writes: int
 ) -> None:
     session, writer = _command_session()
     session._read_frame = AsyncMock(return_value=reply)  # type: ignore[method-assign]
+    # Log lines receive the message object and format it lazily (MyHOME's
+    # suite asserts on those call arguments), so the logger is a mock here
+    # and the count covers the code path only.
+    session._logger = MagicMock()
     message = _CountingCommand(raw)
 
-    with caplog.at_level(logging.DEBUG):
-        assert await session.send(message) is expected
+    assert await session.send(message) is expected
     assert message.str_calls == 1
     assert writer.written == [raw.encode()] * writes
-    assert raw in caplog.text
+    if expected is None:
+        assert isinstance(session.last_error, OWNProtocolError | OWNNackError)
+        assert session.last_error.frame == raw
 
 
 @pytest.mark.asyncio
