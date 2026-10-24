@@ -9,6 +9,7 @@ All notable changes to `OWNd` are documented in this file.
   - Automatic detection of legacy pre-`09W29` BTicino `F414` coarse-only dimmers via `DIMENSION 1` / `DIMENSION 4` transition speed `240` (`0xF0`, `DIMMER_SPEED_COARSE_ONLY`) with multi-gateway plant isolation (`gateway=` scoping on `OWNMessage.parse`, `OWNEvent.parse`, `OWNEventSession.get_next`, `is_coarse_dimmer_where`, `register_coarse_dimmer_where`, `clear_coarse_dimmer_wheres`, and `OWNLightingCommand.set_brightness`) (`#134`, `MyHOME#767`).
   - Canonical `libqtdevices` (`TS10_1_0_23`) coarse `WHAT 2..10` $\leftrightarrow$ fine `1..100%` conversion helpers (`COARSE_PRESET_TO_PERCENT`, `brightness_preset_to_percent`, `percent_to_brightness_preset`), `OWNLightingEvent.is_coarse_dimmer`, `OWNLightingEvent.brightness_preset_percent`, and `OWNLightingCommand.set_brightness(..., coarse=..., gateway=...)` (`#134`).
   - `WHAT 39` end of movement (`*1*39*WHERE##`) from WHO 1 motion detectors: `message_type` `motion_detected` with `motion` `False`, new `OWNLightingEvent.motion_end`, `is_sensor` `True`, `is_on` `None`. It was `unknown_state` `39` before (`MyHOME#777`).
+- **WHO 4 (`OWNHeatingCommand.actuators_status`)**: Actuator status request `*#4*WHERE*20##` for a zone, one actuator (`2#1`) or `#0` (all zones); a live F461 2.0.11 answers it per actuator (`*#4*2#1*20*0##`, `*#4*2#2*20*5##`).
 
 ## [2.0.0b11] - 2026-10-20
 

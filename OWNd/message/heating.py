@@ -74,6 +74,11 @@ _ZONE_STATES = {
 
 _WHO4_TEMP_REGEX = re.compile(r"^[01][0-9]{3}$")
 
+# A zone (``2``, ``#2``), an actuator of a zone (``2#1``), or a central unit
+# (``#0``, ``#0#1``). ASCII digits only; no ``*``, so no dimension can be
+# injected through the address.
+_WHO4_WHERE_REGEX = re.compile(r"#?[0-9]+(?:#[0-9]+)?")
+
 
 def who4_temperature(raw: str) -> float | None:
     """Decode WHO 4 temperature ``SXXX`` (tenths of a degree)."""
@@ -856,6 +861,27 @@ class OWNHeatingCommand(OWNCommand):
     def valves_status(cls, where: str | int) -> OWNHeatingCommand:
         message = cls(f"*#4*{where}*19##")
         message._human_readable_log = f"Requesting climate valve status update for {message._where}{message._interface_log_text}."
+        return message
+
+    @classmethod
+    def actuators_status(cls, where: str | int) -> OWNHeatingCommand:
+        """Request actuator status (``*#4*WHERE*20##``), one reply per actuator.
+
+        ``where`` is a zone (``2``, ``#2``), one actuator (``2#1``), the
+        central-unit form (``#0``, ``#0#N``) for every zone, or ``#Z#N`` (an
+        actuator addressed through the central unit; WHO 4 WHERE table, see
+        ``_normalize_zone``). A live F461 2.0.11 (2026-10-23) answers
+        ``*#4*2*20##`` with ``*#4*2#1*20*0##`` (valve, off) on the command
+        session and ``*#4*2#2*20*5##`` (fan coil, off) on the event session,
+        and ``*#4*#0*20##`` with both; a live MyHomeServer1 3.87.13 answers
+        ``*#4*35*20##`` with ``*#4*35#1*20*0##``. Whitespace around ``where``
+        is stripped. Anything else raises ``ValueError``.
+        """
+        where_str = str(where).strip() if where is not None else ""
+        if not _WHO4_WHERE_REGEX.fullmatch(where_str):
+            raise ValueError(f"Invalid zone address: {where}")
+        message = cls(f"*#4*{where_str}*20##")
+        message._human_readable_log = f"Requesting climate actuator status update for {message._where}{message._interface_log_text}."
         return message
 
     @classmethod
