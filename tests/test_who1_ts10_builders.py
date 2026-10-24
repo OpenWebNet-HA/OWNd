@@ -78,6 +78,42 @@ def test_apl_addressing_helpers():
     assert normalize_where("   ") == ""
 
 
+@pytest.mark.parametrize(
+    ("where", "expected"),
+    [
+        # Area 0, PL 1..9 written on 4 digits: `*#1*0001##` is nack/silent on
+        # 11 of the 12 emulated gateways (own-firmware-oracle lights-area0),
+        # and the MH202, which ACKs it, reports the light as `01`.
+        ("0004", "04"),
+        ("0001", "01"),
+        ("0007#4#01", "07#4#01"),
+        # Any other 4-digit input is left as typed (OWNd#123).
+        ("0109", "0109"),
+        ("0209", "0209"),
+        ("0809", "0809"),
+        ("0901", "0901"),
+        # Real 4-digit addresses stay as written (the MH202 echoes 0010 as 0010).
+        ("0010", "0010"),
+        ("0015", "0015"),
+        ("0112", "0112"),
+        ("1015", "1015"),
+        ("1001", "1001"),
+        # Not point addresses, or already canonical.
+        ("0000", "0000"),
+        ("0900", "0900"),
+        ("04", "04"),
+        ("29", "29"),
+        ("00", "00"),
+        ("0", "0"),
+        ("#0004", "#0004"),
+    ],
+)
+def test_normalize_where_canonicalises_area_0_four_digit_points(where, expected):
+    from OWNd.message import normalize_where
+
+    assert normalize_where(where) == expected
+
+
 def test_lighting_dimension_properties():
     from OWNd.message import OWNLightingEvent, OWNMessage
 

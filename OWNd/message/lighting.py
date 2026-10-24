@@ -157,7 +157,20 @@ def normalize_where(where: str | int | None) -> str:
         return ""
     parts = where_str.split("#", 1)
     base = parts[0]
-    if is_apl_address(base) or base in ("00", "100", "0"):
+    if (
+        len(base) == 4
+        and base.isdigit()
+        and base[:3] == "000"
+        and base[3] != "0"
+    ):
+        # Area 0, PL 1..9 spelled with four digits (0004) is canonically
+        # 04: `*#1*0001##` and `*1*1*0001##` are nack/silent on 11 of the 12
+        # emulated gateways (own-firmware-oracle lights-area0) and the one
+        # that ACKs them, the MH202, reports the light as `01`
+        # (`*1*1000#1*01##`); a live F461 2.0.11 NACKs `0001` and ACKs `01`.
+        # Any other 4-digit input (0109, 0209) is left as typed (OWNd#123).
+        norm_base = f"{base[1]}{base[3]}"
+    elif is_apl_address(base) or base in ("00", "100", "0"):
         norm_base = base
     elif base.isdigit() and base.startswith("00") and int(base) > 15:
         norm_base = str(int(base))

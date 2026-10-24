@@ -10,6 +10,9 @@ All notable changes to `OWNd` are documented in this file.
   - Canonical `libqtdevices` (`TS10_1_0_23`) coarse `WHAT 2..10` $\leftrightarrow$ fine `1..100%` conversion helpers (`COARSE_PRESET_TO_PERCENT`, `brightness_preset_to_percent`, `percent_to_brightness_preset`), `OWNLightingEvent.is_coarse_dimmer`, `OWNLightingEvent.brightness_preset_percent`, and `OWNLightingCommand.set_brightness(..., coarse=..., gateway=...)` (`#134`).
   - `WHAT 39` end of movement (`*1*39*WHERE##`) from WHO 1 motion detectors: `message_type` `motion_detected` with `motion` `False`, new `OWNLightingEvent.motion_end`, `is_sensor` `True`, `is_on` `None`. It was `unknown_state` `39` before (`MyHOME#777`).
 
+### Fixed
+- **WHO 1 (`normalize_where`)**: a 4-digit point address of area 0 (`0004`, `0007#4#01`) normalises to its 2-digit form (`04`, `07#4#01`), the one gateways accept and report: `*#1*0001##` / `*1*1*0001##` are `nack`/`silent` on 11 of 12 emulated gateways (own-firmware-oracle `lights-area0`) and on a live F461 2.0.11, and the MH202 reports the light as `01`. Other 4-digit inputs (`0109`, `0010`) stay as typed (`#123`, `MyHOME#147`).
+
 ## [2.0.0b11] - 2026-10-20
 
 ### Added
