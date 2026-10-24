@@ -10,6 +10,9 @@ All notable changes to `OWNd` are documented in this file.
   - Canonical `libqtdevices` (`TS10_1_0_23`) coarse `WHAT 2..10` $\leftrightarrow$ fine `1..100%` conversion helpers (`COARSE_PRESET_TO_PERCENT`, `brightness_preset_to_percent`, `percent_to_brightness_preset`), `OWNLightingEvent.is_coarse_dimmer`, `OWNLightingEvent.brightness_preset_percent`, and `OWNLightingCommand.set_brightness(..., coarse=..., gateway=...)` (`#134`).
   - `WHAT 39` end of movement (`*1*39*WHERE##`) from WHO 1 motion detectors: `message_type` `motion_detected` with `motion` `False`, new `OWNLightingEvent.motion_end`, `is_sensor` `True`, `is_on` `None`. It was `unknown_state` `39` before (`MyHOME#777`).
 
+### Fixed
+- **WHO 4 (`OWNHeatingCommand.central_status`)**: the deprecation text said gateways refuse `*#4*WHERE*14##`; six of the twelve emulated gateways forward it to the bus (own-firmware-oracle `trace-corpus`) and it is simply unanswered without a central unit. The warning now points to `status('#0')`. The frame is unchanged.
+
 ## [2.0.0b11] - 2026-10-20
 
 ### Added
