@@ -229,6 +229,46 @@ async def test_command_session_refuses_parsed_and_built_messages(message: OWNMes
     assert writer.written == []
 
 
+class _CountingCommand(OWNHeatingCommand):
+    """Counts serialisations: the string checked must be the one written and logged."""
+
+    def __init__(self, raw: str) -> None:
+        super().__init__(raw)
+        self.str_calls = 0
+
+    def __str__(self) -> str:
+        self.str_calls += 1
+        return super().__str__()
+
+
+@pytest.mark.parametrize(
+    "raw, reply, expected, writes",
+    [
+        ("*#4*22##", "*#*1##", True, 1),
+        ("*#4*22##", "*#*0##", None, 2),  # a NACKed command is retried once
+        ("*#4*2*22##", "*#*1##", None, 0),
+    ],
+    ids=["ack", "nack", "destructive"],
+)
+@pytest.mark.asyncio
+async def test_command_session_serialises_once(
+    raw: str,
+    reply: str,
+    expected: bool | None,
+    writes: int,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session, writer = _command_session()
+    session._read_frame = AsyncMock(return_value=reply)  # type: ignore[method-assign]
+    message = _CountingCommand(raw)
+
+    with caplog.at_level(logging.DEBUG):
+        assert await session.send(message) is expected
+    assert message.str_calls == 1
+    assert writer.written == [raw.encode()] * writes
+    assert raw in caplog.text
+
+
 @pytest.mark.asyncio
 async def test_command_session_refuses_before_reconnecting() -> None:
     session, _ = _command_session()

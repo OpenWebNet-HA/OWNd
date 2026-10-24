@@ -274,7 +274,7 @@ class OWNCommandSession(OWNSession):
         msg_obj = (
             message
             if isinstance(message, OWNMessage)
-            else OWNMessage.parse(str(message), gateway=self._gateway)
+            else OWNMessage.parse(frame, gateway=self._gateway)
         )
         is_valid_frame = (
             msg_obj is not None
@@ -283,15 +283,15 @@ class OWNCommandSession(OWNSession):
         )
         if not is_valid_frame:
             err: OWNError = OWNProtocolError(
-                f"Invalid OpenWebNet frame `{message}`",
-                frame=str(message),
+                f"Invalid OpenWebNet frame `{frame}`",
+                frame=frame,
                 reason="invalid_frame",
             )
             self._last_error = err
             self._logger.error(
                 "%s Refusing to send invalid OpenWebNet frame `%s`.",
                 self._log_id,
-                message,
+                frame,
             )
             if raise_on_error:
                 raise err
@@ -336,14 +336,14 @@ class OWNCommandSession(OWNSession):
                     < SEND_RECONNECT_COOLDOWN
                 ):
                     err = self._last_error or OWNConnectionError(
-                        f"Command session unavailable; message `{message}` not sent",
+                        f"Command session unavailable; message `{frame}` not sent",
                         reason="connection_unavailable",
                     )
                     self._last_error = err
                     self._logger.warning(
                         "%s Command session unavailable; message `%s` not sent.",
                         self._log_id,
-                        message,
+                        frame,
                     )
                     if raise_on_error:
                         raise err
@@ -363,7 +363,7 @@ class OWNCommandSession(OWNSession):
                 ):
                     self._last_reconnect_failure = time.monotonic()
                     err = self._last_error or OWNConnectionError(
-                        f"Command session unavailable; message `{message}` not sent",
+                        f"Command session unavailable; message `{frame}` not sent",
                         reason="connection_unavailable",
                     )
                     await self.close()
@@ -371,7 +371,7 @@ class OWNCommandSession(OWNSession):
                     self._logger.warning(
                         "%s Command session unavailable; message `%s` not sent.",
                         self._log_id,
-                        message,
+                        frame,
                     )
                     if raise_on_error:
                         raise err
@@ -390,7 +390,7 @@ class OWNCommandSession(OWNSession):
                     self._logger.debug(
                         "%s Message `%s` was successfully sent.",
                         self._log_id,
-                        message,
+                        frame,
                     )
                     return collected or True
 
@@ -402,18 +402,18 @@ class OWNCommandSession(OWNSession):
                             self._logger.debug(
                                 "%s Gateway rejected status request %s (NACK, %s response(s)). Subsystem or device may not be present.",
                                 self._log_id,
-                                message,
+                                frame,
                                 len(collected),
                             )
                         else:
                             self._logger.error(
                                 "%s Could not send message `%s`. No more retries.",
                                 self._log_id,
-                                message,
+                                frame,
                             )
                         err = OWNNackError(
-                            f"Gateway rejected message `{message}` with NACK",
-                            frame=str(message),
+                            f"Gateway rejected message `{frame}` with NACK",
+                            frame=frame,
                             responses=list(collected),
                         )
                         self._last_error = err
@@ -423,7 +423,7 @@ class OWNCommandSession(OWNSession):
                     self._logger.error(
                         "%s Could not send message `%s`. Retrying (%d)...",
                         self._log_id,
-                        message,
+                        frame,
                         attempt,
                     )
                     continue
@@ -432,10 +432,10 @@ class OWNCommandSession(OWNSession):
                     "%s Unexpected response `%s` to message `%s`.",
                     self._log_id,
                     resulting_message,
-                    message,
+                    frame,
                 )
                 err = OWNProtocolError(
-                    f"Unexpected response `{resulting_message}` to message `{message}`",
+                    f"Unexpected response `{resulting_message}` to message `{frame}`",
                     frame=str(resulting_message),
                     reason="unexpected_response",
                 )
@@ -452,7 +452,7 @@ class OWNCommandSession(OWNSession):
             except TimeoutError as error:
                 await self.close()
                 err = OWNTimeoutError(
-                    f"Timed out awaiting the complete response for `{message}`",
+                    f"Timed out awaiting the complete response for `{frame}`",
                     reason="command_timeout",
                 )
                 self._last_error = err
@@ -460,7 +460,7 @@ class OWNCommandSession(OWNSession):
                     "%s Timed out awaiting the complete response for `%s`; "
                     "command session closed.",
                     self._log_id,
-                    message,
+                    frame,
                 )
                 if raise_on_error:
                     raise err from error
@@ -485,7 +485,7 @@ class OWNCommandSession(OWNSession):
                 # No retry: this is a definitive loss, and the consumer hears it.
                 self._set_connected(False)
                 err = OWNConnectionError(
-                    f"Connection lost before acknowledgement of `{message}` ({error})",
+                    f"Connection lost before acknowledgement of `{frame}` ({error})",
                     reason="connection_lost",
                 )
                 self._last_error = err
@@ -493,7 +493,7 @@ class OWNCommandSession(OWNSession):
                     "%s Connection lost before acknowledgement of `%s`; "
                     "message will not be replayed.",
                     self._log_id,
-                    message,
+                    frame,
                 )
                 if raise_on_error:
                     raise err from error
