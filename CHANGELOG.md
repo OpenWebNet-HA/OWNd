@@ -10,6 +10,9 @@ All notable changes to `OWNd` are documented in this file.
   - Canonical `libqtdevices` (`TS10_1_0_23`) coarse `WHAT 2..10` $\leftrightarrow$ fine `1..100%` conversion helpers (`COARSE_PRESET_TO_PERCENT`, `brightness_preset_to_percent`, `percent_to_brightness_preset`), `OWNLightingEvent.is_coarse_dimmer`, `OWNLightingEvent.brightness_preset_percent`, and `OWNLightingCommand.set_brightness(..., coarse=..., gateway=...)` (`#134`).
   - `WHAT 39` end of movement (`*1*39*WHERE##`) from WHO 1 motion detectors: `message_type` `motion_detected` with `motion` `False`, new `OWNLightingEvent.motion_end`, `is_sensor` `True`, `is_on` `None`. It was `unknown_state` `39` before (`MyHOME#777`).
 
+### Fixed
+- **Profiles (`F461Profile`, `MyHomeServer1Profile`)**: WHO 16 is no longer in `supported_who`: all 86 WHO 16 frames of the firmware oracle are `nack`/`silent` on F461 020011 and MyHomeServer1 028206 (`sound-who16-source` and the other suites), a live F461 2.0.11 NACKs `*#16*0*5##`, and the MyHomeServer1 firmware discards WHO 16 (`MyHOME#459`). WHO 22 stays listed and `supports_audio` is unchanged; MH202 keeps WHO 16.
+
 ## [2.0.0b11] - 2026-10-20
 
 ### Added
