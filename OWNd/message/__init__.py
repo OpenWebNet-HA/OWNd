@@ -194,6 +194,7 @@ from .lighting import (
     percent_to_brightness_preset,
     register_coarse_dimmer_where,
     OWNLightingCommand,
+    OWNLightingDiagnosticEvent,
     OWNLightingEvent,
 )
 from .load import (
@@ -257,6 +258,7 @@ __all__ = [
     "normalize_where",
     "OWNLightingEvent",
     "OWNLightingCommand",
+    "OWNLightingDiagnosticEvent",
     # Automation (WHO 2)
     "OWNAutomationEvent",
     "OWNAutomationCommand",

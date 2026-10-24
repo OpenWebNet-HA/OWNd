@@ -106,10 +106,10 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
         dispatch_who_keys=(0,),
     ),
     WhoCatalogDefinition(
-        who="**1**",
+        who="**1** / **1001**",
         name="Lighting",
-        description="On/off switching, dimming level (0–100%) with automatic legacy pre-09W29 F414 coarse preset fallback (speed 240 / 0xF0), DALI Tunable White (Dimension 14, 2000K–6535K / mireds), status queries",
-        dispatch_who_keys=(1,),
+        description="On/off switching, dimming level (0–100%) with automatic legacy pre-09W29 F414 coarse preset fallback (speed 240 / 0xF0), DALI Tunable White (Dimension 14, 2000K–6535K / mireds), status queries, actuator autodiagnostic masks (WHO 1001 Dimension 11)",
+        dispatch_who_keys=(1, 1001),
     ),
     WhoCatalogDefinition(
         who="**2**",

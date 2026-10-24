@@ -962,3 +962,44 @@ class OWNLightingCommand(OWNCommand):
 
 register_event_parser(1, OWNLightingEvent)
 register_command_parser(1, OWNLightingCommand)
+
+
+class OWNLightingDiagnosticEvent(OWNEvent):
+    """WHO 1001: lighting actuator autodiagnostics.
+
+    ``*#1001*WHERE*11*<mask>##`` follows a status request to a faulty actuator
+    (``*#1*74##`` -> ``*1*19*74##``) on F453, F453AV, F459, F460, F461, MH200N,
+    MH202 and MyHomeServer1 in the firmware oracle (``what19`` suite), and on
+    a physical MH200 (own-firmware-oracle findings/MH200N/what19.md, capture
+    EVID-MH200-WHAT19-FAULT). The gateway copies the actuator's 24-bit mask
+    verbatim; what each bit means is not known, so the mask is exposed as
+    sent, with the positions of its cleared bits.
+    """
+
+    def __init__(self, data: str) -> None:
+        super().__init__(data)
+        self._diagnostic_mask: str | None = None
+        # Exactly one value, all bits: *#1001*74*11*101*5## (a trailing value)
+        # is not the mask shape the gateways send and fails closed.
+        value = self._dimension_value[0] if len(self._dimension_value) == 1 else ""
+        if self._dimension == 11 and value and set(value) <= {"0", "1"}:
+            self._diagnostic_mask = value
+            self._human_readable_log = (
+                f"Light {self._where} autodiagnostic mask is {value}"
+                f" (cleared bits: {', '.join(map(str, self.cleared_bits or ())) or 'none'})."
+            )
+
+    @property
+    def diagnostic_mask(self) -> str | None:
+        """The DIMENSION 11 bitmask as sent (``"111110111111111111110111"``)."""
+        return self._diagnostic_mask
+
+    @property
+    def cleared_bits(self) -> tuple[int, ...] | None:
+        """1-based positions, from the left, of the mask's ``0`` bits (``(6, 21)``)."""
+        if self._diagnostic_mask is None:
+            return None
+        return tuple(i for i, bit in enumerate(self._diagnostic_mask, 1) if bit == "0")
+
+
+register_event_parser(1001, OWNLightingDiagnosticEvent)
