@@ -480,8 +480,10 @@ class OWNHeatingEvent(OWNEvent):
 
         elif self._dimension == 14:  # Set temperature
             self._type = MESSAGE_TYPE_TARGET_TEMPERATURE
+            # Some central units prefix the value with '#'
+            # (*#4*#1*14*#0230*1##, MyHOME#139); the value is the same.
             self._set_temperature = (
-                who4_temperature(self._dimension_value[0])
+                who4_temperature(self._dimension_value[0].removeprefix("#"))
                 if self._dimension_value
                 else None
             )
