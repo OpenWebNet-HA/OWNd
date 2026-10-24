@@ -9,6 +9,7 @@ them before anything is written.
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Callable
 from unittest.mock import AsyncMock, patch
 
@@ -267,27 +268,124 @@ async def test_command_session_still_sends_zone_22(frame: str) -> None:
     assert writer.written == [frame.encode()]
 
 
+def _serial_transport() -> tuple[AsyncSerialTransport, _Writer]:
+    transport = AsyncSerialTransport(port="/dev/null")
+    writer = _Writer()
+    transport._writer = writer  # type: ignore[assignment]
+    transport._connected = True
+    return transport, writer
+
+
 @pytest.mark.asyncio
-async def test_tcp_transport_refuses_through_its_command_session() -> None:
+async def test_tcp_transport_refuses_through_its_command_session(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     gateway = OWNGateway({"address": "192.0.2.1", "port": 20000, "password": "12345"})
     transport = AsyncTcpTransport(gateway=gateway)
+    assert transport.last_error is None
     session, writer = _command_session()
     transport._command_session = session
 
-    assert await transport.send("*#4*2*22##") is None
+    with caplog.at_level(logging.ERROR):
+        assert await transport.send("*#4*2*22##") is None
+    assert writer.written == []
+    assert transport.last_error is session.last_error
+    assert isinstance(transport.last_error, OWNProtocolError)
+    assert transport.last_error.reason == "destructive_frame"
+    assert "bt_termo" in caplog.text
+
+    # The keyword reaches the command session: same contract on both transports.
+    with pytest.raises(OWNProtocolError) as excinfo:
+        await transport.send("*#4*2*22##", raise_on_error=True)
+    assert excinfo.value.reason == "destructive_frame"
     assert writer.written == []
 
 
 @pytest.mark.parametrize("frame", DIMENSION_22_FRAMES)
 @pytest.mark.asyncio
-async def test_serial_transport_refuses(frame: str) -> None:
-    transport = AsyncSerialTransport(port="/dev/null")
-    writer = _Writer()
-    transport._writer = writer  # type: ignore[assignment]
-    transport._connected = True
+async def test_serial_transport_refuses(
+    frame: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    transport, writer = _serial_transport()
 
-    with pytest.raises(OWNProtocolError) as excinfo:
-        await transport.send(frame)
-    assert excinfo.value.reason == "destructive_frame"
+    # Default: like AsyncTcpTransport, log at ERROR, keep the error, return None.
+    with caplog.at_level(logging.ERROR):
+        assert await transport.send(frame) is None
     assert writer.written == []
     assert transport._pending_future is None
+    assert isinstance(transport.last_error, OWNProtocolError)
+    assert transport.last_error.reason == "destructive_frame"
+    assert transport.last_error.frame.endswith("##")
+    assert "bt_termo" in caplog.text
+
+    with pytest.raises(OWNProtocolError) as excinfo:
+        await transport.send(frame, raise_on_error=True)
+    assert excinfo.value.reason == "destructive_frame"
+    assert excinfo.value.frame == transport.last_error.frame
+    assert writer.written == []
+    assert transport._pending_future is None
+
+
+@pytest.mark.asyncio
+async def test_serial_transport_refuses_built_message() -> None:
+    transport, writer = _serial_transport()
+
+    with pytest.raises(OWNProtocolError, match="dimension 22"):
+        await transport.send(OWNHeatingCommand("*#4*2#1*22##"), raise_on_error=True)
+    assert writer.written == []
+
+
+@pytest.mark.parametrize(
+    "frame",
+    ["*1*1*11#*#4*2*22##", "*#*1##", "not a frame", ""],
+    ids=["single-hash-concatenation", "signaling", "text", "empty"],
+)
+@pytest.mark.asyncio
+async def test_serial_transport_refuses_invalid_frames(
+    frame: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    # Like OWNCommandSession._locked_send: only a valid, non-signaling frame is written.
+    transport, writer = _serial_transport()
+
+    with caplog.at_level(logging.ERROR):
+        assert await transport.send(frame) is None
+    assert writer.written == []
+    assert transport._pending_future is None
+    assert isinstance(transport.last_error, OWNProtocolError)
+    assert transport.last_error.reason == "invalid_frame"
+    assert "invalid OpenWebNet frame" in caplog.text
+
+    with pytest.raises(OWNProtocolError) as excinfo:
+        await transport.send(frame, raise_on_error=True)
+    assert excinfo.value.reason == "invalid_frame"
+    assert writer.written == []
+
+
+@pytest.mark.asyncio
+async def test_serial_transport_not_connected_comes_first() -> None:
+    # Same ordering as AsyncTcpTransport: an unconnected transport is a
+    # RuntimeError whatever the frame; the frame checks run on a connected one.
+    transport = AsyncSerialTransport(port="/dev/null")
+    with pytest.raises(RuntimeError, match="not connected"):
+        await transport.send("*#4*2*22##", raise_on_error=True)
+    assert transport.last_error is None
+
+
+@pytest.mark.asyncio
+async def test_serial_transport_still_sends_safe_frames() -> None:
+    transport, writer = _serial_transport()
+    assert transport.last_error is None
+
+    # The third frame has no terminator: the serial transport appends it.
+    for frame in ("*#4*22##", "*#1*#4*#2*22*0*0##", "*#4*#4*#30*22*10*2026"):
+
+        async def ack() -> None:
+            await asyncio.sleep(0)
+            assert transport._pending_future is not None
+            transport._pending_future.set_result(True)
+
+        task = asyncio.create_task(ack())
+        assert await transport.send(frame, raise_on_error=True) is True
+        await task
+        assert transport.last_error is None
+    assert writer.written == [b"*#4*22##", b"*#1*#4*#2*22*0*0##", b"*#4*#4*#30*22*10*2026##"]

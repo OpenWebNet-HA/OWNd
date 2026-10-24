@@ -174,7 +174,9 @@ async def test_tcp_transport_full_lifecycle_and_listen_loop(dummy_gateway):
         # Send command
         res = await transport.send("*1*1*12##", is_status_request=False)
         assert res is True
-        mock_cmd_sess.send.assert_called_once_with("*1*1*12##", False)
+        mock_cmd_sess.send.assert_called_once_with(
+            "*1*1*12##", False, raise_on_error=False
+        )
 
         # Disconnect
         await transport.disconnect()

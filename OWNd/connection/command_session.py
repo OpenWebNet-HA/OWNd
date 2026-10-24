@@ -27,6 +27,23 @@ from ..exceptions import (
 )
 from ..message import OWNMessage, OWNSignaling, is_who4_dimension_22
 
+# Why every send path refuses WHO 4 dimension 22 (see
+# ``OWNd.message.is_who4_dimension_22``): the gateway never gets the frame.
+DESTRUCTIVE_FRAME_REASON = (
+    "WHO 4 dimension 22 crashes the thermoregulation daemon (bt_termo) "
+    "on Linux IP gateways"
+)
+
+
+def destructive_frame_error(frame: str) -> OWNProtocolError:
+    """The error every send path raises or records for a WHO 4 dimension 22 frame."""
+    return OWNProtocolError(
+        f"Refusing to send `{frame}`: {DESTRUCTIVE_FRAME_REASON}",
+        frame=frame,
+        reason="destructive_frame",
+    )
+
+
 # Cooldown window (seconds) after an in-send() reconnect attempt fails, so
 # concurrent callers queued behind _send_lock fail fast instead of each
 # repeating a socket connect attempt while the gateway is unreachable.
@@ -231,17 +248,13 @@ class OWNCommandSession(OWNSession):
         frame = str(message)
         if is_who4_dimension_22(frame):
             # Never written, whatever the caller: it reboots the gateway.
-            err: OWNError = OWNProtocolError(
-                f"Refusing to send `{message}`: WHO 4 dimension 22 crashes the "
-                "gateway's thermoregulation and reboots it",
-                frame=str(message),
-                reason="destructive_frame",
-            )
+            err: OWNError = destructive_frame_error(frame)
             self._last_error = err
             self._logger.error(
-                "%s Refusing to send `%s`: WHO 4 dimension 22 reboots the gateway.",
+                "%s Refusing to send `%s`: %s.",
                 self._log_id,
-                message,
+                frame,
+                DESTRUCTIVE_FRAME_REASON,
             )
             if raise_on_error:
                 raise err
