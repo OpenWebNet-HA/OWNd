@@ -112,7 +112,10 @@ def is_who4_dimension_22(frame: object) -> bool:
 # A zone (``2``, ``#2``), an actuator of a zone (``2#1``), or a central unit
 # (``#0``, ``#0#1``). ASCII digits only; no ``*``, so no dimension can be
 # injected through the address.
-_WHO4_WHERE_REGEX = re.compile(r"#?[0-9]+(?:#[0-9]+)?")
+# WHO 4 WHERE for a status request: ``Z``, ``#Z``, ``Z#N``, ``#0``, ``#0#N``,
+# ``#Z#N``, each optionally routed through a bus interface (``#4#NN``, the
+# interface is exactly two digits: ``3#4#01``, ``#3#4#01``, ``2#1#4#01``).
+_WHO4_WHERE_REGEX = re.compile(r"#?[0-9]+(?:#[0-9]+)?(?:#4#[0-9]{2})?")
 
 
 def who4_temperature(raw: str) -> float | None:
@@ -905,12 +908,22 @@ class OWNHeatingCommand(OWNCommand):
         ``where`` is a zone (``2``, ``#2``), one actuator (``2#1``), the
         central-unit form (``#0``, ``#0#N``) for every zone, or ``#Z#N`` (an
         actuator addressed through the central unit; WHO 4 WHERE table, see
-        ``_normalize_zone``). A live F461 2.0.11 (2026-10-23) answers
-        ``*#4*2*20##`` with ``*#4*2#1*20*0##`` (valve, off) on the command
-        session and ``*#4*2#2*20*5##`` (fan coil, off) on the event session,
-        and ``*#4*#0*20##`` with both; a live MyHomeServer1 3.87.13 answers
+        ``_normalize_zone``). Each form may be routed through a bus interface
+        with a two-digit ``#4#NN`` suffix (``3#4#01``, ``#3#4#01``,
+        ``2#1#4#01``): own-firmware-oracle#60 (``thermo-zone-requests``) shows
+        ``*#4*2#4#01*20##`` forwarded by F450, F454, F459, F460, F461, MH202
+        and MyHomeServer1 and dropped by F453, F453AV, H4684, MH200 and
+        MH200N. The frame that crashes the MH202 thermoregulation daemon in
+        that suite is the routed zone status without a dimension
+        (``*#4*2#4#01##``); this builder only emits the dimension-20 form.
+        A live F461 2.0.11 (2026-10-23) answers ``*#4*2*20##`` with
+        ``*#4*2#1*20*0##`` (valve, off) on the command session and
+        ``*#4*2#2*20*5##`` (fan coil, off) on the event session, and
+        ``*#4*#0*20##`` with both; a live MyHomeServer1 3.87.13 answers
         ``*#4*35*20##`` with ``*#4*35#1*20*0##``. Whitespace around ``where``
-        is stripped. Anything else raises ``ValueError``.
+        is stripped. Anything else (``*``, an empty string, a one- or
+        three-digit interface such as ``3#4#1`` or ``3#4#001``) raises
+        ``ValueError``.
         """
         where_str = str(where).strip() if where is not None else ""
         if not _WHO4_WHERE_REGEX.fullmatch(where_str):

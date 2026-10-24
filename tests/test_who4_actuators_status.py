@@ -10,6 +10,14 @@ answers ``*#4*2*20##`` with ``*#4*2#1*20*0##`` on the command session and
 Dimension 20 values (WHO 4 spec, ``OWNHeatingEvent``): 0 off, 1 on, 2 opened,
 3 closed, 4 stop, 5 fan coil off, 6-8 fan speeds, 9 fan auto;
 ``_actuator_active_states`` is ``1, 2, 6, 7, 8, 9``, so value 5 is inactive.
+
+Bus-interface routed addresses (``Z#4#NN``, ``#Z#4#NN``, ``Z#N#4#NN``; MyHOME
+sends them for zones behind an F422) are accepted since the MyHOME#792 review:
+own-firmware-oracle#60 (``thermo-zone-requests``) shows ``*#4*2#4#01*20##``
+forwarded by F450, F454, F459, F460, F461, MH202 and MyHomeServer1 and dropped
+by F453, F453AV, H4684, MH200 and MH200N. The frame that crashes the MH202
+daemon there is ``*#4*2#4#01##`` (zone status, no dimension), which this
+builder never emits: it only builds the dimension-20 form.
 """
 
 from __future__ import annotations
@@ -39,6 +47,13 @@ _DIMENSION_22 = re.compile(r"\*#4\*[^*]*\*#?0*22(?:[#*]|$)")
         # on purpose; not seen live (the plant has no central unit).
         ("#2#1", "*#4*#2#1*20##"),
         ("22", "*#4*22*20##"),
+        # Bus-interface routed forms (``#4#NN``, two-digit interface): zone,
+        # zone through the central unit, one actuator of a zone.
+        ("3#4#01", "*#4*3#4#01*20##"),
+        (" 3#4#01 ", "*#4*3#4#01*20##"),
+        ("#3#4#01", "*#4*#3#4#01*20##"),
+        ("2#1#4#01", "*#4*2#1#4#01*20##"),
+        ("12#4#15", "*#4*12#4#15*20##"),
     ],
 )
 def test_actuators_status_builds_dimension_20(where: str | int, frame: str) -> None:
@@ -58,7 +73,34 @@ def test_actuators_status_builds_dimension_20(where: str | int, frame: str) -> N
 
 @pytest.mark.parametrize(
     "where",
-    ["", " ", "2*22", "2*22#", "#0*22", "2##", "*", "a", "##0", "2#1#4", "٢", None],
+    [
+        "",
+        " ",
+        "2*22",
+        "2*22#",
+        "#0*22",
+        "2##",
+        "*",
+        "a",
+        "##0",
+        "2#1#4",
+        "٢",
+        None,
+        # Routing suffix: the interface is exactly two digits after ``#4#``.
+        "3#4#1",
+        "3#4#001",
+        "#3#4#1",
+        "#3#4#001",
+        "2#1#4#1",
+        "2#1#4#001",
+        "3#4#",
+        "3#4#0a",
+        "3#4#01#",
+        "3#3#01",
+        "3#4#01#4#01",
+        "3#4#01*22",
+        "*#4#01",
+    ],
 )
 def test_actuators_status_refuses_bad_addresses(where: object) -> None:
     with pytest.raises(ValueError):
