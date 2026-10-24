@@ -429,6 +429,30 @@ async def test_serial_transport_refuses_invalid_frames(
     assert writer.written == []
 
 
+# Spellings a C atoi() would still read as WHO 4 / dimension 22 but that are
+# not OpenWebNet tokens: the detector leaves them to the frame validation,
+# which refuses them as invalid on both paths, so they are never written.
+ATOI_PREFIX_FRAMES = ("*#4junk*2*22##", "*#4*2*22junk##", "*#4.0*2*22##", "*#4*2*22.5##")
+
+
+@pytest.mark.parametrize("frame", ATOI_PREFIX_FRAMES)
+@pytest.mark.asyncio
+async def test_atoi_prefix_spellings_are_refused_as_invalid(frame: str) -> None:
+    assert OWNMessage.parse(frame) is None
+
+    session, session_writer = _command_session()
+    assert await session.send(frame) is None
+    assert isinstance(session.last_error, OWNProtocolError)
+    assert session.last_error.reason == "invalid_frame"
+    assert session_writer.written == []
+
+    transport, serial_writer = _serial_transport()
+    with pytest.raises(OWNProtocolError) as excinfo:
+        await transport.send(frame, raise_on_error=True)
+    assert excinfo.value.reason == "invalid_frame"
+    assert serial_writer.written == []
+
+
 @pytest.mark.asyncio
 async def test_serial_transport_not_connected_comes_first() -> None:
     # Same ordering as AsyncTcpTransport: an unconnected transport is a

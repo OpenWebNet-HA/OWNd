@@ -28,7 +28,13 @@ class OWNTransport(ABC):
 
     @property
     def last_error(self) -> OWNError | None:
-        """The error of the last ``send()`` that returned ``None``, if any."""
+        """The error recorded by the last ``send()``, if any.
+
+        Both transports record a local refusal (``OWNProtocolError``); the
+        TCP transport exposes its command session's ``last_error``, which
+        also covers NACK, timeout and connection errors. A serial NACK or
+        timeout returns ``None`` without recording an error.
+        """
         return self._last_error
 
     @property
