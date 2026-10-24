@@ -22,11 +22,30 @@ def _validate_gateway_clock_values(
         )
 
 
-def _gateway_timezone(values: list[str]) -> str:
-    """Decode an optional OWN timezone, preserving unspecified local time."""
+# Timezone values the gateways accept and echo but that are not the documented
+# `SHH` form (own-firmware-oracle `who13-clock`): a four-digit value with a
+# sign digit (`0530`, written and echoed by nine gateways, stored by the F450)
+# and a three-digit negative offset of 24 h or more (`124`, ACKed by eleven).
+# `0530` and `124` are the two values measured; the classes are bounded by the
+# sign digit and the length, and by the first offset `datetime.timezone` cannot
+# hold (`-24:00`). Their layout and meaning are unverified, so they decode to
+# None (unknown), never to "" (local time); `raw_timezone` keeps the value.
+_UNMAPPED_TIMEZONE_REGEX = re.compile(r"[01][0-9]{3}|1(?:2[4-9]|[3-9][0-9])")
+
+
+def _gateway_timezone(values: list[str]) -> str | None:
+    """Decode an optional OWN timezone, preserving unspecified local time.
+
+    Returns ``""`` for an absent or ``999`` (unconfigured) value, an ISO
+    offset (``"+02:00"``) for the documented ``SHH`` form, ``None`` for the
+    shapes gateways echo but OWNd cannot map (see ``_UNMAPPED_TIMEZONE_REGEX``),
+    and raises ``ValueError`` for everything else (``200``, ``099``, ``2000``).
+    """
     value = values[3] if len(values) > 3 else ""
     if not value or value == "999":
         return ""
+    if _UNMAPPED_TIMEZONE_REGEX.fullmatch(value):
+        return None
     if re.fullmatch(r"[01]\d{2}", value) is None:
         raise ValueError(f"Invalid gateway timezone: {value!r}")
     sign = "+" if value[0] == "0" else "-"
@@ -144,7 +163,7 @@ class OWNGatewayEvent(OWNEvent):
             )
             self._timezone = _gateway_timezone(self._dimension_value)
             self._time = _dt.time.fromisoformat(
-                f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
+                f"{self._hour}:{self._minute}:{self._second}{self._timezone or ''}"
             )
             self._human_readable_log = (
                 f"Gateway's internal time is: {self._time}."
@@ -216,7 +235,7 @@ class OWNGatewayEvent(OWNEvent):
             self._month = self._dimension_value[6]
             self._year = self._dimension_value[7]
             self._datetime = _dt.datetime.fromisoformat(
-                f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
+                f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone or ''}"  # pylint: disable=line-too-long
             )
             self._date = self._datetime.date()
             self._time = (
@@ -256,7 +275,11 @@ class OWNGatewayEvent(OWNEvent):
 
     @property
     def timezone(self) -> str | None:
-        """Return the decoded timezone offset string (e.g. '+02:00', '-05:00', or '')."""
+        """Return the decoded timezone offset (``'+02:00'``, ``''`` for local time).
+
+        ``None`` means the gateway sent a timezone OWNd cannot map (``0530``,
+        ``124``); ``raw_timezone`` keeps it as sent.
+        """
         return self._timezone
 
     @property
@@ -351,7 +374,7 @@ class OWNGatewayCommand(OWNCommand):
             )
             self._timezone = _gateway_timezone(self._dimension_value)
             self._time = _dt.time.fromisoformat(
-                f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
+                f"{self._hour}:{self._minute}:{self._second}{self._timezone or ''}"
             )
             self._human_readable_log = (
                 f"Gateway broadcasting internal time: {self._time}."
@@ -382,7 +405,7 @@ class OWNGatewayCommand(OWNCommand):
             self._month = self._dimension_value[6]
             self._year = self._dimension_value[7]
             self._datetime = _dt.datetime.fromisoformat(
-                f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
+                f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone or ''}"  # pylint: disable=line-too-long
             )
             self._date = self._datetime.date()
             self._time = (
@@ -411,7 +434,11 @@ class OWNGatewayCommand(OWNCommand):
 
     @property
     def timezone(self) -> str | None:
-        """Return the decoded timezone offset string (e.g. '+02:00', '-05:00', or '')."""
+        """Return the decoded timezone offset (``'+02:00'``, ``''`` for local time).
+
+        ``None`` means the gateway sent a timezone OWNd cannot map (``0530``,
+        ``124``); ``raw_timezone`` keeps it as sent.
+        """
         return self._timezone
 
     @property
