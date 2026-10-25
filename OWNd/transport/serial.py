@@ -7,7 +7,12 @@ import contextlib
 import logging
 
 from ..connection import COMMAND_RESPONSE_MAX_FRAMES, COMMAND_TIMEOUT
-from ..message import OWNMessage, OWNSignaling
+from ..connection.command_session import (
+    DESTRUCTIVE_FRAME_REASON,
+    destructive_frame_error,
+)
+from ..exceptions import OWNError, OWNProtocolError
+from ..message import OWNMessage, OWNSignaling, is_who4_dimension_22
 from .base import OWNTransport
 
 SEPARATOR = b"##"
@@ -142,24 +147,67 @@ class AsyncSerialTransport(OWNTransport):
         self._pending_frames.append(message)
 
     async def send(
-        self, message: str | OWNMessage, is_status_request: bool = False
+        self,
+        message: str | OWNMessage,
+        is_status_request: bool = False,
+        *,
+        raise_on_error: bool = False,
     ) -> list[OWNMessage | str] | bool | None:
         del is_status_request
         if not self._connected or self._writer is None:
             raise RuntimeError("Serial transport is not connected")
+        self._last_error = None
+
+        # Serialised once, terminator included: the frame checked is the
+        # frame parsed, logged and written.
+        text = str(message)
+        if not text.endswith("##"):
+            text += "##"
+        if is_who4_dimension_22(text):
+            # Never written, whatever the caller: it reboots the gateway.
+            err: OWNError = destructive_frame_error(text)
+            self._last_error = err
+            self._logger.error(
+                "%s Refusing to send `%s`: %s.",
+                self.log_id,
+                text,
+                DESTRUCTIVE_FRAME_REASON,
+            )
+            if raise_on_error:
+                raise err
+            return None
+        msg_obj = (
+            message
+            if isinstance(message, OWNMessage)
+            else OWNMessage.parse(text, gateway=self.port)
+        )
+        if (
+            msg_obj is None
+            or not msg_obj.is_valid
+            or isinstance(msg_obj, OWNSignaling)
+        ):
+            err = OWNProtocolError(
+                f"Invalid OpenWebNet frame `{text}`",
+                frame=text,
+                reason="invalid_frame",
+            )
+            self._last_error = err
+            self._logger.error(
+                "%s Refusing to send invalid OpenWebNet frame `%s`.",
+                self.log_id,
+                text,
+            )
+            if raise_on_error:
+                raise err
+            return None
 
         async with self._command_lock:
             loop = asyncio.get_running_loop()
             self._pending_future = loop.create_future()
-            self._pending_request = OWNMessage.parse(
-                str(message), gateway=self.port
-            )
+            self._pending_request = msg_obj
             self._pending_frames = []
             try:
-                frame = str(message).encode()
-                if not frame.endswith(SEPARATOR):
-                    frame += SEPARATOR
-                self._writer.write(frame)
+                self._writer.write(text.encode())
                 await self._writer.drain()
                 return await asyncio.wait_for(
                     self._pending_future, timeout=COMMAND_TIMEOUT
@@ -168,7 +216,7 @@ class AsyncSerialTransport(OWNTransport):
                 self._logger.warning(
                     "%s Timed out waiting for serial response to `%s`.",
                     self.log_id,
-                    message,
+                    text,
                 )
                 return None
             finally:

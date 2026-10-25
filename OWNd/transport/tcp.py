@@ -7,6 +7,7 @@ import contextlib
 import logging
 
 from ..connection import OWNCommandSession, OWNEventSession, OWNGateway
+from ..exceptions import OWNError
 from ..message import OWNMessage
 from .base import OWNTransport
 
@@ -36,6 +37,12 @@ class AsyncTcpTransport(OWNTransport):
     @property
     def transport_type(self) -> str:
         return "tcp"
+
+    @property
+    def last_error(self) -> OWNError | None:
+        if self._command_session is None:
+            return None
+        return self._command_session.last_error
 
     async def connect(self) -> bool:
         if self._event_session is not None or self._command_session is not None:
@@ -91,8 +98,14 @@ class AsyncTcpTransport(OWNTransport):
             await command_session.close()
 
     async def send(
-        self, message: str | OWNMessage, is_status_request: bool = False
+        self,
+        message: str | OWNMessage,
+        is_status_request: bool = False,
+        *,
+        raise_on_error: bool = False,
     ) -> list[OWNMessage | str] | bool | None:
         if self._command_session is None:
             raise RuntimeError("TCP transport is not connected")
-        return await self._command_session.send(message, is_status_request)
+        return await self._command_session.send(
+            message, is_status_request, raise_on_error=raise_on_error
+        )

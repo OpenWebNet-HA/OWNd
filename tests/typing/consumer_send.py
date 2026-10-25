@@ -70,3 +70,7 @@ async def send_via_transport(
     parsed = OWNMessage.parse(frame)
     if parsed is not None:
         await transport.send(parsed)
+    # Every transport takes the same keyword as OWNCommandSession.send.
+    await transport.send("*1*1*11##", raise_on_error=True)
+    await tcp_transport.send(OWNLightingCommand.switch_on("11"), raise_on_error=True)
+    await serial_transport.send("*1*1*11##", is_status_request=False, raise_on_error=True)
