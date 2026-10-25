@@ -188,6 +188,10 @@ _DEFAULT_WITHOUT_CEN_PLUS = tuple(
 # Firmware at which Legrand documents CEN+ on the F453AV (WHO 25 p. 13).
 _F453AV_CEN_PLUS_FIRMWARE = (2, 1, 7)
 
+# Firmware generation at which physical H/L4684 captures show WHO 22 (bt_multi)
+# alongside WHO 16 (MyHOME#466 comment 6398442412: FW 6.0.11, distro 6.0.0).
+_H4684_WHO22_FIRMWARE = (6, 0, 0)
+
 
 class F452Profile(GatewayProfile):
     """The F452 Web Server.
@@ -572,31 +576,56 @@ class H4890Profile(GatewayProfile):
 
 
 class H4684Profile(GatewayProfile):
-    """The H4684 colour touch screen family (H4684, L4684, N4684, NT4684, LGRH4684).
+    """The H4684 colour touch screen family (H4684, H/L4684, L4684, N4684, NT4684, LGRH4684).
 
-    Verified in the 22-suite firmware oracle against H4684 firmware 2.0.54
-    (``*#13**15*13##``, ``*#13**16*2*0*54##``, ``*#13**23*2*0*5##``,
-    ``*#13**24*3*0*0##``, ``*#1013**1*19##``):
-    - Ships ``bt_autom``, ``bt_termoreg``, ``bt_energia`` and ``bt_difson``
-      (WHO 1, 2, 3, 4, 15, 16, 18; ``*#16*0*5##`` answers ``ack``/``out`` in
-      ``sound-who16-source.tsv``), with legacy OPEN password authentication
-      in ``openserver``.
-    - Does not ship ``bt_multi`` or ``bt_supervisione``, and NACKs all WHO 17
-      (``scenario-who17``), WHO 22 (``sound-who22``), and WHO 25
-      (``who25-messages``) frames, so WHO 17, 22, and 25 are excluded.
+    Two firmware generations are evidenced:
+    1. Emulated H4684 firmware 2.0.54 in the 22-suite firmware oracle
+       (``*#13**15*13##``, ``*#13**16*2*0*54##``, ``*#13**23*2*0*5##``,
+       ``*#13**24*3*0*0##``, ``*#1013**1*19##``):
+       - Ships ``bt_autom``, ``bt_termoreg``, ``bt_energia`` and ``bt_difson``
+         (WHO 1, 2, 3, 4, 15, 16, 18; ``*#16*0*5##`` answers ``ack``/``out`` in
+         ``sound-who16-source.tsv``), with legacy OPEN password authentication
+         in ``openserver``.
+       - Does not ship ``bt_multi`` or ``bt_supervisione``, and NACKs all WHO 17
+         (``scenario-who17``), WHO 22 (``sound-who22``), and WHO 25
+         (``who25-messages``) frames.
+    2. Physical H/L4684 firmware 6.0.11 (MyHOME#466 comment 6398442412: UPnP
+       ``modelName`` ``H/L4684``, ``*#13**15*23##``, ``*#13**16*6*0*11##``,
+       ``*#13**23*2*6*2##``, ``*#13**24*6*0*0##``):
+       - Ships ``bt_multi`` alongside ``bt_difson``, translating ``*#16*0*5##``
+         into dual-dialect WHO 16 and WHO 22 event-session inventory
+         (``*#22*3#2#1*0*...##``, ``*#22*1#1#1*3*...##``).
+       - Behaviour between 2.0.54 and 6.0.0 is uncaptured, so firmware below
+         6.0.0 or unknown firmware conservatively omits WHO 22.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        firmware_version: str | tuple[int, ...] | list[int] | None = None,
+    ) -> None:
+        if not firmware_version:
+            fw_str = None
+        elif isinstance(firmware_version, (list, tuple)):
+            fw_str = ".".join(str(p) for p in firmware_version)
+        else:
+            fw_str = str(firmware_version)
+        base_who = (
+            WHO_LIGHTING,
+            WHO_AUTOMATION,
+            WHO_LOAD_CONTROL,
+            WHO_HEATING,
+            WHO_CEN,
+            WHO_SOUND,
+            WHO_ENERGY,
+        )
+        has_who22 = (
+            parse_firmware_version(firmware_version) >= _H4684_WHO22_FIRMWARE
+        )
         super().__init__(
             model_name="H4684",
+            firmware_version=fw_str,
             supported_who=(
-                WHO_LIGHTING,
-                WHO_AUTOMATION,
-                WHO_LOAD_CONTROL,
-                WHO_HEATING,
-                WHO_CEN,
-                WHO_SOUND,
-                WHO_ENERGY,
+                (*base_who, WHO_SOUND_DIFFUSION) if has_who22 else base_who
             ),
         )
 
@@ -684,6 +713,8 @@ _ALIASES = {
     "ln4890a": "h4890",
     "4890": "h4890",
     "l4684": "h4684",
+    "hl4684": "h4684",
+    "hc4684": "h4684",
     "n4684": "h4684",
     "nt4684": "h4684",
     "lgrh4684": "h4684",
@@ -723,6 +754,8 @@ def get_gateway_profile(
     normalized = _ALIASES.get(normalized, normalized)
     if normalized == "f453av":
         return F453AVProfile(firmware_version=firmware_version)
+    if normalized == "h4684":
+        return H4684Profile(firmware_version=firmware_version)
     profile = _PROFILES.get(normalized)
     if profile is not None:
         return profile
