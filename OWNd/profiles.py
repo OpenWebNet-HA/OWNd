@@ -594,7 +594,7 @@ class H4684Profile(GatewayProfile):
        ``*#13**23*2*6*2##``, ``*#13**24*6*0*0##``):
        - Ships ``bt_multi`` alongside ``bt_difson``, translating ``*#16*0*5##``
          into dual-dialect WHO 16 and WHO 22 event-session inventory
-         (``*#22*3#2#1*0*...##``, ``*#22*1#1#1*3*...##``).
+         (``*#22*3#1#1*12*0*10##``, ``*#22*2#1*12*1*4##``).
        - Behaviour between 2.0.54 and 6.0.0 is uncaptured, so firmware below
          6.0.0 or unknown firmware conservatively omits WHO 22.
     """
