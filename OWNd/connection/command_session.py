@@ -25,7 +25,24 @@ from ..exceptions import (
     OWNProtocolError,
     OWNTimeoutError,
 )
-from ..message import OWNMessage, OWNSignaling
+from ..message import OWNMessage, OWNSignaling, is_who4_dimension_22
+
+# Why every send path refuses WHO 4 dimension 22 (see
+# ``OWNd.message.is_who4_dimension_22``): the gateway never gets the frame.
+DESTRUCTIVE_FRAME_REASON = (
+    "WHO 4 dimension 22 crashes the thermoregulation daemon (bt_termo) "
+    "on Linux IP gateways"
+)
+
+
+def destructive_frame_error(frame: str) -> OWNProtocolError:
+    """The error every send path raises or records for a WHO 4 dimension 22 frame."""
+    return OWNProtocolError(
+        f"Refusing to send `{frame}`: {DESTRUCTIVE_FRAME_REASON}",
+        frame=frame,
+        reason="destructive_frame",
+    )
+
 
 # Cooldown window (seconds) after an in-send() reconnect attempt fails, so
 # concurrent callers queued behind _send_lock fail fast instead of each
@@ -69,6 +86,15 @@ class OWNCommandSession(OWNSession):
         raise_on_error: bool = False,
     ) -> list[OWNMessage | str] | bool | None:
         connection = cls(gateway)
+        # Refused before connect(): no socket, no handshake, no command slot
+        # on a single-session gateway (MH200N, F453AV...) and no 5-attempt
+        # backoff on an unreachable host for a frame that is never written.
+        frame = str(message)
+        if is_who4_dimension_22(frame):
+            connection._refuse_destructive_frame(
+                frame, message, raise_on_error=raise_on_error
+            )
+            return None
         try:
             if raise_on_error:
                 await connection.connect(raise_on_error=True)
@@ -219,6 +245,26 @@ class OWNCommandSession(OWNSession):
                 message, is_status_request, raise_on_error=raise_on_error
             )
 
+    def _refuse_destructive_frame(
+        self, frame: str, message: str | OWNMessage, *, raise_on_error: bool
+    ) -> None:
+        """Record and log the refusal of a WHO 4 dimension 22 frame, never written.
+
+        ``frame`` is the serialised string the error carries; ``message`` is
+        the caller's object, passed to the logger like every other send log
+        line (formatted lazily, and what downstream tests assert on).
+        """
+        err = destructive_frame_error(frame)
+        self._last_error = err
+        self._logger.error(
+            "%s Refusing to send `%s`: %s.",
+            self._log_id,
+            message,
+            DESTRUCTIVE_FRAME_REASON,
+        )
+        if raise_on_error:
+            raise err
+
     async def _locked_send(
         self,
         message: str | OWNMessage,
@@ -227,10 +273,16 @@ class OWNCommandSession(OWNSession):
         raise_on_error: bool = False,
     ) -> list[OWNMessage | str] | bool | None:
         self._last_error = None
+        # Serialised once: the frame checked is the frame parsed, raised and
+        # written. Log lines keep the caller's object (formatted lazily).
+        frame = str(message)
+        if is_who4_dimension_22(frame):
+            self._refuse_destructive_frame(frame, message, raise_on_error=raise_on_error)
+            return None
         msg_obj = (
             message
             if isinstance(message, OWNMessage)
-            else OWNMessage.parse(str(message), gateway=self._gateway)
+            else OWNMessage.parse(frame, gateway=self._gateway)
         )
         is_valid_frame = (
             msg_obj is not None
@@ -239,8 +291,8 @@ class OWNCommandSession(OWNSession):
         )
         if not is_valid_frame:
             err: OWNError = OWNProtocolError(
-                f"Invalid OpenWebNet frame `{message}`",
-                frame=str(message),
+                f"Invalid OpenWebNet frame `{frame}`",
+                frame=frame,
                 reason="invalid_frame",
             )
             self._last_error = err
@@ -292,7 +344,7 @@ class OWNCommandSession(OWNSession):
                     < SEND_RECONNECT_COOLDOWN
                 ):
                     err = self._last_error or OWNConnectionError(
-                        f"Command session unavailable; message `{message}` not sent",
+                        f"Command session unavailable; message `{frame}` not sent",
                         reason="connection_unavailable",
                     )
                     self._last_error = err
@@ -319,7 +371,7 @@ class OWNCommandSession(OWNSession):
                 ):
                     self._last_reconnect_failure = time.monotonic()
                     err = self._last_error or OWNConnectionError(
-                        f"Command session unavailable; message `{message}` not sent",
+                        f"Command session unavailable; message `{frame}` not sent",
                         reason="connection_unavailable",
                     )
                     await self.close()
@@ -336,7 +388,7 @@ class OWNCommandSession(OWNSession):
 
             written = False
             try:
-                self._stream_writer.write(str(message).encode())
+                self._stream_writer.write(frame.encode())
                 written = True
                 await self._stream_writer.drain()
 
@@ -368,8 +420,8 @@ class OWNCommandSession(OWNSession):
                                 message,
                             )
                         err = OWNNackError(
-                            f"Gateway rejected message `{message}` with NACK",
-                            frame=str(message),
+                            f"Gateway rejected message `{frame}` with NACK",
+                            frame=frame,
                             responses=list(collected),
                         )
                         self._last_error = err
@@ -391,7 +443,7 @@ class OWNCommandSession(OWNSession):
                     message,
                 )
                 err = OWNProtocolError(
-                    f"Unexpected response `{resulting_message}` to message `{message}`",
+                    f"Unexpected response `{resulting_message}` to message `{frame}`",
                     frame=str(resulting_message),
                     reason="unexpected_response",
                 )
@@ -408,7 +460,7 @@ class OWNCommandSession(OWNSession):
             except TimeoutError as error:
                 await self.close()
                 err = OWNTimeoutError(
-                    f"Timed out awaiting the complete response for `{message}`",
+                    f"Timed out awaiting the complete response for `{frame}`",
                     reason="command_timeout",
                 )
                 self._last_error = err
@@ -441,7 +493,7 @@ class OWNCommandSession(OWNSession):
                 # No retry: this is a definitive loss, and the consumer hears it.
                 self._set_connected(False)
                 err = OWNConnectionError(
-                    f"Connection lost before acknowledgement of `{message}` ({error})",
+                    f"Connection lost before acknowledgement of `{frame}` ({error})",
                     reason="connection_lost",
                 )
                 self._last_error = err

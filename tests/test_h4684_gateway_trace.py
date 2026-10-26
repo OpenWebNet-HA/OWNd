@@ -145,3 +145,37 @@ def test_h4684_qemu_oracle_trace_corpus_outputs():
     assert isinstance(evt_diag, OWNGatewayDiagnosticEvent)
     assert evt_diag.device_type == "H4684"
     assert evt_diag.object_model == "19"
+
+
+def test_hl4684_physical_fw6_0_11_trace_sequence():
+    """Replay physical H/L4684 FW 6.0.11 identification and profile upgrade (MyHOME#466)."""
+    from OWNd.connection import OWNGateway
+    from OWNd.profiles import WHO_SOUND, WHO_SOUND_DIFFUSION
+
+    gw = OWNGateway({"address": "192.0.2.10", "modelName": "H/L4684"})
+    assert isinstance(gw.profile, H4684Profile)
+    assert gw.profile.model_name == "H4684"
+    assert not gw.profile.supports_who(WHO_SOUND_DIFFUSION)
+
+    evt_dev = OWNEvent.parse("*#13**15*23##")
+    assert isinstance(evt_dev, OWNGatewayEvent)
+    assert evt_dev.device_type == "H4684"
+    assert evt_dev.device_type_code == "23"
+
+    evt_fw = OWNEvent.parse("*#13**16*6*0*11##")
+    assert isinstance(evt_fw, OWNGatewayEvent)
+    assert evt_fw.firmware_version == "6.0.11"
+
+    evt_kernel = OWNEvent.parse("*#13**23*2*6*2##")
+    assert isinstance(evt_kernel, OWNGatewayEvent)
+    assert evt_kernel.kernel_version == "2.6.2"
+
+    evt_distro = OWNEvent.parse("*#13**24*6*0*0##")
+    assert isinstance(evt_distro, OWNGatewayEvent)
+    assert evt_distro.distribution_version == "6.0.0"
+
+    gw.firmware = evt_fw.firmware_version
+    assert isinstance(gw.profile, H4684Profile)
+    assert gw.profile.firmware_version == "6.0.11"
+    assert gw.profile.supports_who(WHO_SOUND) is True
+    assert gw.profile.supports_who(WHO_SOUND_DIFFUSION) is True
