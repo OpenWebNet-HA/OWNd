@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import pytest
 
-from OWNd.message import OWNEvent, OWNLightingDiagnosticEvent, OWNMessage
+from OWNd.message import OWNCommand, OWNEvent, OWNLightingDiagnosticEvent, OWNMessage
 
 
 def test_lighting_autodiagnostic_mask_parses() -> None:
@@ -40,20 +40,27 @@ def test_lighting_autodiagnostic_all_bits_set() -> None:
 
 
 @pytest.mark.parametrize(
-    "frame",
+    ("frame", "expected_class"),
     [
-        "*#1001*74*11*101*5##",  # a trailing value: not the mask shape
-        "*#1001*74*11*1011#1##",  # not a plain bit string
-        "*#1001*74*11*10x1##",  # not bits (does not parse as a reply at all)
-        "*#1001*74*12*5##",  # another dimension
-        "*#1001*74*11##",  # a request, no value
+        # A trailing value: not the mask shape.
+        ("*#1001*74*11*101*5##", OWNLightingDiagnosticEvent),
+        # Another dimension.
+        ("*#1001*74*12*5##", OWNLightingDiagnosticEvent),
+        # Not 24 bits: one bit, 23 bits, 26 bits.
+        ("*#1001*74*11*1##", OWNLightingDiagnosticEvent),
+        ("*#1001*74*11*11111011111111111111011##", OWNLightingDiagnosticEvent),
+        ("*#1001*74*11*00000000000000000000000000##", OWNLightingDiagnosticEvent),
+        # 24 characters that are not all bits.
+        ("*#1001*74*11*111110111111111111110112##", OWNLightingDiagnosticEvent),
+        # A status/dimension request (no value) is a command, not an event.
+        ("*#1001*74*11##", OWNCommand),
+        ("*#1001*74##", OWNCommand),
     ],
 )
-def test_other_who_1001_shapes_have_no_mask(frame: str) -> None:
+def test_other_who_1001_shapes_have_no_mask(frame: str, expected_class: type) -> None:
     message = OWNMessage.parse(frame)
 
-    if message is None:
-        return
+    assert type(message) is expected_class
     assert message.who == 1001
     if isinstance(message, OWNLightingDiagnosticEvent):
         assert message.diagnostic_mask is None
@@ -61,8 +68,20 @@ def test_other_who_1001_shapes_have_no_mask(frame: str) -> None:
         assert "autodiagnostic" not in message.human_readable_log
 
 
+@pytest.mark.parametrize(
+    "frame",
+    [
+        "*#1001*74*11*1011#1##",  # a parameter inside the value
+        "*#1001*74*11*10x1##",  # not digits: no OpenWebNet frame at all
+    ],
+)
+def test_malformed_who_1001_frames_do_not_parse(frame: str) -> None:
+    assert OWNMessage.parse(frame) is None
+
+
 def test_who_1001_status_request_is_not_a_diagnostic_event() -> None:
     request = OWNMessage.parse("*#1001*74##")
 
-    assert request is not None
+    assert type(request) is OWNCommand
+    assert not isinstance(request, OWNLightingDiagnosticEvent)
     assert request.who == 1001

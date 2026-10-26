@@ -973,20 +973,26 @@ class OWNLightingDiagnosticEvent(OWNEvent):
     a physical MH200 (own-firmware-oracle findings/MH200N/what19.md, capture
     EVID-MH200-WHAT19-FAULT). The gateway copies the actuator's 24-bit mask
     verbatim; what each bit means is not known, so the mask is exposed as
-    sent, with the positions of its cleared bits.
+    sent, with the positions of its cleared bits. Only a single 24-character
+    ``0``/``1`` value is taken as a mask (every capture has that shape); a
+    DIMENSION 11 value frame of another shape still parses as this class,
+    with ``diagnostic_mask`` ``None`` and the raw value in
+    ``dimension_value``.
     """
 
     def __init__(self, data: str) -> None:
         super().__init__(data)
         self._diagnostic_mask: str | None = None
-        # Exactly one value, all bits: *#1001*74*11*101*5## (a trailing value)
-        # is not the mask shape the gateways send and fails closed.
+        # Exactly one value of exactly 24 bits, the shape every capture
+        # shows: *#1001*74*11*101*5## (a trailing value), a shorter or longer
+        # bit string and anything that is not 0/1 fail closed.
         value = self._dimension_value[0] if len(self._dimension_value) == 1 else ""
-        if self._dimension == 11 and value and set(value) <= {"0", "1"}:
+        if self._dimension == 11 and len(value) == 24 and set(value) <= {"0", "1"}:
             self._diagnostic_mask = value
+            cleared = tuple(i for i, bit in enumerate(value, 1) if bit == "0")
             self._human_readable_log = (
                 f"Light {self._where} autodiagnostic mask is {value}"
-                f" (cleared bits: {', '.join(map(str, self.cleared_bits or ())) or 'none'})."
+                f" (cleared bits: {', '.join(map(str, cleared)) or 'none'})."
             )
 
     @property
