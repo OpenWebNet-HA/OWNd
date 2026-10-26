@@ -109,6 +109,19 @@ def is_who4_dimension_22(frame: object) -> bool:
     return any(_WHO4_DIMENSION_22_REGEX.search(chunk) for chunk in raw.split("##"))
 
 
+# WHO 4 WHERE for an actuator status request: a zone of one or two digits
+# (``0..99``: ``Z``, ``#Z``, ``0`` / ``#0`` for every zone or the central
+# unit), optionally one actuator digit (``Z#N``, ``#0#N``, ``#Z#N``; ``N`` is
+# ``1..9``, ``0`` for all actuators of the zone: ``2#0``, ``0#0``), optionally
+# a bus-interface suffix of exactly two digits (``#4#NN``: ``3#4#01``,
+# ``#3#4#01``, ``2#1#4#01``). Three-digit addresses are secondary probes
+# (``PZZ``, ``101..899``: no actuators, NACK on an F461) and the actuator
+# index is one digit in the WHO 4 WHERE table, so both are refused the way
+# ``get_fan_speed`` bounds its zone to ``1..99``. ASCII digits only; no ``*``, so no dimension can be
+# injected through the address.
+_WHO4_WHERE_REGEX = re.compile(r"#?[0-9]{1,2}(?:#[0-9])?(?:#4#[0-9]{2})?", re.ASCII)
+
+
 def who4_temperature(raw: str) -> float | None:
     """Decode WHO 4 temperature ``SXXX`` (tenths of a degree)."""
     if not _WHO4_TEMP_REGEX.match(raw):
@@ -890,6 +903,51 @@ class OWNHeatingCommand(OWNCommand):
     def valves_status(cls, where: str | int) -> OWNHeatingCommand:
         message = cls(f"*#4*{where}*19##")
         message._human_readable_log = f"Requesting climate valve status update for {message._where}{message._interface_log_text}."
+        return message
+
+    @classmethod
+    def actuators_status(cls, where: str | int) -> OWNHeatingCommand:
+        """Request actuator status (``*#4*WHERE*20##``), one reply per actuator.
+
+        ``where`` is a zone of one or two digits (``2``, ``#2``), one actuator
+        (``2#1``; ``2#0`` for all actuators of the zone), the central-unit
+        form (``#0``, ``#0#N``) for every zone, or ``#Z#N`` (an actuator
+        addressed through the central unit; WHO 4 WHERE table, see
+        ``_zone_address_and_name``). Each form may be routed through a bus interface
+        with a two-digit ``#4#NN`` suffix (``3#4#01``, ``#3#4#01``,
+        ``2#1#4#01``) because the suffix is spec-legal grammar, but no
+        emulated firmware routes it across an F422: own-firmware-oracle#65
+        (``thermo-zone-requests``, decoded ``scs_bus_hex``) shows that F450,
+        F454, F459, F460, F461 and MyHomeServer1 truncate ``WHERE`` at the
+        first ``#`` and answer ``*#4*2#4#01*20##`` (also ``*#4*2#4#12*20##``
+        and ``*#4*2#1#4#01*20##``) with the bytes of the unqualified
+        ``*#4*2*20##``, polling local main-bus zone 2; MH202 010024 reads
+        the trailing ``#4#01`` as local zone 4, actuator 1 (and rejects
+        ``#4#12``, actuator 12 > 9); F453, F453AV, H4684, MH200 and MH200N
+        drop the frame. Callers must therefore gate ``#4#NN`` polling on the
+        gateway profile's ``supports_interface_zone_requests`` (MyHOME#816)
+        instead of expecting the interface to be honoured. The MH202 010024
+        thermoregulation daemon crashes (``SIGSEGV``) on the dimensionless
+        status forms ``*#4*Z#N##`` (``N`` 1..9) and ``*#4*Z#4#01..09##``
+        (``thermo_open2scs+0x394``); this builder only emits the dimension-20
+        form.
+        A live F461 2.0.11 (2026-10-23) answers ``*#4*2*20##`` with
+        ``*#4*2#1*20*0##`` (valve, off) on the command session and
+        ``*#4*2#2*20*5##`` (fan coil, off) on the event session, and
+        ``*#4*#0*20##`` with both; a live MyHomeServer1 3.87.13 answers
+        ``*#4*35*20##`` with ``*#4*35#1*20*0##``. Whitespace around ``where``
+        is stripped. Anything else (``*``, an empty string, a three-digit
+        secondary probe such as ``105``, a two-digit actuator such as
+        ``2#10``, a one- or three-digit interface such as ``3#4#1`` or
+        ``3#4#001``) raises ``ValueError``. The log line carries the whole
+        address as written (``2#1#4#01``), not only the zone the parser
+        keeps in ``where``.
+        """
+        where_str = str(where).strip() if where is not None else ""
+        if not _WHO4_WHERE_REGEX.fullmatch(where_str):
+            raise ValueError(f"Invalid zone address: {where}")
+        message = cls(f"*#4*{where_str}*20##")
+        message._human_readable_log = f"Requesting climate actuator status update for {where_str}."
         return message
 
     @classmethod
