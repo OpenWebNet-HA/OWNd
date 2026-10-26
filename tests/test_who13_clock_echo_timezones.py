@@ -129,3 +129,20 @@ def test_unset_timezone_is_still_local_time(raw: str) -> None:
     assert isinstance(message, OWNGatewayEvent)
     assert message.timezone == ""
     assert message.is_timezone_unconfigured is (raw == "999")
+
+
+@pytest.mark.parametrize("raw", ["024", "050", "099", "200", "2000", "+02", "02", "0\u0662\u0663"])
+def test_gateway_timezone_helper_raises_itself(raw: str) -> None:
+    """The helper refuses the value; nothing is left for ``time.fromisoformat``."""
+    from OWNd.message.gateway import _gateway_timezone
+
+    with pytest.raises(ValueError, match="Invalid gateway timezone"):
+        _gateway_timezone(["12", "00", "00", raw])
+
+
+@pytest.mark.parametrize(("raw", "offset"), [("000", "+00:00"), ("023", "+23:00"), ("123", "-23:00")])
+def test_gateway_timezone_helper_keeps_whole_hours(raw: str, offset: str) -> None:
+    from OWNd.message.gateway import _gateway_timezone
+
+    assert _gateway_timezone(["12", "00", "00", raw]) == offset
+

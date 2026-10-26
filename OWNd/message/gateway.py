@@ -39,14 +39,19 @@ def _gateway_timezone(values: list[str]) -> str | None:
     Returns ``""`` for an absent or ``999`` (unconfigured) value, an ISO
     offset (``"+02:00"``) for the documented ``SHH`` form, ``None`` for the
     shapes gateways echo but OWNd cannot map (see ``_UNMAPPED_TIMEZONE_REGEX``),
-    and raises ``ValueError`` for everything else (``200``, ``099``, ``2000``).
+    and raises ``ValueError`` for everything else: a shape that is not
+    ``SHH`` (``200``, ``2000``, ``+02``) and a positive ``SHH`` whose hour is
+    24 or more (``024``..``099``), which ``datetime`` cannot hold either (the
+    negative ones, ``124``..``199``, are the unmapped class above).
     """
     value = values[3] if len(values) > 3 else ""
     if not value or value == "999":
         return ""
     if _UNMAPPED_TIMEZONE_REGEX.fullmatch(value):
         return None
-    if re.fullmatch(r"[01]\d{2}", value) is None:
+    if re.fullmatch(r"[01][0-9]{2}", value, re.ASCII) is None:
+        raise ValueError(f"Invalid gateway timezone: {value!r}")
+    if int(value[1:]) > 23:
         raise ValueError(f"Invalid gateway timezone: {value!r}")
     sign = "+" if value[0] == "0" else "-"
     return f"{sign}{value[1:]}:00"
