@@ -599,9 +599,23 @@ def test_profile_no_auth_features() -> None:
     assert "HMAC-SHA2" not in profile.features_summary
 
 
-@pytest.mark.parametrize("name", ["H4684", "h4684", "L4684", "N4684", "NT4684", "LGRH4684", "LGR4684"])
+@pytest.mark.parametrize(
+    "name",
+    [
+        "H4684",
+        "h4684",
+        "H/L4684",
+        "HL4684",
+        "HC4684",
+        "L4684",
+        "N4684",
+        "NT4684",
+        "LGRH4684",
+        "LGR4684",
+    ],
+)
 def test_h4684_profile(name: str) -> None:
-    """H4684 colour touch screen and brand variants resolve to H4684Profile."""
+    """H4684 colour touch screen, UPnP H/L4684 spelling, and brand variants resolve to H4684Profile."""
     profile = get_gateway_profile(name)
     assert isinstance(profile, H4684Profile)
     assert profile.model_name == "H4684"
@@ -618,6 +632,26 @@ def test_h4684_profile(name: str) -> None:
     assert not profile.supports_who(WHO_SCENARIO)
     assert not profile.supports_who(WHO_SOUND_DIFFUSION)
     assert not profile.supports_who(WHO_CEN_PLUS)
+
+
+def test_h4684_profile_firmware_gated_who22() -> None:
+    """Physical H/L4684 firmware 6.x ships bt_multi (WHO 22), while 2.x omits it."""
+    fw2 = get_gateway_profile("H/L4684", "2.0.54")
+    assert isinstance(fw2, H4684Profile)
+    assert fw2.firmware_version == "2.0.54"
+    assert not fw2.supports_who(WHO_SOUND_DIFFUSION)
+
+    fw6 = get_gateway_profile("H/L4684", "6.0.11")
+    assert isinstance(fw6, H4684Profile)
+    assert fw6.firmware_version == "6.0.11"
+    assert fw6.supports_who(WHO_SOUND) is True
+    assert fw6.supports_who(WHO_SOUND_DIFFUSION) is True
+    assert not fw6.supports_who(WHO_SCENARIO)
+    assert not fw6.supports_who(WHO_CEN_PLUS)
+
+    fw6_tuple = H4684Profile(firmware_version=(6, 0, 0))
+    assert fw6_tuple.firmware_version == "6.0.0"
+    assert fw6_tuple.supports_who(WHO_SOUND_DIFFUSION) is True
 
 
 def test_profile_injection_capability_flags() -> None:
