@@ -910,12 +910,22 @@ class OWNHeatingCommand(OWNCommand):
         actuator addressed through the central unit; WHO 4 WHERE table, see
         ``_normalize_zone``). Each form may be routed through a bus interface
         with a two-digit ``#4#NN`` suffix (``3#4#01``, ``#3#4#01``,
-        ``2#1#4#01``): own-firmware-oracle#60 (``thermo-zone-requests``) shows
-        ``*#4*2#4#01*20##`` forwarded by F450, F454, F459, F460, F461, MH202
-        and MyHomeServer1 and dropped by F453, F453AV, H4684, MH200 and
-        MH200N. The frame that crashes the MH202 thermoregulation daemon in
-        that suite is the routed zone status without a dimension
-        (``*#4*2#4#01##``); this builder only emits the dimension-20 form.
+        ``2#1#4#01``) because the suffix is spec-legal grammar, but no
+        emulated firmware routes it across an F422: own-firmware-oracle#65
+        (``thermo-zone-requests``, decoded ``scs_bus_hex``) shows that F450,
+        F454, F459, F460, F461 and MyHomeServer1 truncate ``WHERE`` at the
+        first ``#`` and answer ``*#4*2#4#01*20##`` (also ``*#4*2#4#12*20##``
+        and ``*#4*2#1#4#01*20##``) with the bytes of the unqualified
+        ``*#4*2*20##``, polling local main-bus zone 2; MH202 010024 reads
+        the trailing ``#4#01`` as local zone 4, actuator 1 (and rejects
+        ``#4#12``, actuator 12 > 9); F453, F453AV, H4684, MH200 and MH200N
+        drop the frame. Callers must therefore gate ``#4#NN`` polling on the
+        gateway profile's ``supports_interface_zone_requests`` (MyHOME#816)
+        instead of expecting the interface to be honoured. The MH202 010024
+        thermoregulation daemon crashes (``SIGSEGV``) on the dimensionless
+        status forms ``*#4*Z#N##`` (``N`` 1..9) and ``*#4*Z#4#01..09##``
+        (``thermo_open2scs+0x394``); this builder only emits the dimension-20
+        form.
         A live F461 2.0.11 (2026-10-23) answers ``*#4*2*20##`` with
         ``*#4*2#1*20*0##`` (valve, off) on the command session and
         ``*#4*2#2*20*5##`` (fan coil, off) on the event session, and

@@ -11,13 +11,18 @@ Dimension 20 values (WHO 4 spec, ``OWNHeatingEvent``): 0 off, 1 on, 2 opened,
 3 closed, 4 stop, 5 fan coil off, 6-8 fan speeds, 9 fan auto;
 ``_actuator_active_states`` is ``1, 2, 6, 7, 8, 9``, so value 5 is inactive.
 
-Bus-interface routed addresses (``Z#4#NN``, ``#Z#4#NN``, ``Z#N#4#NN``; MyHOME
-sends them for zones behind an F422) are accepted since the MyHOME#792 review:
-own-firmware-oracle#60 (``thermo-zone-requests``) shows ``*#4*2#4#01*20##``
-forwarded by F450, F454, F459, F460, F461, MH202 and MyHomeServer1 and dropped
-by F453, F453AV, H4684, MH200 and MH200N. The frame that crashes the MH202
-daemon there is ``*#4*2#4#01##`` (zone status, no dimension), which this
-builder never emits: it only builds the dimension-20 form.
+Bus-interface routed addresses (``Z#4#NN``, ``#Z#4#NN``, ``Z#N#4#NN``) are
+accepted since the MyHOME#792 review as spec-legal grammar, not because any
+firmware honours them: own-firmware-oracle#65 (``thermo-zone-requests``,
+decoded ``scs_bus_hex``) shows the seven ``out`` images emit unrouted local-bus
+queries (``$04A9023010`` / ``$004A9023010`` for local zone 2 on F450, F454,
+F459, F460, F461, MyHomeServer1; ``$0499843110`` for local zone 4 actuator 1
+on MH202 010024) instead of forwarding ``#4#NN`` across an F422, and F453,
+F453AV, H4684, MH200, MH200N drop the frame. MyHOME#816 therefore withholds
+``#4#NN`` WHO 4 status polls unless ``supports_interface_zone_requests`` is
+``True``. The MH202 010024 daemon crashes on the dimensionless forms
+``*#4*Z#N##`` (``N`` 1..9) and ``*#4*Z#4#01..09##``, which this builder never
+emits: it only builds the dimension-20 form.
 """
 
 from __future__ import annotations
