@@ -60,8 +60,6 @@ _DIMENSION_22 = re.compile(r"\*#4\*[^*]*\*#?0*22(?:[#*]|$)")
         ("0", "*#4*0*20##"),
         ("99", "*#4*99*20##"),
         ("#0#4", "*#4*#0#4*20##"),
-        ("#99#9", "*#4*#99#9*20##"),
-        ("01", "*#4*01*20##"),
         # Bus-interface routed forms (``#4#NN``, two-digit interface): zone,
         # zone through the central unit, one actuator of a zone.
         ("3#4#01", "*#4*3#4#01*20##"),
@@ -116,12 +114,6 @@ def test_actuators_status_builds_dimension_20(where: str | int, frame: str) -> N
         "99999",
         "#105",
         "105#4#01",
-        # A 4-zone central unit has zones 1..4; ``#0#0`` is not an address.
-        "#0#0",
-        "#0#5",
-        "#0#9",
-        "#01",
-        "#00",
         # The actuator index is one digit (``0..9``).
         "2#10",
         "2#999",

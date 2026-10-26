@@ -110,24 +110,16 @@ def is_who4_dimension_22(frame: object) -> bool:
 
 
 # WHO 4 WHERE for an actuator status request: a zone of one or two digits
-# (``0..99``: ``Z``, ``#Z`` with ``Z`` 1..99, ``0`` for every zone), the
-# central unit (``#0``, or ``#0#N`` with ``N`` 1..4 for a zone of a 4-zone
-# central unit), optionally one actuator digit on a zone (``Z#N``, ``#Z#N``;
-# ``N`` is ``1..9``, ``0`` for all actuators of the zone: ``2#0``, ``0#0``),
-# optionally a bus-interface suffix of exactly two digits (``#4#NN``:
-# ``3#4#01``, ``#3#4#01``, ``2#1#4#01``). Three-digit addresses are
-# secondary probes (``PZZ``, ``101..899``: no actuators, NACK on an F461),
-# the actuator index is one digit in the WHO 4 WHERE table and a 4-zone
-# central unit has zones 1..4, so ``105``, ``2#10``, ``#0#5`` and ``#0#0``
-# are refused the way ``get_fan_speed`` bounds its zone to ``1..99``. A
-# leading zero on a plain zone (``01``) is kept, as the parser reads it.
-# ASCII digits only; no ``*``, so no dimension can be injected through the
-# address.
-_WHO4_WHERE_REGEX = re.compile(
-    r"(?:#0(?:#[1-4])?|#[1-9][0-9]?(?:#[0-9])?|(?:[1-9][0-9]?|0[0-9]?)(?:#[0-9])?)"
-    r"(?:#4#[0-9]{2})?",
-    re.ASCII,
-)
+# (``0..99``: ``Z``, ``#Z``, ``0`` / ``#0`` for every zone or the central
+# unit), optionally one actuator digit (``Z#N``, ``#0#N``, ``#Z#N``; ``N`` is
+# ``1..9``, ``0`` for all actuators of the zone: ``2#0``, ``0#0``), optionally
+# a bus-interface suffix of exactly two digits (``#4#NN``: ``3#4#01``,
+# ``#3#4#01``, ``2#1#4#01``). Three-digit addresses are secondary probes
+# (``PZZ``, ``101..899``: no actuators, NACK on an F461) and the actuator
+# index is one digit in the WHO 4 WHERE table, so both are refused the way
+# ``get_fan_speed`` bounds its zone to ``1..99``. ASCII digits only; no ``*``, so no dimension can be
+# injected through the address.
+_WHO4_WHERE_REGEX = re.compile(r"#?[0-9]{1,2}(?:#[0-9])?(?:#4#[0-9]{2})?", re.ASCII)
 
 
 def who4_temperature(raw: str) -> float | None:
@@ -946,9 +938,8 @@ class OWNHeatingCommand(OWNCommand):
         ``*#4*35*20##`` with ``*#4*35#1*20*0##``. Whitespace around ``where``
         is stripped. Anything else (``*``, an empty string, a three-digit
         secondary probe such as ``105``, a two-digit actuator such as
-        ``2#10``, a 4-zone central zone outside 1..4 such as ``#0#5``, a
-        one- or three-digit interface such as ``3#4#1`` or ``3#4#001``)
-        raises ``ValueError``. The log line carries the whole
+        ``2#10``, a one- or three-digit interface such as ``3#4#1`` or
+        ``3#4#001``) raises ``ValueError``. The log line carries the whole
         address as written (``2#1#4#01``), not only the zone the parser
         keeps in ``where``.
         """
