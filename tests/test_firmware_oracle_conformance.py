@@ -23,6 +23,7 @@ from OWNd.message import (
     OWNEvent,
     OWNGatewayEvent,
     OWNLightingCommand,
+    OWNLightingDiagnosticEvent,
     OWNLightingEvent,
     OWNLockCommand,
     OWNLockEvent,
@@ -154,12 +155,13 @@ def test_emitted_own_frames_parseable_by_ownd():
 
     # 2. Semantic verification of WHO 1001 diagnostic state response
     diag_msg = OWNMessage.parse("*#1001*74*11*111110111111111111110111##")
-    assert isinstance(diag_msg, OWNMessage)
+    assert isinstance(diag_msg, OWNLightingDiagnosticEvent)
     assert diag_msg.is_event is True
     assert diag_msg.who == 1001
     assert diag_msg.where == "74"
-    assert getattr(diag_msg, "dimension", None) == 11
-    assert getattr(diag_msg, "event_content", {}).get("dimension values") == ["111110111111111111110111"]
+    assert diag_msg.dimension == 11
+    assert diag_msg.diagnostic_mask == "111110111111111111110111"
+    assert diag_msg.cleared_bits == (6, 21)
 
     # 3. Semantic verification of WHO 25 CEN+ push-button event
     cen_msg = OWNMessage.parse("*25*21#1*21##")

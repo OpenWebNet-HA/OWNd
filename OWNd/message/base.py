@@ -298,7 +298,7 @@ class OWNMessage:
         """The 'where' parameter corresponding to the bus interface of the subject of this message"""
         return (
             self._where_param[1]
-            if self._who in [0, 1, 2, 14, 15]
+            if self._who in [0, 1, 2, 14, 15, 1001]
             and len(self._where_param) > 1
             and self._where_param[0] == "4"
             else None

@@ -79,6 +79,73 @@ def test_malformed_who_1001_frames_do_not_parse(frame: str) -> None:
     assert OWNMessage.parse(frame) is None
 
 
+@pytest.mark.parametrize(
+    ("frame", "where", "interface", "unique_id", "cleared", "subject"),
+    [
+        # DIMENSION 7 (BITMASK_DIA_A) on WHERE 0: MyHomeServer1 cover
+        # diagnostic (MyHOME issue_466).
+        ("*#1001*0*7*111111111111111101101111##", "0", None, "1001-0", (17, 20), "Light 0 "),
+        # Group read on WHERE 0 (live MyHomeServer1 3.87.13, 2026-10-24).
+        ("*#1001*0*11*111111111111111101101111##", "0", None, "1001-0", (17, 20), "Light 0 "),
+        # 4-digit point (MyHomeServer1 WHERE 0014).
+        ("*#1001*0014*11*111111111111111101101111##", "0014", None, "1001-0014", (17, 20), "Light 0014 "),
+        # Point behind a bus interface: interface and unique_id as for WHO 1.
+        (
+            "*#1001*74#4#01*11*111110111111111111110111##",
+            "74",
+            "01",
+            "1001-74#4#01",
+            (6, 21),
+            "Light 74 on interface 01 ",
+        ),
+        # Empty WHERE: the gateway's own diagnostic.
+        (
+            "*#1001**11*111011111111111101101101##",
+            "",
+            None,
+            "1001-",
+            (4, 17, 20, 23),
+            "The lighting / automation system ",
+        ),
+    ],
+)
+def test_where_forms_keep_the_mask(
+    frame: str,
+    where: str,
+    interface: str | None,
+    unique_id: str,
+    cleared: tuple[int, ...],
+    subject: str,
+) -> None:
+    message = OWNMessage.parse(frame)
+
+    assert isinstance(message, OWNLightingDiagnosticEvent)
+    assert message.where == where
+    assert message.interface == interface
+    assert message.unique_id == unique_id
+    assert message.diagnostic_mask == frame.split("*")[-1].rstrip("#")
+    assert message.cleared_bits == cleared
+    assert message.human_readable_log.startswith(subject + "autodiagnostic mask is ")
+    assert "  " not in message.human_readable_log
+    # WHO 1001 is outside the WHO 1 / 2 scope of is_general: pinned, not a feature.
+    assert message.is_general is False
+
+
+def test_dimension_7_takes_the_same_shape_rules_as_11() -> None:
+    assert OWNMessage.parse("*#1001*0*7*1##").diagnostic_mask is None
+    assert OWNMessage.parse("*#1001*0*7*111111111111111101101111*5##").diagnostic_mask is None
+
+
+def test_status_shaped_who_1001_frame_has_no_mask() -> None:
+    """``*1001*4*0##`` (the end-of-interview marker in MyHOME issue_466)."""
+    message = OWNMessage.parse("*1001*4*0##")
+
+    assert isinstance(message, OWNLightingDiagnosticEvent)
+    assert message.diagnostic_mask is None
+    assert message.cleared_bits is None
+    assert "autodiagnostic" not in message.human_readable_log
+
+
 def test_who_1001_status_request_is_not_a_diagnostic_event() -> None:
     request = OWNMessage.parse("*#1001*74##")
 
