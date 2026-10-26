@@ -109,13 +109,17 @@ def is_who4_dimension_22(frame: object) -> bool:
     return any(_WHO4_DIMENSION_22_REGEX.search(chunk) for chunk in raw.split("##"))
 
 
-# A zone (``2``, ``#2``), an actuator of a zone (``2#1``), or a central unit
-# (``#0``, ``#0#1``). ASCII digits only; no ``*``, so no dimension can be
+# WHO 4 WHERE for an actuator status request: a zone of one or two digits
+# (``0..99``: ``Z``, ``#Z``, ``0`` / ``#0`` for every zone or the central
+# unit), optionally one actuator digit (``Z#N``, ``#0#N``, ``#Z#N``; ``N`` is
+# ``1..9``, ``0`` for all actuators of the zone: ``2#0``, ``0#0``), optionally
+# a bus-interface suffix of exactly two digits (``#4#NN``: ``3#4#01``,
+# ``#3#4#01``, ``2#1#4#01``). Three-digit addresses are secondary probes
+# (``PZZ``, ``101..899``: no actuators, NACK on an F461) and the actuator
+# index is one digit in the WHO 4 WHERE table, so both are refused the way
+# ``get_fan_speed`` bounds its zone to ``1..99``. ASCII digits only; no ``*``, so no dimension can be
 # injected through the address.
-# WHO 4 WHERE for a status request: ``Z``, ``#Z``, ``Z#N``, ``#0``, ``#0#N``,
-# ``#Z#N``, each optionally routed through a bus interface (``#4#NN``, the
-# interface is exactly two digits: ``3#4#01``, ``#3#4#01``, ``2#1#4#01``).
-_WHO4_WHERE_REGEX = re.compile(r"#?[0-9]+(?:#[0-9]+)?(?:#4#[0-9]{2})?")
+_WHO4_WHERE_REGEX = re.compile(r"#?[0-9]{1,2}(?:#[0-9])?(?:#4#[0-9]{2})?", re.ASCII)
 
 
 def who4_temperature(raw: str) -> float | None:
@@ -905,10 +909,11 @@ class OWNHeatingCommand(OWNCommand):
     def actuators_status(cls, where: str | int) -> OWNHeatingCommand:
         """Request actuator status (``*#4*WHERE*20##``), one reply per actuator.
 
-        ``where`` is a zone (``2``, ``#2``), one actuator (``2#1``), the
-        central-unit form (``#0``, ``#0#N``) for every zone, or ``#Z#N`` (an
-        actuator addressed through the central unit; WHO 4 WHERE table, see
-        ``_normalize_zone``). Each form may be routed through a bus interface
+        ``where`` is a zone of one or two digits (``2``, ``#2``), one actuator
+        (``2#1``; ``2#0`` for all actuators of the zone), the central-unit
+        form (``#0``, ``#0#N``) for every zone, or ``#Z#N`` (an actuator
+        addressed through the central unit; WHO 4 WHERE table, see
+        ``_zone_address_and_name``). Each form may be routed through a bus interface
         with a two-digit ``#4#NN`` suffix (``3#4#01``, ``#3#4#01``,
         ``2#1#4#01``) because the suffix is spec-legal grammar, but no
         emulated firmware routes it across an F422: own-firmware-oracle#65
@@ -931,15 +936,18 @@ class OWNHeatingCommand(OWNCommand):
         ``*#4*2#2*20*5##`` (fan coil, off) on the event session, and
         ``*#4*#0*20##`` with both; a live MyHomeServer1 3.87.13 answers
         ``*#4*35*20##`` with ``*#4*35#1*20*0##``. Whitespace around ``where``
-        is stripped. Anything else (``*``, an empty string, a one- or
-        three-digit interface such as ``3#4#1`` or ``3#4#001``) raises
-        ``ValueError``.
+        is stripped. Anything else (``*``, an empty string, a three-digit
+        secondary probe such as ``105``, a two-digit actuator such as
+        ``2#10``, a one- or three-digit interface such as ``3#4#1`` or
+        ``3#4#001``) raises ``ValueError``. The log line carries the whole
+        address as written (``2#1#4#01``), not only the zone the parser
+        keeps in ``where``.
         """
         where_str = str(where).strip() if where is not None else ""
         if not _WHO4_WHERE_REGEX.fullmatch(where_str):
             raise ValueError(f"Invalid zone address: {where}")
         message = cls(f"*#4*{where_str}*20##")
-        message._human_readable_log = f"Requesting climate actuator status update for {message._where}{message._interface_log_text}."
+        message._human_readable_log = f"Requesting climate actuator status update for {where_str}."
         return message
 
     @classmethod

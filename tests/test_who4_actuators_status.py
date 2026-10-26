@@ -48,10 +48,18 @@ _DIMENSION_22 = re.compile(r"\*#4\*[^*]*\*#?0*22(?:[#*]|$)")
         ("#0", "*#4*#0*20##"),
         ("#0#1", "*#4*#0#1*20##"),
         # ``#Z#N``: actuator N of zone Z addressed through the central unit
-        # (WHO 4 WHERE table; ``_normalize_zone`` documents ``#Z#C``). Accepted
-        # on purpose; not seen live (the plant has no central unit).
+        # (WHO 4 WHERE table; ``_zone_address_and_name`` documents ``#Z#C``).
+        # Accepted on purpose; not seen live (the plant has no central unit).
         ("#2#1", "*#4*#2#1*20##"),
         ("22", "*#4*22*20##"),
+        # ``Z#0`` / ``0#0``: all actuators of a zone / of every zone
+        # (Encyclopedia WHERE table; the forms F453, F453AV and MH200N put on
+        # the SCS bus in own-firmware-oracle ``thermo-zone-requests``).
+        ("2#0", "*#4*2#0*20##"),
+        ("0#0", "*#4*0#0*20##"),
+        ("0", "*#4*0*20##"),
+        ("99", "*#4*99*20##"),
+        ("#0#4", "*#4*#0#4*20##"),
         # Bus-interface routed forms (``#4#NN``, two-digit interface): zone,
         # zone through the central unit, one actuator of a zone.
         ("3#4#01", "*#4*3#4#01*20##"),
@@ -74,6 +82,12 @@ def test_actuators_status_builds_dimension_20(where: str | int, frame: str) -> N
     assert str(parsed) == frame
     assert parsed.dimension == 20
     assert parsed.where == command.where
+    # ``where`` keeps only the token before the first ``#``; the actuator
+    # and interface tokens live in ``where_param`` and must round-trip too.
+    assert parsed.where_param == command.where_param
+    assert command.human_readable_log == (
+        f"Requesting climate actuator status update for {str(where).strip()}."
+    )
 
 
 @pytest.mark.parametrize(
@@ -91,6 +105,24 @@ def test_actuators_status_builds_dimension_20(where: str | int, frame: str) -> N
         "2#1#4",
         "٢",
         None,
+        # Zones are 0..99: three digits address a secondary probe (``PZZ``,
+        # no actuators, NACK on an F461) or nothing at all.
+        "105",
+        "101",
+        "899",
+        "001",
+        "99999",
+        "#105",
+        "105#4#01",
+        # The actuator index is one digit (``0..9``).
+        "2#10",
+        "2#999",
+        "#0#10",
+        "2#10#4#01",
+        # ``bool`` is an ``int`` subclass; negative numbers are not zones.
+        True,
+        False,
+        -1,
         # Routing suffix: the interface is exactly two digits after ``#4#``.
         "3#4#1",
         "3#4#001",
