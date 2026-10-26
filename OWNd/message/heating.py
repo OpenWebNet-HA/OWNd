@@ -1338,9 +1338,13 @@ class OWNHeatingCommand(OWNCommand):
         timeout, a live MyHomeServer1 3.87.13 without one NACKs it after
         ~4.2 s, a real MyHomeServer1 3.1.8 (OWNd#77 gateway probe) NACKs it,
         and on an F454 (MyHOME#629) it timed out while ``status("#0")``
-        (``*#4*#0##``) answered within 0.13 s. Use ``status('#0')`` (or
-        ``status(where)``) to poll a central unit. The frame is kept
-        unchanged for existing callers.
+        (``*#4*#0##``) answered within 0.13 s. The Legrand WHO 4 document
+        defines the dimension 14 read on zones 1..99 only (p. 18) and, on
+        ``#0``, reads of dimensions 30 and 31 (pp. 57-58): ``*#4*#0*14##`` is
+        undefined there, and the central unit's set point comes back inside
+        the ``*4*110#T*#0##`` reply to ``*#4*#0##`` (p. 56). Use
+        ``status('#0')`` (or ``status(where)``) to poll a central unit. The
+        frame is kept unchanged for existing callers.
         """
         warnings.warn(
             "OWNHeatingCommand.central_status() builds *#4*WHERE*14##, which goes "
