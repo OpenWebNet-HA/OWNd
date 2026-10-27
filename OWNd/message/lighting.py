@@ -962,3 +962,81 @@ class OWNLightingCommand(OWNCommand):
 
 register_event_parser(1, OWNLightingEvent)
 register_command_parser(1, OWNLightingCommand)
+
+
+class OWNLightingDiagnosticEvent(OWNEvent):
+    """WHO 1001: autodiagnostics of lighting and automation actuators.
+
+    WHO 1001 is the diagnostic WHO of the "Light and Automation system"
+    (OPEN.db): the frame comes from a WHO 1 light actuator or a WHO 2
+    shutter actuator alike. The 24-bit mask ``BITMASK_DIA_A`` travels as
+    DIMENSION 11 (``*#1001*WHERE*11*<mask>##``) or DIMENSION 7
+    (``*#1001*WHERE*7*<mask>##``); the gateway copies the actuator's bits
+    verbatim and what each bit means is not known, so the mask is exposed as
+    sent, with the positions of its cleared bits.
+
+    Where it is seen:
+
+    - pushed after ``*1*19*WHERE##`` by a faulty actuator (firmware oracle
+      ``what19`` on F453, F453AV, F459, F460, F461, MH200N, MH202 and
+      MyHomeServer1; MyHOME fixtures ``issue_619`` F453AV 3.0.14 with five
+      unloaded F414 dimmers, ``issue_466`` / ``issue_733`` MH200 ``WHERE 74``;
+      own-firmware-oracle findings/MH200N/what19.md);
+    - pushed 170-210 ms after a normal ``*1*0/1*WHERE##`` sweep reply, with
+      no ``WHAT 19``, on an MH200N 1.1.8 (MyHOME ``issue_434``, ``issue_746``:
+      ``*#1001*42*11*111011111111111101101101##``);
+    - answered on a direct ``*#1001*WHERE*11##`` read by a healthy light
+      (live F461 2.0.11 and MyHomeServer1 3.87.13, 2026-10-24, also on a
+      group ``*#1001*0*11##`` read);
+    - as DIMENSION 7 on ``WHERE 0`` from a MyHomeServer1 cover diagnostic
+      (MyHOME ``issue_466``, ``*#1001*0*7*111111111111111101101111##``).
+
+    Only a single 24-character ``0``/``1`` value is taken as a mask (every
+    capture has that shape; ``s2o_selfDiagnosticsA`` in ``libdiag.so``
+    unpacks three SCS bytes); a DIMENSION 7 / 11 value frame of another shape
+    still parses as this class with ``diagnostic_mask`` ``None`` and the raw
+    value in ``dimension_value``. WHERE may be a point (``74``, ``0014``), a
+    point behind a bus interface (``74#4#01``, see ``interface``), ``0`` or
+    empty (the gateway's own diagnostic); ``is_general`` stays ``False`` on
+    WHO 1001 as on every WHO outside 1 and 2.
+    """
+
+    _MASK_DIMENSIONS = (7, 11)
+
+    def __init__(self, data: str) -> None:
+        super().__init__(data)
+        self._diagnostic_mask: str | None = None
+        self._cleared_bits: tuple[int, ...] | None = None
+        # Exactly one value of exactly 24 bits, the shape every capture
+        # shows: *#1001*74*11*101*5## (a trailing value), a shorter or longer
+        # bit string and anything that is not 0/1 fail closed.
+        value = self._dimension_value[0] if len(self._dimension_value) == 1 else ""
+        if (
+            self._dimension in self._MASK_DIMENSIONS
+            and len(value) == 24
+            and set(value) <= {"0", "1"}
+        ):
+            self._diagnostic_mask = value
+            self._cleared_bits = tuple(i for i, bit in enumerate(value, 1) if bit == "0")
+            subject = (
+                f"Light {self._where}{self._interface_log_text}"
+                if self._where
+                else "The lighting / automation system"
+            )
+            self._human_readable_log = (
+                f"{subject} autodiagnostic mask is {value}"
+                f" (cleared bits: {', '.join(map(str, self._cleared_bits)) or 'none'})."
+            )
+
+    @property
+    def diagnostic_mask(self) -> str | None:
+        """The DIMENSION 7 / 11 bitmask as sent (``"111110111111111111110111"``)."""
+        return self._diagnostic_mask
+
+    @property
+    def cleared_bits(self) -> tuple[int, ...] | None:
+        """1-based positions, from the left, of the mask's ``0`` bits (``(6, 21)``)."""
+        return self._cleared_bits
+
+
+register_event_parser(1001, OWNLightingDiagnosticEvent)
