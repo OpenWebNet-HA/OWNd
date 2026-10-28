@@ -185,6 +185,17 @@ _DEFAULT_WITHOUT_CEN_PLUS = tuple(
     who for who in DEFAULT_SUPPORTED_WHO if who != WHO_CEN_PLUS
 )
 
+# Gateways without a WHO 16 translator: the F461 020011 and MyHomeServer1
+# 028206 images ship bt_multi (WHO 22) but no bt_difson (WHO 16)
+# (own-firmware-oracle README firmware table; the F461 openserver Stackopen
+# lists no WHO 16 client), every WHO 16 frame of the firmware oracle (86 per
+# gateway, sound-who16-source and the other suites) is nack/silent on them, a
+# live F461 2.0.11 NACKs *#16*0*5## within 5 ms, and a MyHomeServer1 NACKs it
+# in the MyHOME issue_466 trace fixture (MyHOME#459: "firmware discards 5, 16,
+# 22"). Their sound system is WHO 22 (sound-who22), so supports_audio stays
+# True and WHO 22 stays listed.
+_WITHOUT_WHO16 = (WHO_SOUND,)
+
 # Firmware at which Legrand documents CEN+ on the F453AV (WHO 25 p. 13).
 _F453AV_CEN_PLUS_FIRMWARE = (2, 1, 7)
 
@@ -391,6 +402,8 @@ class F461Profile(GatewayProfile):
       (`020011`) does not package the ``bt_energia`` translator and strictly
       NACKs all WHO 3 requests without bus activity (`results/F461/020011/oracle/full/energy-ts10.tsv`).
       WHO 3 is therefore excluded from ``supported_who``.
+    - WHO 16 (Sound System): refused, the sound system is WHO 22 (see
+      ``_WITHOUT_WHO16``).
 
     Injection flags, from the live F461 2.0.11 capture of 2026-10-18
     (MyHOME ``tests/fixtures/traces/f461_live_2026-10-18``) and the plant
@@ -419,7 +432,9 @@ class F461Profile(GatewayProfile):
             supports_who4_command_injection=True,
             supports_who18_response_injection=True,
             supported_who=tuple(
-                w for w in DEFAULT_SUPPORTED_WHO if w != WHO_LOAD_CONTROL
+                w
+                for w in DEFAULT_SUPPORTED_WHO
+                if w != WHO_LOAD_CONTROL and w not in _WITHOUT_WHO16
             ),
         )
 
@@ -536,6 +551,11 @@ class MH202Profile(GatewayProfile):
     *5*9*0##) and its zone states (WHAT 11/18). WHO 5 here means reading the
     alarm: the plant owner reports the central unit rejects SCS arm/disarm from
     any gateway and arms through WHO 9 AUX frames instead (see OWNAlarmCommand).
+
+    WHO 16 stays listed although the firmware oracle (MH202 010024) refuses
+    every WHO 16 command: a live MH202 with an F441M matrix relays WHO 16
+    state frames (``*#16*41*1*1##``, ``*#16*41*1*6##``; MyHOME#669 trace),
+    and ``supported_who`` also decides which gateway owns those events.
     """
 
     def __init__(self) -> None:
@@ -639,6 +659,8 @@ class MyHomeServer1Profile(GatewayProfile):
       NACKs all WHO 3 requests without bus activity (see own-firmware-oracle
       findings/MyHomeServer1/energy-ts10.md). WHO 3 is therefore excluded from
       ``supported_who``.
+    - WHO 16 (Sound System): refused, the sound system is WHO 22 (see
+      ``_WITHOUT_WHO16``).
     """
 
     def __init__(self) -> None:
@@ -653,7 +675,9 @@ class MyHomeServer1Profile(GatewayProfile):
             supports_native_transitions=True,
             supports_extended_frames=True,
             supported_who=tuple(
-                w for w in DEFAULT_SUPPORTED_WHO if w != WHO_LOAD_CONTROL
+                w
+                for w in DEFAULT_SUPPORTED_WHO
+                if w != WHO_LOAD_CONTROL and w not in _WITHOUT_WHO16
             ),
         )
 
