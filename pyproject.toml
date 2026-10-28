@@ -54,6 +54,11 @@ OWNd = ["py.typed"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-p no:homeassistant"
+# pytest-asyncio >= 1.4.1 warns at configure time when this is unset, and
+# `filterwarnings = error::DeprecationWarning` below turns that warning into
+# an INTERNALERROR before any test is collected. "function" is the scope the
+# suite has always used (every async fixture is function-scoped).
+asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     "error::DeprecationWarning",
     "error::PendingDeprecationWarning",
