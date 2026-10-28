@@ -25,18 +25,19 @@ from ..exceptions import (
     OWNProtocolError,
     OWNTimeoutError,
 )
-from ..message import OWNMessage, OWNSignaling, is_who4_dimension_22
+from ..message import OWNMessage, OWNSignaling, is_who4_dimension_22_crash_form
 
-# Why every send path refuses WHO 4 dimension 22 (see
-# ``OWNd.message.is_who4_dimension_22``): the gateway never gets the frame.
+# Why every send path refuses a WHO 4 dimension 22 frame without an actuator
+# token (see ``OWNd.message.is_who4_dimension_22_crash_form``): the gateway
+# never gets the frame.
 DESTRUCTIVE_FRAME_REASON = (
-    "WHO 4 dimension 22 crashes the thermoregulation daemon (bt_termo) "
-    "on Linux IP gateways"
+    "WHO 4 dimension 22 without an actuator token in WHERE crashes the "
+    "thermoregulation daemon (bt_termo) on Linux IP gateways"
 )
 
 
 def destructive_frame_error(frame: str) -> OWNProtocolError:
-    """The error every send path raises or records for a WHO 4 dimension 22 frame."""
+    """The error every send path raises or records for a crashing WHO 4 dimension 22 frame."""
     return OWNProtocolError(
         f"Refusing to send `{frame}`: {DESTRUCTIVE_FRAME_REASON}",
         frame=frame,
@@ -90,7 +91,7 @@ class OWNCommandSession(OWNSession):
         # on a single-session gateway (MH200N, F453AV...) and no 5-attempt
         # backoff on an unreachable host for a frame that is never written.
         frame = str(message)
-        if is_who4_dimension_22(frame):
+        if is_who4_dimension_22_crash_form(frame):
             connection._refuse_destructive_frame(
                 frame, message, raise_on_error=raise_on_error
             )
@@ -248,7 +249,7 @@ class OWNCommandSession(OWNSession):
     def _refuse_destructive_frame(
         self, frame: str, message: str | OWNMessage, *, raise_on_error: bool
     ) -> None:
-        """Record and log the refusal of a WHO 4 dimension 22 frame, never written.
+        """Record and log the refusal of a crashing WHO 4 dimension 22 frame, never written.
 
         ``frame`` is the serialised string the error carries; ``message`` is
         the caller's object, passed to the logger like every other send log
@@ -276,7 +277,7 @@ class OWNCommandSession(OWNSession):
         # Serialised once: the frame checked is the frame parsed, raised and
         # written. Log lines keep the caller's object (formatted lazily).
         frame = str(message)
-        if is_who4_dimension_22(frame):
+        if is_who4_dimension_22_crash_form(frame):
             self._refuse_destructive_frame(frame, message, raise_on_error=raise_on_error)
             return None
         msg_obj = (
