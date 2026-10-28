@@ -91,7 +91,8 @@ SAFE_FRAMES = (
     "*1*1*11#*#4*2*22##",
 )
 
-# Builders whose WHERE is group / central-unit zone ``#4`` and whose first
+# Builders whose WHERE is group ``#4`` (or 4-zone central unit ``#0#4``, the
+# only ``#``-address the WHO 4 central-unit builders take) and whose first
 # value is 22: the unanchored detector used to refuse all of them.
 WHERE_HASH_4_BUILDERS = (
     (lambda: OWNAutomationCommand.set_shutter_level("#4", 22), "*#2*#4*#11#001*22##"),
@@ -104,13 +105,13 @@ WHERE_HASH_4_BUILDERS = (
     (lambda: OWNSoundDiffusionCommand.set_volume("#4", 22), "*#22*#4*#1*22##"),
     (lambda: OWNSoundDiffusionCommand.set_preset("#4", 22), "*#22*#4*#6*22##"),
     (
-        lambda: OWNHeatingCommand.set_holiday_end_date("#4", 22, 10, 2026),
-        "*#4*#4*#30*22*10*2026##",
+        lambda: OWNHeatingCommand.set_holiday_end_date("#0#4", 22, 10, 2026),
+        "*#4*#0#4*#30*22*10*2026##",
     ),
-    (lambda: OWNHeatingCommand.set_holiday_end_time("#4", 22, 30), "*#4*#4*#31*22*30##"),
+    (lambda: OWNHeatingCommand.set_holiday_end_time("#0#4", 22, 30), "*#4*#0#4*#31*22*30##"),
     (
-        lambda: OWNHeatingCommand.set_timed_manual_end_time("#4", 22, 0),
-        "*#4*#4*#32*22*00##",
+        lambda: OWNHeatingCommand.set_timed_manual_end_time("#0#4", 22, 0),
+        "*#4*#0#4*#32*22*00##",
     ),
 )
 

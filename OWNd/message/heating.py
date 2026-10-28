@@ -109,6 +109,39 @@ def is_who4_dimension_22(frame: object) -> bool:
     return any(_WHO4_DIMENSION_22_REGEX.search(chunk) for chunk in raw.split("##"))
 
 
+# A central-unit address: ``#0`` (3550 99-zone central unit) or ``#0#C`` (4695
+# 4-zone central unit ``C``, 1..99 or ``01``..``99``: MyHOME_Suite OPEN.db
+# ``#0#[ZA][ZB]``, MHCatalogue 4695 ``ZAZB_CENTRAL`` 1..99, oracle
+# ``thermo-central-mode`` ``*4*0*#0#2##`` -> ``D1 02``), the two forms MyHOME
+# and the golden corpus use. ``#Z`` (zone 1..99) and ``#Z#C`` (zone Z under
+# 4-zone central unit C) are zone / probe addresses, not central-unit ones:
+# libqtdevices ``ControlledProbeDevice`` sends them with bus command byte
+# ``C2`` (``*4*311*#23#1##`` -> ``D1 01 03 02 C2 17 00 00``), whereas the
+# central unit (``ThermalDevice``) is command byte ``C1``; ``set_mode`` builds
+# them (see ``_zone_address_and_name``). ``#00``, ``#0#0`` and ``#0#00`` name
+# no central unit, and three digits are out of range. ASCII digits only.
+_WHO4_CENTRAL_WHERE_REGEX = re.compile(r"#0(?:#(?:0[1-9]|[1-9][0-9]?))?", re.ASCII)
+
+
+def _validate_central_where(where: object, purpose: str = "Central unit command") -> str:
+    """Return ``where`` stripped when it addresses a central unit, else raise.
+
+    Shared by every ``OWNHeatingCommand`` central-unit builder (the ones that
+    default to ``where="#0"``): ``#0`` and ``#0#C`` are accepted, whitespace
+    around them is stripped; a bare zone (``1``), a zone through the central
+    unit (``#1``, ``#23#1``, which ``set_mode`` builds), ``#00``, ``#0#0``,
+    three-digit values and non-strings raise ``ValueError`` naming
+    ``purpose`` and quoting the stripped value.
+    """
+    text = str(where).strip() if where is not None else ""
+    if not _WHO4_CENTRAL_WHERE_REGEX.fullmatch(text):
+        raise ValueError(
+            f"{purpose} needs a central unit address such as '#0' or '#0#1' "
+            f"(a zone '#Z' or '#Z#C' is addressed with set_mode): {text!r}"
+        )
+    return text
+
+
 # WHO 4 WHERE for an actuator status request: a zone of one or two digits
 # (``0..99``: ``Z``, ``#Z``, ``0`` / ``#0`` for every zone or the central
 # unit), optionally one actuator digit (``Z#N``, ``#0#N``, ``#Z#N``; ``N`` is
@@ -1140,7 +1173,25 @@ class OWNHeatingCommand(OWNCommand):
         would also switch the plant to summer. 311 is the generic automatic
         command libqtdevices sends to zones; on ``#0`` it puts every zone back
         on the central unit's program.
+
+        ``where`` is the central unit itself: ``#0`` (3550, 99 zones) or
+        ``#0#C`` with ``C`` the 4695 unit's configured zone 1..99 or
+        ``01``..``99`` (the forms MyHOME and the golden corpus use);
+        whitespace around it is stripped. Central-unit WHATs address the
+        central unit by API contract (OWNd#77 fix 3). A zone addressed
+        through the central unit, ``#Z`` or ``#Z#C`` (zone ``Z`` under
+        4-zone central unit ``C``, bus command byte ``C2`` from libqtdevices'
+        ``ControlledProbeDevice``), is a zone mode: ``set_mode`` builds it
+        (``set_mode("23#1", CLIMATE_MODE_AUTO)`` -> ``*4*311*#23#1##``), and
+        this builder raises ``ValueError`` for it, as it does for a bare zone,
+        ``#00``, ``#0#0``, ``#0#00`` and three-digit values (``#0#100``).
+        The plain zone form ``*4*311*Z##`` is ``nack``/``silent`` on
+        all 12 emulated gateways (firmware oracle ``thermo-zone-mode`` and
+        ``ownd-pr82-heating``), and a live F461 2.0.11 NACKs ``*4*311*2##``
+        while it ACKs ``*4*311*#2##``. ``*4*1*Z##`` and ``*4*303*Z##`` are
+        forwarded by some gateways, but as zone commands, not central ones.
         """
+        where = _validate_central_where(where, "Central unit mode")
         mode_map = {
             CLIMATE_MODE_OFF: 303,
             CLIMATE_MODE_HEAT: 1,
@@ -1163,6 +1214,7 @@ class OWNHeatingCommand(OWNCommand):
         cls, where: str = "#0", temperature: float = 20.0, mode: str = CLIMATE_MODE_HEAT
     ) -> OWNHeatingCommand:
         """Set master setpoint temperature on Central Unit."""
+        where = _validate_central_where(where, "Central unit setpoint")
         temp_val = float(temperature)
         if not math.isfinite(temp_val):
             raise ValueError("temperature must be finite")
@@ -1194,6 +1246,7 @@ class OWNHeatingCommand(OWNCommand):
         BTicino client (libqtdevices TS10_1_0_23 ThermalDevice::setWeekProgram)
         sends *4*3100+prog*WHERE##.
         """
+        where = _validate_central_where(where, "Central unit weekly program")
         try:
             prog_num = int(program)
         except (ValueError, TypeError):
@@ -1218,6 +1271,7 @@ class OWNHeatingCommand(OWNCommand):
         BTicino client (libqtdevices TS10_1_0_23 ThermalDevice99Zones::setScenario)
         sends *4*3200+scen*WHERE##.
         """
+        where = _validate_central_where(where, "Central unit scenario")
         try:
             scen_num = int(scenario)
         except (ValueError, TypeError):
@@ -1275,6 +1329,7 @@ class OWNHeatingCommand(OWNCommand):
         BTicino client (libqtdevices TS10_1_0_23 ThermalDevice::setWeekendDateTime)
         sends *4*315#3100+prog*WHERE##.
         """
+        where = _validate_central_where(where, "Central unit weekend mode")
         try:
             prog_num = int(program)
         except (ValueError, TypeError):
@@ -1299,6 +1354,7 @@ class OWNHeatingCommand(OWNCommand):
         BTicino client (libqtdevices TS10_1_0_23 ThermalDevice::setHolidayDateTime)
         sends *4*33000+days#3100+prog*WHERE##.
         """
+        where = _validate_central_where(where, "Central unit holiday mode")
         try:
             d = int(days)
         except (ValueError, TypeError):
@@ -1330,6 +1386,7 @@ class OWNHeatingCommand(OWNCommand):
         BTicino client (libqtdevices TS10_1_0_23 ThermalDevice::setHolidayEndDate)
         sends *#4*WHERE*#30*DD*MM*YYYY##.
         """
+        where = _validate_central_where(where, "Central unit holiday end date")
         try:
             d, m, y = int(day), int(month), int(year)
         except (ValueError, TypeError):
@@ -1351,6 +1408,7 @@ class OWNHeatingCommand(OWNCommand):
         BTicino client (libqtdevices TS10_1_0_23 ThermalDevice::setHolidayEndTime)
         sends *#4*WHERE*#31*HH*MM##.
         """
+        where = _validate_central_where(where, "Central unit holiday end time")
         try:
             h, m = int(hour), int(minute)
         except (ValueError, TypeError):
@@ -1372,6 +1430,7 @@ class OWNHeatingCommand(OWNCommand):
         BTicino client (libqtdevices TS10_1_0_23 ThermalDevice4Zones::setEndTime)
         sends *#4*WHERE*#32*HH*MM##.
         """
+        where = _validate_central_where(where, "Central unit timed manual end time")
         try:
             h, m = int(hour), int(minute)
         except (ValueError, TypeError):
