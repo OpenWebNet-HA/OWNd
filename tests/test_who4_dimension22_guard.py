@@ -1,9 +1,13 @@
-"""WHO 4 DIMENSION 22 never leaves OWNd.
+"""WHO 4 DIMENSION 22 without an actuator token never leaves OWNd.
 
-``*#4*ZONE*22##`` kills the gateway's thermoregulation daemon (bt_termo) and
-reboots an F461 about 3 minutes later (firmware oracle crash_frames; live F461
-2.0.11). The frames below are test inputs only: every send path must refuse
-them before anything is written.
+``*#4*ZONE*22##``, ``*#4*0*22##`` and ``*#4*#0*22##`` (read or write) kill the
+gateway's thermoregulation daemon (bt_termo) on nine of the twelve emulated
+gateways and reboot an F461 about 3 minutes later (own-firmware-oracle
+``thermo-dim22`` suite and ``expected_divergences.yaml`` crash frames; live
+F461 2.0.11). The published split forms ``*#4*3#Z#N*22##`` and the actuator
+form ``*#4*Z#N*22##`` crashed none of them (ten forward them to the bus), so
+those canonical spellings are sent; every other spelling stays refused. The
+frames below are test inputs only: nothing here reaches a gateway.
 """
 
 from __future__ import annotations
@@ -26,27 +30,43 @@ from OWNd.message import (
     OWNSoundCommand,
     OWNSoundDiffusionCommand,
     is_who4_dimension_22,
+    is_who4_dimension_22_crash_form,
 )
 from OWNd.transport.serial import AsyncSerialTransport
 from OWNd.transport.tcp import AsyncTcpTransport
 
+# Refused by every send path: WHERE without an actuator token (the four
+# oracle crash forms and their spellings), and every DIMENSION 22 form the
+# oracle did not replay.
 DIMENSION_22_FRAMES = (
     "*#4*2*22##",
     "*#4*#0*22##",
     "*#4*#1*22##",
-    "*#4*2#1*22##",
+    "*#4*0*22##",
+    "*#4*001*22##",
     "*#4**22##",
     "*#4*2*22#1##",
     "*#4*2*#22*1##",
+    "*#4*2*#22*1*0215*2*0##",
     "*#4*2*22*1##",
     "*#04*2*022##",
     "*1*1*11##*#4*2*22##",
-    # Published split-unit forms (WHO 4 specification, pp. 66-68).
-    "*#4*3#2#1*22##",
-    "*#4*3#2#1*#22*0***##",
-    "*#4*45#1*#22*3**1*1##",
+    # Not replayed: central unit with a 4-zone selector, an interface, all
+    # actuators of a zone (``N`` 0), two-digit or zero-padded tokens, a
+    # dimension parameter after 22, and the all-zones actuator form.
+    "*#4*#0#1*22##",
+    "*#4*2#4#01*22##",
+    "*#4*2#0*22##",
+    "*#4*3#2#0*22##",
+    "*#4*02#1*22##",
+    "*#4*2#10*22##",
+    "*#4*2#1*22#1##",
+    "*#4*2#1*22*1##",
+    "*#4*2#1*#22##",
+    "*#4*0#0*22##",
     # Tokens the gateway's atoi() still reads as 4 / 22: whitespace, sign,
-    # missing terminator (the serial transport appends ``##``).
+    # missing terminator (the serial transport appends ``##``), also with an
+    # actuator token in WHERE (the oracle sent the canonical spelling only).
     "*#4*2*22 ",
     "*#4*2*22 ##",
     "*#4*2* 22##",
@@ -54,6 +74,29 @@ DIMENSION_22_FRAMES = (
     "*# 4*2*22##",
     "*#+4*2*22##",
     "*#4*2*22",
+    "*#4* 2#1*22##",
+    "*#04*2#1*022##",
+    "*#4*2#1* 22##",
+    "*#4*2#1*+22##",
+    "*#4*2#1*22 ",
+    "*#4*2#1*22\n",
+    "*#4*2#1*22\n##",
+)
+
+# Sent: the canonical, actuator-addressed forms the oracle forwarded without
+# a crash (WHO 4 specification pp. 66-68; ``findings/thermo-dim22.md``).
+SPLIT_UNIT_FRAMES = (
+    "*#4*3#2#1*22##",
+    "*#4*3#2#1*#22*1*0215*2*0##",
+    "*#4*3#2#1*#22*0***##",
+    "*#4*2#1*22##",
+    "*#4*2#1*#22*1*0215*2*0##",
+    "*#4*45#1*#22*3**1*1##",
+    "*#4*45#1*#22*4**1*1##",
+    "*#4*45#1*#22*0***##",
+    "*#4*0#1*22##",
+    "*#4*3#99#9*22##",
+    "*#4*99#9*22##",
 )
 
 # Zone 22, other dimensions, dimension 22 of other WHOs, and mid-frame
@@ -143,13 +186,21 @@ def _command_session() -> tuple[OWNCommandSession, _Writer]:
 
 
 @pytest.mark.parametrize("frame", DIMENSION_22_FRAMES)
-def test_detector_flags_every_dimension_22_form(frame: str) -> None:
+def test_detector_flags_every_crash_form(frame: str) -> None:
     assert is_who4_dimension_22(frame) is True
+    assert is_who4_dimension_22_crash_form(frame) is True
+
+
+@pytest.mark.parametrize("frame", SPLIT_UNIT_FRAMES)
+def test_detector_recognises_split_forms_but_does_not_refuse_them(frame: str) -> None:
+    assert is_who4_dimension_22(frame) is True
+    assert is_who4_dimension_22_crash_form(frame) is False
 
 
 @pytest.mark.parametrize("frame", SAFE_FRAMES)
 def test_detector_leaves_other_frames_alone(frame: str) -> None:
     assert is_who4_dimension_22(frame) is False
+    assert is_who4_dimension_22_crash_form(frame) is False
 
 
 @pytest.mark.parametrize(
@@ -159,7 +210,14 @@ def test_detector_leaves_other_frames_alone(frame: str) -> None:
 )
 def test_detector_decodes_buffers(frame: object) -> None:
     assert is_who4_dimension_22(frame) is True
+    assert is_who4_dimension_22_crash_form(frame) is True
     assert is_who4_dimension_22(b"*#4*#4*#30*22*10*2026##") is False
+    assert is_who4_dimension_22_crash_form(b"*#4*3#2#1*22##") is False
+    assert is_who4_dimension_22(memoryview(b"*#4*3#2#1*22##")) is True
+    # Chunked: a split form after another frame is still not a crash form
+    # (the send paths refuse the double frame as invalid instead).
+    assert is_who4_dimension_22_crash_form("*1*1*11##*#4*2#1*22##") is False
+    assert is_who4_dimension_22_crash_form("*#4*2#1*22##*#4*2*22##") is True
 
 
 @pytest.mark.parametrize(
@@ -174,6 +232,7 @@ def test_detector_leaves_where_hash_4_builders_alone(
     assert str(command) == expected
     assert command.is_valid
     assert is_who4_dimension_22(command) is False
+    assert is_who4_dimension_22_crash_form(command) is False
     assert is_who4_dimension_22(str(command)) is False
 
 
@@ -213,7 +272,7 @@ async def test_command_session_refuses_raw_string(frame: str) -> None:
     [
         OWNCommand.parse("*#4*2*22##"),
         OWNMessage.parse("*#4*#0*22##"),
-        OWNHeatingCommand("*#4*2#1*22##"),
+        OWNHeatingCommand("*#4*2*#22*1*0215*2*0##"),
     ],
     ids=["OWNCommand.parse", "OWNMessage.parse", "OWNHeatingCommand"],
 )
@@ -320,7 +379,7 @@ async def test_command_session_refuses_before_reconnecting() -> None:
 
 @pytest.mark.parametrize(
     "message",
-    ["*#4*2*22##", OWNHeatingCommand("*#4*3#2#1*22##")],
+    ["*#4*2*22##", OWNHeatingCommand("*#4*0*22##")],
     ids=["str", "OWNHeatingCommand"],
 )
 @pytest.mark.asyncio
@@ -373,6 +432,38 @@ async def test_command_session_still_sends_zone_22(frame: str) -> None:
 
     assert await session.send(frame, is_status_request=True) is True
     assert writer.written == [frame.encode()]
+
+
+@pytest.mark.parametrize("frame", SPLIT_UNIT_FRAMES)
+@pytest.mark.asyncio
+async def test_command_session_sends_split_unit_forms(frame: str) -> None:
+    # The parser accepts them (``OWNHeatingCommand``), the guard lets them
+    # through, and the string written is the string given.
+    session, writer = _command_session()
+
+    assert await session.send(frame, is_status_request=True) is True
+    assert writer.written == [frame.encode()]
+    assert session.last_error is None
+
+
+@pytest.mark.asyncio
+async def test_send_to_gateway_connects_for_split_unit_forms() -> None:
+    gateway = OWNGateway({"address": "192.0.2.1", "port": 20000, "password": "12345"})
+
+    with (
+        patch.object(
+            OWNCommandSession,
+            "connect",
+            new_callable=AsyncMock,
+            return_value={"Success": True},
+        ) as connect,
+        patch.object(
+            OWNCommandSession, "_locked_send", new_callable=AsyncMock, return_value=True
+        ) as send,
+    ):
+        assert await OWNCommandSession.send_to_gateway("*#4*3#2#1*22##", gateway) is True
+    connect.assert_awaited_once()
+    send.assert_awaited_once_with("*#4*3#2#1*22##", False, raise_on_error=False)
 
 
 def _serial_transport() -> tuple[AsyncSerialTransport, _Writer]:
@@ -438,7 +529,7 @@ async def test_serial_transport_refuses_built_message() -> None:
     transport, writer = _serial_transport()
 
     with pytest.raises(OWNProtocolError, match="dimension 22"):
-        await transport.send(OWNHeatingCommand("*#4*2#1*22##"), raise_on_error=True)
+        await transport.send(OWNHeatingCommand("*#4*#0*22##"), raise_on_error=True)
     assert writer.written == []
 
 
@@ -490,6 +581,23 @@ async def test_atoi_prefix_spellings_are_refused_as_invalid(frame: str) -> None:
         await transport.send(frame, raise_on_error=True)
     assert excinfo.value.reason == "invalid_frame"
     assert serial_writer.written == []
+
+
+@pytest.mark.parametrize("frame", SPLIT_UNIT_FRAMES[:2])
+@pytest.mark.asyncio
+async def test_serial_transport_sends_split_unit_forms(frame: str) -> None:
+    transport, writer = _serial_transport()
+
+    async def ack() -> None:
+        await asyncio.sleep(0)
+        assert transport._pending_future is not None
+        transport._pending_future.set_result(True)
+
+    task = asyncio.create_task(ack())
+    assert await transport.send(frame, raise_on_error=True) is True
+    await task
+    assert transport.last_error is None
+    assert writer.written == [frame.encode()]
 
 
 @pytest.mark.asyncio
