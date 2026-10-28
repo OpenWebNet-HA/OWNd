@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from OWNd.message import MESSAGE_TYPE_TARGET_TEMPERATURE, OWNHeatingEvent, OWNMessage
+from OWNd.message import MESSAGE_TYPE_TARGET_TEMPERATURE, OWNEvent, OWNHeatingEvent, OWNMessage
 
 
 def test_hash_prefixed_setpoint_parses_as_dimension_14() -> None:
@@ -25,6 +25,23 @@ def test_hash_prefixed_setpoint_parses_as_dimension_14() -> None:
     assert message.dimension_value == ["#0230", "1"]
     assert message.dimension_param == []
     assert str(message) == "*#4*#1*14*#0230*1##"
+    # The '#' never leaks into the log line.
+    assert message.human_readable_log == "Zone 1's target temperature is set to 23.0°C."
+
+
+def test_event_parse_matches_message_parse() -> None:
+    """``OWNEvent.parse`` (the event session's entry point) gives the same event as
+    ``OWNMessage.parse``; on master it returned an invalid event (``zone 0``)."""
+    event = OWNEvent.parse("*#4*#1*14*#0230*1##")
+    message = OWNMessage.parse("*#4*#1*14*#0230*1##")
+
+    assert isinstance(event, OWNHeatingEvent)
+    assert event.is_valid
+    assert event.zone == 1
+    assert event.message_type == MESSAGE_TYPE_TARGET_TEMPERATURE
+    assert event.set_temperature == 23.0
+    assert event.human_readable_log == message.human_readable_log
+    assert str(event) == str(message)
 
 
 @pytest.mark.parametrize(
@@ -60,6 +77,14 @@ def test_plain_setpoint_is_unchanged() -> None:
         "*#4*#1*14*##0230*1##",  # one '#', not two
         "*#4*#1*14*#02#30*1##",  # no '#' inside the value
         "*#4*#1*14*#*1##",  # a bare '#' is not a value
+        # The dimension 14 shape only: one or two values, a four-digit
+        # temperature starting with 0 or 1, ASCII digits.
+        "*#4*#1*14*#0230*##",  # empty trailing field
+        "*#4*#1*14*#0230*1*2*3##",  # too many values
+        "*#4*#1*14*#99999*1##",  # not a temperature
+        "*#4*#1*14*#230*1##",  # three digits
+        "*#4*#1*14*#\u0660\u0662\u0663\u0660*1##",  # non-ASCII digits are not wire bytes
+        "*#4*#\u0661*14*#0230*1##",
     ],
 )
 def test_hash_values_elsewhere_still_do_not_parse(frame: str) -> None:
