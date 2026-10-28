@@ -665,8 +665,13 @@ class MyHomeServer1Profile(GatewayProfile):
       NACKs all WHO 3 requests without bus activity (see own-firmware-oracle
       findings/MyHomeServer1/energy-ts10.md). WHO 3 is therefore excluded from
       ``supported_who``.
-    - WHO 16 (Sound System): refused, the sound system is WHO 22 (see
-      ``_WITHOUT_WHO16``).
+    - WHO 16 (Sound System): refused (no ``bt_difson``, every WHO 16 frame
+      nack/silent in the oracle and on a live plant; see ``_WITHOUT_WHO16``).
+      WHO 22 is listed because the emulated 028206 image's ``bt_multi``
+      translates it onto the bus (``sound-who22``); whether a live
+      MyHomeServer1 3.87.x routes WHO 22 on a production plant is not
+      measured here (MyHOME#459 reports it discarded; MyHOME's topology
+      strips 22 on it).
     """
 
     def __init__(self) -> None:
