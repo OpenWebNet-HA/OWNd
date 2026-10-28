@@ -192,8 +192,11 @@ _DEFAULT_WITHOUT_CEN_PLUS = tuple(
 # gateway, sound-who16-source and the other suites) is nack/silent on them, a
 # live F461 2.0.11 NACKs *#16*0*5## within 5 ms, and a MyHomeServer1 NACKs it
 # in the MyHOME issue_466 trace fixture (MyHOME#459: "firmware discards 5, 16,
-# 22"). Their sound system is WHO 22 (sound-who22), so supports_audio stays
-# True and WHO 22 stays listed.
+# 22"). WHO 22 is out of scope here and left as it is: in the oracle the
+# 028206 image's bt_multi translates WHO 22 commands onto the bus
+# (sound-who22, ack/out), so supports_audio stays True and WHO 22 stays
+# listed; whether a live MyHomeServer1 3.87.x routes WHO 22 on a production
+# plant is not settled by this change (MyHOME's topology strips 22 on it).
 _WITHOUT_WHO16 = (WHO_SOUND,)
 
 # Firmware at which Legrand documents CEN+ on the F453AV (WHO 25 p. 13).
@@ -402,8 +405,11 @@ class F461Profile(GatewayProfile):
       (`020011`) does not package the ``bt_energia`` translator and strictly
       NACKs all WHO 3 requests without bus activity (`results/F461/020011/oracle/full/energy-ts10.tsv`).
       WHO 3 is therefore excluded from ``supported_who``.
-    - WHO 16 (Sound System): refused, the sound system is WHO 22 (see
-      ``_WITHOUT_WHO16``).
+    - WHO 16 (Sound System): refused (no ``bt_difson``, every WHO 16 frame
+      nack/silent in the oracle and on a live plant; see ``_WITHOUT_WHO16``).
+      WHO 22 is listed because the emulated image translates it onto the bus
+      (``sound-who22``); live routing on production plants is not measured
+      here.
 
     Injection flags, from the live F461 2.0.11 capture of 2026-10-18
     (MyHOME ``tests/fixtures/traces/f461_live_2026-10-18``) and the plant
