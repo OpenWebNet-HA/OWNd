@@ -108,6 +108,18 @@ class OWNMessage:
     _DIMENSION_REQUEST_REPLY = re.compile(
         r"^\*#(?P<who>\d+)\*(?P<where>#?\d+)?(?P<where_param>(?:#\d+)*)?\*(?P<dimension>\d+)(?P<dimension_param>(?:#\d+)*)?(?P<dimension_value>(?:\*\d*)+)##$"  # pylint: disable=line-too-long
     )  #  *#WHO*WHERE*DIMENSION*VAL1*VALn##
+    # Dimension replies with a '#' inside a value, accepted only in the shapes
+    # gateways are known to send; the WHO decoder reads the value.
+    _HASH_VALUE_REPLIES = (
+        # *#4*WHERE*14*#TTTT*M##: setpoint with a '#' prefix (MyHOME#139).
+        # Exactly the dimension 14 shape: one '#', a four-digit temperature
+        # (first digit 0 or 1, as _WHO4_TEMP_REGEX) and at most one mode
+        # value; ASCII digits only, so non-ASCII wire bytes stay unparsed.
+        re.compile(
+            r"^\*#(?P<who>4)\*(?P<where>#?[0-9]+)(?P<where_param>(?:#[0-9]+)*)\*(?P<dimension>14)(?P<dimension_param>)(?P<dimension_value>\*#[01][0-9]{3}(?:\*[0-9]+)?)##$",  # pylint: disable=line-too-long
+            re.ASCII,
+        ),
+    )
 
     """ Base class for all OWN messages """
 
@@ -212,6 +224,25 @@ class OWNMessage:
             self._dimension_param = (match.group("dimension_param") or "").split("#")[1:]
             self._dimension_value = match.group("dimension_value").split("*")[1:]
 
+        elif match := self._match_hash_value_reply(self._raw):
+            self._is_valid_message = True
+            self._match = match
+            self._family = "EVENT"
+            self._message_type = "DIMENSION_REQUEST_REPLY"
+            self._who = int(match.group("who"))
+            self._where = match.group("where")
+            self._where_param = match.group("where_param").split("#")[1:]
+            self._dimension = int(match.group("dimension"))
+            self._dimension_param = (match.group("dimension_param") or "").split("#")[1:]
+            self._dimension_value = match.group("dimension_value").split("*")[1:]
+
+    @classmethod
+    def _match_hash_value_reply(cls, data: str) -> re.Match[str] | None:
+        for pattern in cls._HASH_VALUE_REPLIES:
+            if match := pattern.match(data):
+                return match
+        return None
+
     @classmethod
     def parse(cls, data: str, *, gateway: Any = None) -> OWNMessage | None:
         if (
@@ -228,6 +259,7 @@ class OWNMessage:
             or cls._ALARM_EMPTY_WHERE.match(data)
             or cls._DOOR_ENTRY_SHORT.match(data)
             or cls._DIMENSION_REQUEST_REPLY.match(data)
+            or cls._match_hash_value_reply(data)
         ):
             return OWNEvent.parse(data, gateway=gateway)
         if (
