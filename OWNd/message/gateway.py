@@ -130,6 +130,7 @@ class OWNGatewayEvent(OWNEvent):
 
         self._kernel_version = None
         self._distribution_version = None
+        self._model_name: str | None = None
 
         _validate_gateway_clock_values(self._dimension, self._dimension_value)
 
@@ -239,6 +240,27 @@ class OWNGatewayEvent(OWNEvent):
                 f"Gateway's distribution version is: {self._distribution_version}."
             )
 
+        elif (
+            self._dimension == 27
+            and len(self._dimension_value) == 1
+            and "#" in self._dimension_value[0]
+        ):
+            # Model name as one '#'-separated value of ASCII codes:
+            # *#13**27*70#52#54#49## is "F461" (live F461 2.0.11, 2026-10-23),
+            # *#13**27*77#121#...#49## is "MyHomeServer1" (live 3.87.13,
+            # 2026-10-24; MyHOME#799). Only that shape is decoded: the general
+            # '*'-separated form (*#13**27*70*52*54*49##) and a single code
+            # without '#' are not a model name. The frame pattern
+            # (``_HASH_VALUE_REPLIES``, ASCII digits only) admits the shape;
+            # every code must name a printable ASCII character, else
+            # model_name stays None.
+            codes = self._dimension_value[0].split("#")
+            if all(32 <= int(c) < 127 for c in codes):
+                self._model_name = "".join(chr(int(c)) for c in codes)
+                self._human_readable_log = (
+                    f"Gateway's model name is: {self._model_name}."
+                )
+
     @property
     def time(self) -> _dt.time | None:
         """Return the decoded gateway internal time."""
@@ -315,6 +337,11 @@ class OWNGatewayEvent(OWNEvent):
     def distribution_version(self) -> str | None:
         """Return the decoded gateway distribution version string."""
         return self._distribution_version
+
+    @property
+    def model_name(self) -> str | None:
+        """Return the gateway model name of a Dimension 27 reply (e.g. ``"F461"``)."""
+        return self._model_name
 
 
 class OWNGatewayCommand(OWNCommand):
