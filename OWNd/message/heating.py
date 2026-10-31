@@ -77,11 +77,27 @@ _WHO4_TEMP_REGEX = re.compile(r"^[01][0-9]{3}$")
 # WHO 4 DIMENSION 22 is the published split-unit (air conditioning) IR
 # control: ``*#4*3#Z#N*22##`` requests the current setting and
 # ``*#4*3#Z#N*#22*MOD*SP*VEL*SWING##`` writes it (WHO 4 specification,
-# pp. 66-68). On Linux IP gateways the frame kills the thermoregulation
-# daemon (bt_termo) and the gateway reboots about 3 minutes later (firmware
-# oracle crash_frames; live F461 2.0.11). Every send path refuses it, in any
-# shape: request, write (``*#22*``) or reply, with or without a dimension
-# parameter, and in any ``*#4*ZONE*22##`` spelling.
+# pp. 66-68). Sent with a WHERE that carries no actuator token (a zone
+# ``*#4*Z*22##``, the general ``*#4*0*22##`` or the central unit
+# ``*#4*#0*22##``, read or write) the frame kills the thermoregulation
+# daemon (bt_termo) on the Linux IP gateways and a live F461 2.0.11 reboots
+# about 3 minutes later (own-firmware-oracle ``thermo-dim22`` suite and
+# ``tools/expected_divergences.yaml`` crash frames; live F461 2.0.11).
+# The published split forms ``3#Z#N`` crashed none of the twelve emulated
+# gateways: ten forward them to the bus as a telegram to zone Z, actuator N;
+# the prefix-less ``Z#N`` forms are ``nack, silent`` on eleven and forwarded
+# by the MH202 only, so they stay refused (``findings/thermo-dim22.md``;
+# emulated firmware, ``harness=full``, not yet replayed on hardware).
+#
+# ``is_who4_dimension_22`` recognises every DIMENSION 22 spelling (the
+# detector of OWNd 2.0.0b11); ``is_who4_dimension_22_crash_form`` is what the
+# send paths refuse: every spelling except the split forms the oracle
+# replayed without a crash. Untested spellings (``0ZZ`` all probes of a zone,
+# ``#Z`` a zone through the central unit, ``#0#C``, ``Z#4#IF``, ``Z`` 0 (the
+# general-zone sentinel bt_termo crashes on), two-digit actuator numbers,
+# whitespace or ``+`` tokens, writes with fewer or more than four payload
+# fields) stay refused: the allowance is the tested forms, not the
+# complement of the crash set.
 #
 # Anchored to the first ``*`` of each ``##``-delimited frame: ``*#4*`` means
 # WHO 4 only there. Mid-frame, ``*#4*`` is WHERE ``#4`` (group 4 in WHO 1, 2,
@@ -94,19 +110,69 @@ _WHO4_DIMENSION_22_REGEX = re.compile(
     r"^[^*]*\*#\s*\+?0*4\s*\*[^*]*\*\s*#?\s*\+?0*22(?:\s*$|[#*\s])"
 )
 
+# The frames the oracle forwarded without a crash, exactly as sent: WHO ``4``
+# and DIMENSION ``22`` spelled canonically, WHERE the published split form
+# ``3#Z#N`` (``Z`` 1..99, ``N`` 1..9, no leading zeros, no whitespace), as a
+# request (``*22`` and nothing after it) or a write with exactly the four
+# published payload fields ``MOD*SP*VEL*SWING`` (MOD 0..5, SP three or four
+# digits, VEL 0..4, SWING 0 or 1, each optionally empty as the touchscreen
+# writes ``*#22*3**1*1`` and ``*#22*0***``). The oracle sent ``Z`` 2 and 45
+# with ``N`` 1 and the write ``1*0215*2*0``; the published ranges are
+# allowed on the grammar, not on a replay of each value. ``\Z`` on both
+# arms (``$`` also matches before a trailing newline); ASCII only, so a
+# Unicode digit in the payload is no sendable frame. Anything else that
+# ``_WHO4_DIMENSION_22_REGEX`` matches is a crash form.
+_WHO4_DIMENSION_22_SENDABLE_REGEX = re.compile(
+    r"^\*#4\*3#[1-9][0-9]?#[1-9]"
+    r"(?:\*22|\*#22\*[0-5]?\*(?:[0-9]{3,4})?\*[0-4]?\*[01]?)\Z",
+    re.ASCII,
+)
 
-def is_who4_dimension_22(frame: object) -> bool:
-    """True if ``frame`` (or any ``##``-delimited frame in it) is WHO 4 DIMENSION 22.
 
-    ``bytes``, ``bytearray`` and ``memoryview`` are decoded as latin-1 (the
-    wire encoding); anything else is checked through ``str()``.
-    """
-    raw = (
+def _decode_frame(frame: object) -> str:
+    return (
         bytes(frame).decode("latin-1")
         if isinstance(frame, (bytes, bytearray, memoryview))
         else str(frame)
     )
+
+
+def is_who4_dimension_22(frame: object) -> bool:
+    """True if ``frame`` (or any ``##``-delimited frame in it) is WHO 4 DIMENSION 22.
+
+    Every spelling, the actuator-addressed split forms included. The send
+    paths refuse the narrower :func:`is_who4_dimension_22_crash_form`.
+    ``bytes``, ``bytearray`` and ``memoryview`` are decoded as latin-1 (the
+    wire encoding); anything else is checked through ``str()``.
+    """
+    raw = _decode_frame(frame)
     return any(_WHO4_DIMENSION_22_REGEX.search(chunk) for chunk in raw.split("##"))
+
+
+def is_who4_dimension_22_crash_form(frame: object) -> bool:
+    """True if ``frame`` holds a WHO 4 DIMENSION 22 frame that every send path refuses.
+
+    That is every DIMENSION 22 spelling except the canonical published split
+    forms the firmware oracle forwarded without a crash on ten of twelve
+    emulated gateways: ``*#4*3#Z#N*22##`` and
+    ``*#4*3#Z#N*#22*MOD*SP*VEL*SWING##`` with ``Z`` 1..99, ``N`` 1..9 and
+    exactly four payload fields (the oracle replayed ``Z`` 2 and 45, ``N`` 1;
+    the rest of the published ranges is allowed on the grammar). Refused: a
+    zone (``Z``, ``0ZZ``), the general ``0`` and ``Z`` 0, the central unit
+    (``#0``, ``#0#C``), a zone through it (``#Z``), an interface (``Z#4#IF``),
+    the prefix-less actuator form ``Z#N`` (``nack, silent`` on eleven
+    gateways, forwarded by the MH202 only), ``N`` 0 or two digits, a
+    parameter after the request (``*22*1``, ``*22#1``), a bare ``*#22``, a
+    write with fewer or more than four fields or out-of-range values, and
+    any leading-zero, whitespace, ``+``, newline or non-ASCII spelling.
+    Buffers are decoded like :func:`is_who4_dimension_22`.
+    """
+    raw = _decode_frame(frame)
+    return any(
+        _WHO4_DIMENSION_22_REGEX.search(chunk)
+        and not _WHO4_DIMENSION_22_SENDABLE_REGEX.match(chunk)
+        for chunk in raw.split("##")
+    )
 
 
 # A central-unit address: ``#0`` (3550 99-zone central unit) or ``#0#C`` (4695

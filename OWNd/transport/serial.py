@@ -12,7 +12,7 @@ from ..connection.command_session import (
     destructive_frame_error,
 )
 from ..exceptions import OWNError, OWNProtocolError
-from ..message import OWNMessage, OWNSignaling, is_who4_dimension_22
+from ..message import OWNMessage, OWNSignaling, is_who4_dimension_22_crash_form
 from .base import OWNTransport
 
 SEPARATOR = b"##"
@@ -163,8 +163,8 @@ class AsyncSerialTransport(OWNTransport):
         text = str(message)
         if not text.endswith("##"):
             text += "##"
-        if is_who4_dimension_22(text):
-            # Never written, whatever the caller: it reboots the gateway.
+        if is_who4_dimension_22_crash_form(text):
+            # Never written, whatever the caller: it crashes bt_termo.
             err: OWNError = destructive_frame_error(text)
             self._last_error = err
             self._logger.error(
