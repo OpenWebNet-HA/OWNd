@@ -172,6 +172,7 @@ from .heating import (
     _zone_state,
     _zone_state_text,
     is_who4_dimension_22,
+    is_who4_dimension_22_crash_form,
     who4_temperature,
     OWNHeatingCommand,
     OWNHeatingEvent,
@@ -318,6 +319,7 @@ __all__ = [
     "_zone_state",
     "_zone_state_text",
     "is_who4_dimension_22",
+    "is_who4_dimension_22_crash_form",
     "OWNHeatingEvent",
     "OWNHeatingCommand",
     # Burglar Alarm (WHO 5)

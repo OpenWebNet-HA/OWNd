@@ -66,8 +66,9 @@ class OWNTransport(ABC):
         """Send one command and return its response.
 
         Raises ``RuntimeError`` when the transport is not connected. A frame
-        that is refused locally (invalid, or WHO 4 dimension 22 which crashes
-        the gateway's thermoregulation daemon) is logged at ERROR, kept in
+        that is refused locally (invalid, or a WHO 4 dimension 22 frame without
+        an actuator token in WHERE, which crashes the gateway's
+        thermoregulation daemon) is logged at ERROR, kept in
         ``last_error`` and answered with ``None``; with ``raise_on_error`` it
         raises ``OWNProtocolError`` (``reason`` ``invalid_frame`` or
         ``destructive_frame``) instead, like ``OWNCommandSession.send``.
