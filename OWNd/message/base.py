@@ -119,6 +119,17 @@ class OWNMessage:
             r"^\*#(?P<who>4)\*(?P<where>#?[0-9]+)(?P<where_param>(?:#[0-9]+)*)\*(?P<dimension>14)(?P<dimension_param>)(?P<dimension_value>\*#[01][0-9]{3}(?:\*[0-9]+)?)##$",  # pylint: disable=line-too-long
             re.ASCII,
         ),
+        # *#13**27*C1#C2#..##: gateway model name as '#'-separated ASCII codes
+        # (live F461 2.0.11 and MyHomeServer1 3.87.13, MyHOME#799). The '#'
+        # grammar is explicit ((?:#[0-9]+)+): every known BTicino / Legrand
+        # model string has more than one character, and a single code
+        # (*#13**27*70##) is indistinguishable from a plain numeric reply,
+        # which _DIMENSION_REQUEST_REPLY already parses. ASCII digits only,
+        # at most three per code (printable ASCII is 32..126).
+        re.compile(
+            r"^\*#(?P<who>13)\*(?P<where>)(?P<where_param>)\*(?P<dimension>27)(?P<dimension_param>)(?P<dimension_value>\*[0-9]{1,3}(?:#[0-9]{1,3})+)##$",  # pylint: disable=line-too-long
+            re.ASCII,
+        ),
     )
 
     """ Base class for all OWN messages """
