@@ -124,10 +124,10 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
         dispatch_who_keys=(3,),
     ),
     WhoCatalogDefinition(
-        who="**4**",
+        who="**4** / **1004**",
         name="Thermoregulation / Climate",
-        description="Multi-zone temperature readouts, target adjustments, HVAC modes (Heat/Cool/Auto/Off), local offsets, fan coil speeds, valve states, Central Unit 3550/4695 master coordination",
-        dispatch_who_keys=(4,),
+        description="Multi-zone temperature readouts, target adjustments, HVAC modes (Heat/Cool/Auto/Off), local offsets, fan coil speeds, valve states, Central Unit 3550/4695 master coordination, thermoregulation autodiagnostic masks (WHO 1004 Dimensions 8, 11 and 22 of probes, central units and zone actuators)",
+        dispatch_who_keys=(4, 1004),
     ),
     WhoCatalogDefinition(
         who="**5**",

@@ -66,7 +66,7 @@ def test_build_who_catalog_table() -> None:
     assert "`OWNLightingCommand`, `OWNLightingEvent`" in table
 
     # Verify WHO 4 includes OWNHeatingCommand and OWNHeatingEvent
-    assert "`OWNHeatingCommand`, `OWNHeatingEvent`" in table
+    assert "`OWNHeatingCommand`, `OWNHeatingDiagnosticCommand`, `OWNHeatingEvent`, `OWNHeatingDiagnosticEvent`" in table
 
     # Verify WHO 0 includes OWNScenarioEvent
     assert "| **0** | Scenarios |" in table
