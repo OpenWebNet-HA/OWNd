@@ -578,6 +578,7 @@ class OWNSoundDiffusionEvent(OWNEvent):
         self._frequency_mhz: float | None = None
         self._frequency_band: int | None = None
         self._preset: int | None = None
+        self._is_preset_cleared: bool = False
         self._rds_text: str | None = None
         self._is_rds_blank: bool = False
         self._source_request: int | None = None
@@ -665,8 +666,15 @@ class OWNSoundDiffusionEvent(OWNEvent):
                 if khz:
                     self._frequency_khz = khz
                     self._frequency_mhz = round(khz / 1000.0, 2)
-                    if self._dimension == 11 and values[2].isdigit() and int(values[2]) > 0:
-                        self._preset = int(values[2])
+                    if self._dimension == 11 and values[2].isdigit():
+                        if int(values[2]) > 0:
+                            self._preset = int(values[2])
+                        else:
+                            # An explicit preset 0: the F500 is tuned off every stored
+                            # station (manual tuning, or before a station is selected;
+                            # H/L4684 6.0.11 F500 trace, MyHOME#839). ``preset`` stays
+                            # None as for a frame without a preset field.
+                            self._is_preset_cleared = True
         elif self._dimension == 6 and len(self._dimension_value) == 1:
             if self._dimension_value[0].isdigit() and int(self._dimension_value[0]) >= 1:
                 self._preset = int(self._dimension_value[0])
@@ -703,7 +711,11 @@ class OWNSoundDiffusionEvent(OWNEvent):
                 state_str = "ON" if self._device_state == 1 else "OFF"
                 self._human_readable_log = f"{subject} device state is {state_str}."
         elif self._dimension in (5, 11) and self._frequency_khz is not None:
-            preset = f" (station {self._preset})" if self._preset else ""
+            preset = (
+                f" (station {self._preset})"
+                if self._preset
+                else (" (no stored station)" if self._is_preset_cleared else "")
+            )
             self._human_readable_log = (
                 f"{subject} is tuned to {self._frequency_khz / 1000:.2f} MHz{preset}."
             )
@@ -744,6 +756,22 @@ class OWNSoundDiffusionEvent(OWNEvent):
         elif self._what == 4:
             step = f" by {self._volume_step}" if self._volume_step and self._volume_step > 1 else ""
             self._human_readable_log = f"{subject} volume decreased{step}."
+        elif self._what == 5 and self._what_param:
+            self._human_readable_log = (
+                f"{subject} tunes the frequency up by {self._what_param[0]} step(s)."
+            )
+        elif self._what == 6 and self._what_param:
+            self._human_readable_log = (
+                f"{subject} tunes the frequency down by {self._what_param[0]} step(s)."
+            )
+        elif self._what == 5:
+            self._human_readable_log = f"{subject} seeks the next station up."
+        elif self._what == 6:
+            self._human_readable_log = f"{subject} seeks the next station down."
+        elif self._what == 7:
+            self._human_readable_log = f"{subject} steps the frequency up."
+        elif self._what == 8:
+            self._human_readable_log = f"{subject} steps the frequency down."
         elif self._what == 9:
             self._human_readable_log = f"{subject} next station."
         elif self._what == 10:
@@ -813,6 +841,18 @@ class OWNSoundDiffusionEvent(OWNEvent):
     def rds_text(self) -> str | None:
         """RDS programme service text from dimension 10; ``None`` when blank or malformed."""
         return self._rds_text
+
+    @property
+    def is_preset_cleared(self) -> bool:
+        """True for a dimension 11 report with preset ``0``: tuned off every stored station.
+
+        ``*#22*5#2#1*11*1*10530*0##`` (manually tuned, or before a station is
+        selected) against ``*#22*5#2#1*11*1*10530*5##`` once station 5 is
+        selected at the same frequency (H/L4684 6.0.11 F500 trace,
+        MyHOME#839). ``preset`` is ``None`` in both the cleared case and a
+        frame without a preset field (dimension 5); this flag tells them apart.
+        """
+        return self._is_preset_cleared
 
     @property
     def is_rds_blank(self) -> bool:
@@ -947,6 +987,30 @@ class OWNSoundDiffusionEvent(OWNEvent):
     def is_previous_track(self) -> bool:
         """True if WHAT represents previous track (WHAT=12)."""
         return self._what == 12
+
+    @property
+    def is_seek_up(self) -> bool:
+        """True for a bare WHAT 5, automatic tuning up (``*22*5*2#S##``).
+
+        The published manual form ``*22*5#STEP*2#S##`` carries a step
+        parameter and is not a seek; it leaves every flag ``False``.
+        """
+        return self._what == 5 and not self._what_param
+
+    @property
+    def is_seek_down(self) -> bool:
+        """True for a bare WHAT 6, automatic tuning down (``*22*6*2#S##``)."""
+        return self._what == 6 and not self._what_param
+
+    @property
+    def is_step_frequency_up(self) -> bool:
+        """True for WHAT 7, one frequency step up (``*22*7*2#S##``)."""
+        return self._what == 7
+
+    @property
+    def is_step_frequency_down(self) -> bool:
+        """True for WHAT 8, one frequency step down (``*22*8*2#S##``)."""
+        return self._what == 8
 
     @property
     def is_next_station(self) -> bool:
@@ -1277,6 +1341,43 @@ class OWNSoundDiffusionCommand(OWNCommand):
         target = _require_non_empty_where(where)
         message = cls(f"*22*10*{target}##")
         message._human_readable_log = f"Previous station on sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def seek_up(cls, where: str | int = "6") -> OWNSoundDiffusionCommand:
+        """Automatic tuning up: ``*22*5*WHERE##``.
+
+        ``*22*5*2#1##`` is ACKed and put on the bus (``$0494018FA0``) by
+        F453, F453AV, F454, F459, F460, F461, MH200N and MyHomeServer1 in
+        the firmware oracle (``sound-who22``); F450, H4684 and MH200 NACK it.
+        """
+        target = _require_non_empty_where(where)
+        message = cls(f"*22*5*{target}##")
+        message._human_readable_log = f"Seeking the next station up on sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def seek_down(cls, where: str | int = "6") -> OWNSoundDiffusionCommand:
+        """Automatic tuning down: ``*22*6*WHERE##`` (oracle bus ``$0494018FB0``, as ``seek_up``)."""
+        target = _require_non_empty_where(where)
+        message = cls(f"*22*6*{target}##")
+        message._human_readable_log = f"Seeking the next station down on sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def step_frequency_up(cls, where: str | int = "6") -> OWNSoundDiffusionCommand:
+        """One frequency step up: ``*22*7*WHERE##`` (not yet in the firmware oracle index)."""
+        target = _require_non_empty_where(where)
+        message = cls(f"*22*7*{target}##")
+        message._human_readable_log = f"Stepping the frequency up on sound diffusion device {target}."
+        return message
+
+    @classmethod
+    def step_frequency_down(cls, where: str | int = "6") -> OWNSoundDiffusionCommand:
+        """One frequency step down: ``*22*8*WHERE##`` (not yet in the firmware oracle index)."""
+        target = _require_non_empty_where(where)
+        message = cls(f"*22*8*{target}##")
+        message._human_readable_log = f"Stepping the frequency down on sound diffusion device {target}."
         return message
 
     @classmethod
