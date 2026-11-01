@@ -7,6 +7,7 @@ import pytest
 
 from OWNd.message import (
     OWNCommand,
+    OWNEvent,
     OWNMessage,
     OWNSoundDiffusionCommand,
     OWNSoundDiffusionEvent,
@@ -692,6 +693,16 @@ def _decoded_bus_frames(row: dict[str, object]) -> list[str]:
             ["$0494018FD1"],
         ),
         (
+            OWNSoundDiffusionCommand.seek_up("2#1"),
+            "*22*5*2#1##",
+            ["$0494018FA0"],
+        ),
+        (
+            OWNSoundDiffusionCommand.seek_down("2#1"),
+            "*22*6*2#1##",
+            ["$0494018FB0"],
+        ),
+        (
             OWNSoundDiffusionCommand.start_rds("2#1"),
             "*22*31*2#1##",
             ["$06D101F83501410400"],
@@ -793,3 +804,137 @@ def test_who22_infeasible_input_validation() -> None:
     assert OWNSoundDiffusionEvent("*#22*3#4#1*1*-1##").volume is None
 
 
+
+
+# WHO 22 tuner seek / step builders and the cleared-preset flag. The physical
+# F500 frames come from an H/L4684 6.0.11 (MyHOME#839, fixture issue_466
+# myhome_trace_HL4684_all_2026-11-01T11-48-15.json): *#22*5#2#1*5*1*10530##
+# and *#22*5#2#1*11*1*10530*5## (105.30 MHz, station 5). *22*5*2#1## and
+# *22*6*2#1## are in the firmware oracle (sound-who22); *22*7*2#1## and
+# *22*8*2#1## are not in its index. Nothing here reaches a gateway.
+
+
+def test_who22_seek_and_step_builders() -> None:
+    assert str(OWNSoundDiffusionCommand.seek_up()) == "*22*5*6##"
+    assert str(OWNSoundDiffusionCommand.seek_up("2#1")) == "*22*5*2#1##"
+    assert str(OWNSoundDiffusionCommand.seek_down()) == "*22*6*6##"
+    assert str(OWNSoundDiffusionCommand.seek_down("2#1")) == "*22*6*2#1##"
+    assert str(OWNSoundDiffusionCommand.step_frequency_up()) == "*22*7*6##"
+    assert str(OWNSoundDiffusionCommand.step_frequency_up("2#1")) == "*22*7*2#1##"
+    assert str(OWNSoundDiffusionCommand.step_frequency_down()) == "*22*8*6##"
+    assert str(OWNSoundDiffusionCommand.step_frequency_down(6)) == "*22*8*6##"
+    assert OWNSoundDiffusionCommand.seek_up("2#1").human_readable_log == (
+        "Seeking the next station up on sound diffusion device 2#1."
+    )
+    assert OWNSoundDiffusionCommand.seek_down("2#1").human_readable_log == (
+        "Seeking the next station down on sound diffusion device 2#1."
+    )
+    assert OWNSoundDiffusionCommand.step_frequency_up("2#1").human_readable_log == (
+        "Stepping the frequency up on sound diffusion device 2#1."
+    )
+    assert OWNSoundDiffusionCommand.step_frequency_down("2#1").human_readable_log == (
+        "Stepping the frequency down on sound diffusion device 2#1."
+    )
+    for builder in (
+        OWNSoundDiffusionCommand.seek_up,
+        OWNSoundDiffusionCommand.seek_down,
+        OWNSoundDiffusionCommand.step_frequency_up,
+        OWNSoundDiffusionCommand.step_frequency_down,
+    ):
+        command = builder("2#1")
+        assert isinstance(command, OWNSoundDiffusionCommand)
+        assert command.target_address == "2#1"
+        assert OWNCommand.parse(str(command)).__class__ is OWNSoundDiffusionCommand
+        for bad_where in ("", "   ", "2*1"):
+            with pytest.raises(ValueError, match="where must be a non-empty address without '\\*'"):
+                builder(bad_where)
+    # Not in the oracle index: pinned so a replay gets noticed.
+    assert "*22*7*2#1##" not in ORACLE
+    assert "*22*8*2#1##" not in ORACLE
+
+
+@pytest.mark.parametrize(
+    ("frame", "flag", "log"),
+    [
+        ("*22*5*2#1##", "is_seek_up", "Audio Source 1 seeks the next station up."),
+        ("*22*6*2#1##", "is_seek_down", "Audio Source 1 seeks the next station down."),
+        ("*22*7*2#1##", "is_step_frequency_up", "Audio Source 1 steps the frequency up."),
+        ("*22*8*2#1##", "is_step_frequency_down", "Audio Source 1 steps the frequency down."),
+        ("*22*6*6##", "is_seek_down", "Sound diffusion device 6 seeks the next station down."),
+    ],
+)
+def test_who22_seek_and_step_events(frame: str, flag: str, log: str) -> None:
+    event = OWNMessage.parse(frame)
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert type(OWNEvent.parse(frame)) is OWNSoundDiffusionEvent
+    flags = ("is_seek_up", "is_seek_down", "is_step_frequency_up", "is_step_frequency_down")
+    assert {name: getattr(event, name) for name in flags} == {name: name == flag for name in flags}
+    assert event.is_next_station is False
+    assert event.is_previous_station is False
+    assert event.is_next_track is False
+    assert event.is_volume_up is False
+    assert event.human_readable_log == log
+
+
+def test_who22_manual_tuning_with_a_step_is_not_a_seek() -> None:
+    # The published manual-tuning form ``*22*5#STEP*2#S##`` / ``*22*6#STEP*2#S##``
+    # carries a step parameter: not an automatic seek, not WHAT 7 / 8 either.
+    for frame, log in (
+        ("*22*5#3*2#1##", "Audio Source 1 tunes the frequency up by 3 step(s)."),
+        ("*22*6#10*2#1##", "Audio Source 1 tunes the frequency down by 10 step(s)."),
+    ):
+        event = OWNMessage.parse(frame)
+        assert isinstance(event, OWNSoundDiffusionEvent)
+        assert event.is_seek_up is False
+        assert event.is_seek_down is False
+        assert event.is_step_frequency_up is False
+        assert event.is_step_frequency_down is False
+        assert event.human_readable_log == log
+
+
+def test_who22_other_whats_set_no_seek_or_step_flag() -> None:
+    for frame in ("*22*9*2#1##", "*22*3*3#1#1##", "*22*1#4#1*3#1#1##", "*#22*5#2#1*11*1*10530*5##"):
+        event = OWNMessage.parse(frame)
+        assert isinstance(event, OWNSoundDiffusionEvent)
+        assert event.is_seek_up is False
+        assert event.is_seek_down is False
+        assert event.is_step_frequency_up is False
+        assert event.is_step_frequency_down is False
+
+
+def test_who22_dimension_11_preset_zero_sets_is_preset_cleared() -> None:
+    # Tuned off every stored station (manually tuned, or before a station is selected).
+    cleared = OWNMessage.parse("*#22*5#2#1*11*1*10530*0##")
+    assert isinstance(cleared, OWNSoundDiffusionEvent)
+    assert cleared.frequency_khz == 105300
+    assert cleared.preset is None
+    assert cleared.is_preset_cleared is True
+    assert cleared.human_readable_log == "Audio Source 1 is tuned to 105.30 MHz (no stored station)."
+    # Physical H/L4684 F500 frame: station 5 selected at the same frequency.
+    stored = OWNMessage.parse("*#22*5#2#1*11*1*10530*5##")
+    assert isinstance(stored, OWNSoundDiffusionEvent)
+    assert stored.preset == 5
+    assert stored.is_preset_cleared is False
+    assert stored.human_readable_log == "Audio Source 1 is tuned to 105.30 MHz (station 5)."
+    # Physical dimension 5 report: no preset field at all, so not "cleared".
+    no_field = OWNMessage.parse("*#22*5#2#1*5*1*10530##")
+    assert isinstance(no_field, OWNSoundDiffusionEvent)
+    assert no_field.preset is None
+    assert no_field.is_preset_cleared is False
+    assert no_field.human_readable_log == "Audio Source 1 is tuned to 105.30 MHz."
+
+
+@pytest.mark.parametrize(
+    "frame",
+    [
+        "*#22*5#2#1*11*1*10530*##",  # empty preset field
+        "*#22*5#2#1*11*1*0*0##",  # frequency outside the FM band
+        "*#22*5#2#1*11*1*10530##",  # a dimension 11 frame without the preset field
+        "*#22*2#1*6*0##",  # dimension 6 preset 0 is not a dimension 11 report
+    ],
+)
+def test_who22_is_preset_cleared_needs_a_decoded_dimension_11_frequency(frame: str) -> None:
+    event = OWNMessage.parse(frame)
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event.is_preset_cleared is False
+    assert event.preset is None
