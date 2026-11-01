@@ -175,6 +175,8 @@ from .heating import (
     is_who4_dimension_22_crash_form,
     who4_temperature,
     OWNHeatingCommand,
+    OWNHeatingDiagnosticCommand,
+    OWNHeatingDiagnosticEvent,
     OWNHeatingEvent,
 )
 from .lighting import (
@@ -322,6 +324,8 @@ __all__ = [
     "is_who4_dimension_22_crash_form",
     "OWNHeatingEvent",
     "OWNHeatingCommand",
+    "OWNHeatingDiagnosticEvent",
+    "OWNHeatingDiagnosticCommand",
     # Burglar Alarm (WHO 5)
     "OWNAlarmEvent",
     "OWNAlarmCommand",

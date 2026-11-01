@@ -1590,3 +1590,250 @@ class OWNHeatingCommand(OWNCommand):
 
 register_event_parser(4, OWNHeatingEvent)
 register_command_parser(4, OWNHeatingCommand)
+
+
+# WHO 1004: thermoregulation autodiagnostics (Encyclopedia Machine KB record
+# ``kb_who_04_thermoregulation_diagnostics``: WHO 1004 of OPEN.db, unpacked
+# by ``s2o_selfDiagnosticsA`` in ``libdiag.so``). Three WHERE scopes:
+#
+# - a probe / standalone zone ``Z`` (1..99): DIMENSION 7 slave-probe count
+#   (0..8), DIMENSION 8 24-bit slave-probe mask, DIMENSION 11 24-bit
+#   master-probe mask, DIMENSION 13 local offset failure;
+# - the central unit ``#0`` (3550) or ``#0#C`` (4695 unit ``C``, as
+#   ``_WHO4_CENTRAL_WHERE_REGEX``): DIMENSION 11 24-bit mask, DIMENSION 20
+#   zone failure summary, DIMENSION 21 faulty-zone discovery (0 = none);
+# - the actuators of zone ``Z`` through the central unit, ``#Z`` (1..99,
+#   optionally ``#Z#C``): DIMENSION 22 16-bit actuator mask, DIMENSION 23
+#   per-actuator status 1..9.
+#
+# ``1`` is a healthy bit, ``0`` an active fault; what each bit means is not
+# known, so the mask is exposed as sent with the positions of its cleared
+# bits, as ``OWNLightingDiagnosticEvent`` does for WHO 1001.
+_WHO1004_ZONE_REGEX = re.compile(r"[1-9][0-9]?", re.ASCII)
+_WHO1004_ZONE_ACTUATORS_REGEX = re.compile(
+    r"#(?P<zone>[1-9][0-9]?)(?:#(?:0[1-9]|[1-9][0-9]?))?", re.ASCII
+)
+# Mask dimensions per scope: a probe reports the slave-probe (8) and
+# master-probe (11) masks, the central unit its own 24-bit mask (11), the
+# actuators of a zone a 16-bit mask (22). Any other pairing is undecoded.
+_WHO1004_MASK_LENGTHS = {
+    ("probe", 8): 24,
+    ("probe", 11): 24,
+    ("central", 11): 24,
+    ("zone_actuators", 22): 16,
+}
+
+
+class OWNHeatingDiagnosticEvent(OWNEvent):
+    """WHO 1004: autodiagnostics of the thermoregulation system.
+
+    WHO 1004 is the diagnostic WHO of the "Temperature control system"
+    (OPEN.db, Encyclopedia Machine KB ``kb_who_04_thermoregulation_diagnostics``;
+    ``s2o_selfDiagnosticsA`` in ``libdiag.so`` unpacks the SCS bytes). The
+    first physical frames come from an H/L4684 6.0.11 with a 3550 central
+    unit and an F430/4 on zone 66, pushed once the actuator channel ``66#1``
+    came back online (MyHOME#839, fixture ``issue_466``
+    ``myhome_trace_HL4684_all_2026-11-01T11-30-19.json``):
+
+    - ``*#1004*66*11*111111111111111111111111##``: probe 66, DIMENSION 11,
+      24-bit master-probe mask (``scope`` ``"probe"``);
+    - ``*#1004*#66*22*1111111111111111##``: the actuators of zone 66 through
+      the central unit, DIMENSION 22, 16-bit mask (``scope``
+      ``"zone_actuators"``);
+    - ``*#1004*#0*11*111111111111111111111111##``: the 3550 central unit,
+      DIMENSION 11, 24-bit mask (``scope`` ``"central"``).
+
+    ``1`` is a healthy bit and ``0`` an active fault; the bit meanings are
+    not known, so the mask is exposed as sent with the positions of its
+    cleared bits, as :class:`~OWNd.message.lighting.OWNLightingDiagnosticEvent`
+    does for WHO 1001. Only a single ``0``/``1`` value of the published
+    length is taken as a mask (24 bits for DIMENSIONS 8 and 11, 16 bits for
+    DIMENSION 22); a value frame of another shape, a trailing value or a
+    non-binary character still parses as this class with ``diagnostic_mask``
+    ``None`` and the raw value in ``dimension_value``. DIMENSION 7 (slave
+    probe count, 0..8, probe scope) and DIMENSION 21 (faulty zone, 0..99,
+    central scope) are decoded as integers; DIMENSIONS 13, 20 and 23 keep
+    their raw value in ``dimension_value``.
+
+    WHERE is ``Z`` (1..99) for a probe, ``#0`` / ``#0#C`` for a central
+    unit and ``#Z`` / ``#Z#C`` for the actuators of zone ``Z``: the same
+    addresses as WHO 4, so WHO 1004 is not in ``OWNMessage.interface`` (the
+    ``#4#IF`` suffix of WHO 1 / 2 would read ``#0#C`` as an interface). Any
+    other WHERE leaves ``scope`` and ``zone_number`` ``None``. The WHO 4
+    DIMENSION 22 guard anchors on WHO ``4``, so ``*#1004*#66*22##`` is sent
+    like any other frame.
+    """
+
+    def __init__(self, data: str) -> None:
+        super().__init__(data)
+        self._scope: str | None = None
+        self._zone_number: int | None = None
+        self._diagnostic_mask: str | None = None
+        self._cleared_bits: tuple[int, ...] | None = None
+        self._slave_count: int | None = None
+        self._faulty_zone: int | None = None
+
+        where = self._where or ""
+        address = "#".join([where, *self._where_param])
+        if _WHO4_CENTRAL_WHERE_REGEX.fullmatch(address):
+            self._scope = "central"
+            subject = f"Thermoregulation central unit {address}"
+        elif zone_match := _WHO1004_ZONE_ACTUATORS_REGEX.fullmatch(address):
+            self._scope = "zone_actuators"
+            self._zone_number = int(zone_match.group("zone"))
+            subject = f"Thermoregulation zone {self._zone_number} actuators"
+        elif _WHO1004_ZONE_REGEX.fullmatch(address):
+            self._scope = "probe"
+            self._zone_number = int(address)
+            subject = f"Thermoregulation probe {self._zone_number}"
+        else:
+            subject = f"Thermoregulation device {address}"
+
+        # Exactly one value of exactly the published length for this scope and
+        # dimension, all 0/1: a trailing value, another length, a non-binary
+        # character, an unrecognised WHERE or a mask dimension the scope does
+        # not report fail closed.
+        value = self._dimension_value[0] if len(self._dimension_value) == 1 else ""
+        expected_length = _WHO1004_MASK_LENGTHS.get((self._scope or "", self._dimension or -1))
+        if (
+            expected_length is not None
+            and len(value) == expected_length
+            and set(value) <= {"0", "1"}
+        ):
+            self._diagnostic_mask = value
+            self._cleared_bits = tuple(i for i, bit in enumerate(value, 1) if bit == "0")
+            self._human_readable_log = (
+                f"{subject} autodiagnostic mask is {value}"
+                f" (cleared bits: {', '.join(map(str, self._cleared_bits)) or 'none'})."
+            )
+        elif self._scope == "probe" and self._dimension == 7:
+            count = int(value) if re.fullmatch(r"[0-9]", value, re.ASCII) else None
+            if count is not None and count <= 8:
+                self._slave_count = count
+                self._human_readable_log = f"{subject} has {count} slave probe(s)."
+        elif self._scope == "central" and self._dimension == 21:
+            if re.fullmatch(r"[0-9]{1,2}", value, re.ASCII):
+                self._faulty_zone = int(value)
+                self._human_readable_log = (
+                    f"{subject} reports no faulty zone."
+                    if self._faulty_zone == 0
+                    else f"{subject} reports faulty zone {self._faulty_zone}."
+                )
+
+    @property
+    def scope(self) -> str | None:
+        """``"probe"`` (``Z``), ``"central"`` (``#0``, ``#0#C``), ``"zone_actuators"`` (``#Z``, ``#Z#C``) or ``None``."""
+        return self._scope
+
+    @property
+    def zone_number(self) -> int | None:
+        """Zone 1..99 of a probe or of the zone actuators; ``None`` for a central unit or an unrecognized WHERE."""
+        return self._zone_number
+
+    @property
+    def diagnostic_mask(self) -> str | None:
+        """The DIMENSION 8 / 11 (24-bit) or 22 (16-bit) bitmask as sent (``"111111111111111111111111"``)."""
+        return self._diagnostic_mask
+
+    @property
+    def cleared_bits(self) -> tuple[int, ...] | None:
+        """1-based positions, from the left, of the mask's ``0`` bits (``()`` when all set)."""
+        return self._cleared_bits
+
+    @property
+    def has_fault(self) -> bool | None:
+        """True when the mask has a cleared bit, False when all bits are set, ``None`` without a mask."""
+        return bool(self._cleared_bits) if self._cleared_bits is not None else None
+
+    @property
+    def slave_count(self) -> int | None:
+        """Number of slave probes (0..8) from DIMENSION 7 of a probe, else ``None``."""
+        return self._slave_count
+
+    @property
+    def faulty_zone(self) -> int | None:
+        """DIMENSION 21 of a central unit: ``0`` when no zone is faulty, else the faulty zone 1..99; ``None`` otherwise."""
+        return self._faulty_zone
+
+
+def _validate_who1004_zone(zone: object, purpose: str, *, allow_hash: bool = False) -> int:
+    """Return ``zone`` as an integer 1..99, else raise ``ValueError`` naming ``purpose``.
+
+    ``allow_hash`` accepts the ``"#Z"`` spelling of the zone-actuators
+    address; a central unit (``#0``, ``#0#C``) and ``#Z#C`` are refused.
+    """
+    text = str(zone).strip() if zone is not None else ""
+    if allow_hash and text.startswith("#"):
+        text = text[1:]
+    if not _WHO1004_ZONE_REGEX.fullmatch(text):
+        raise ValueError(
+            f"{purpose} needs a zone number between 1 and 99"
+            f"{' (as Z or #Z)' if allow_hash else ''}: {str(zone).strip()!r}"
+        )
+    return int(text)
+
+
+class OWNHeatingDiagnosticCommand(OWNCommand):
+    """WHO 1004 requests: thermoregulation autodiagnostic reads.
+
+    Every builder emits a DIMENSION request of
+    :class:`OWNHeatingDiagnosticEvent` (Encyclopedia Machine KB
+    ``kb_who_04_thermoregulation_diagnostics``). Probe requests take a zone
+    1..99 and refuse ``#0`` / ``#Z``; central-unit requests take ``#0`` or
+    ``#0#C`` (``_validate_central_where``); the zone-actuators request takes
+    ``Z`` or ``"#Z"`` and emits ``#Z``. None of these frames has been
+    replayed on the firmware oracle; the replies are the frames the
+    H/L4684 6.0.11 pushed on its own (MyHOME#839).
+    """
+
+    @classmethod
+    def request_probe_diagnostic(cls, zone: int | str) -> OWNHeatingDiagnosticCommand:
+        """Master-probe diagnostic mask of zone ``Z``: ``*#1004*Z*11##``."""
+        z = _validate_who1004_zone(zone, "Probe diagnostic request")
+        message = cls(f"*#1004*{z}*11##")
+        message._human_readable_log = f"Requesting autodiagnostic mask of thermoregulation probe {z}."
+        return message
+
+    @classmethod
+    def request_probe_slave_count(cls, zone: int | str) -> OWNHeatingDiagnosticCommand:
+        """Number of slave probes of zone ``Z``: ``*#1004*Z*7##``."""
+        z = _validate_who1004_zone(zone, "Probe slave count request")
+        message = cls(f"*#1004*{z}*7##")
+        message._human_readable_log = f"Requesting slave probe count of thermoregulation probe {z}."
+        return message
+
+    @classmethod
+    def request_probe_slave_diagnostic(cls, zone: int | str) -> OWNHeatingDiagnosticCommand:
+        """Slave-probe diagnostic mask of zone ``Z``: ``*#1004*Z*8##``."""
+        z = _validate_who1004_zone(zone, "Probe slave diagnostic request")
+        message = cls(f"*#1004*{z}*8##")
+        message._human_readable_log = f"Requesting slave probe autodiagnostic mask of thermoregulation probe {z}."
+        return message
+
+    @classmethod
+    def request_central_diagnostic(cls, where: str = "#0") -> OWNHeatingDiagnosticCommand:
+        """Central-unit diagnostic mask: ``*#1004*#0*11##`` (or ``#0#C``)."""
+        target = _validate_central_where(where, "Central unit diagnostic request")
+        message = cls(f"*#1004*{target}*11##")
+        message._human_readable_log = f"Requesting autodiagnostic mask of thermoregulation central unit {target}."
+        return message
+
+    @classmethod
+    def request_faulty_zones(cls, where: str = "#0") -> OWNHeatingDiagnosticCommand:
+        """Faulty-zone discovery of the central unit: ``*#1004*#0*21##`` (or ``#0#C``)."""
+        target = _validate_central_where(where, "Faulty zones request")
+        message = cls(f"*#1004*{target}*21##")
+        message._human_readable_log = f"Requesting faulty zones of thermoregulation central unit {target}."
+        return message
+
+    @classmethod
+    def request_zone_actuator_diagnostic(cls, zone: int | str) -> OWNHeatingDiagnosticCommand:
+        """Actuator diagnostic mask of zone ``Z`` through the central unit: ``*#1004*#Z*22##``."""
+        z = _validate_who1004_zone(zone, "Zone actuator diagnostic request", allow_hash=True)
+        message = cls(f"*#1004*#{z}*22##")
+        message._human_readable_log = f"Requesting autodiagnostic mask of thermoregulation zone {z} actuators."
+        return message
+
+
+register_event_parser(1004, OWNHeatingDiagnosticEvent)
+register_command_parser(1004, OWNHeatingDiagnosticCommand)
