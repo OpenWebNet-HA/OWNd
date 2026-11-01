@@ -47,6 +47,8 @@ class OWNSoundEvent(OWNEvent):
         self._is_source_busy: bool = False
         self._track_step_forward: int | None = None
         self._track_step_backward: int | None = None
+        self._frequency_step_forward: int | None = None
+        self._frequency_step_backward: int | None = None
         self._is_seek_up: bool = False
         self._is_seek_down: bool = False
 
@@ -92,6 +94,17 @@ class OWNSoundEvent(OWNEvent):
             self._human_readable_log = (
                 f"{subject} return track/station by {self._track_step_backward} step(s)."
             )
+        elif self._state is not None and 4001 <= self._state <= 4015:
+            # Encyclopedia kb_who_16_what_frequency_step: 4001..4015 / 4101..4115.
+            self._frequency_step_forward = self._state - 4000
+            self._human_readable_log = (
+                f"{subject} increase frequency by {self._frequency_step_forward} step(s)."
+            )
+        elif self._state is not None and 4101 <= self._state <= 4115:
+            self._frequency_step_backward = self._state - 4100
+            self._human_readable_log = (
+                f"{subject} decrease frequency by {self._frequency_step_backward} step(s)."
+            )
         elif self._state is not None:
             self._human_readable_log = f"{subject} received command: {self._state}."
         elif self._dimension == 1 and self._dimension_value:
@@ -113,7 +126,10 @@ class OWNSoundEvent(OWNEvent):
             self._human_readable_log = (
                 f"{subject} frequency is {self._frequency_khz} kHz."
             )
-        elif self._dimension == 7 and self._dimension_value:
+        elif self._dimension in (7, 10) and self._dimension_value:
+            # DIMENSION 7 is the stored station / track report; DIMENSION 10 is the
+            # memorized-station store, reported in the same shape (Encyclopedia
+            # kb_who_16_dim_station: F500 / F500N).
             try:
                 self._track = int(self._dimension_value[-1])
             except ValueError:
@@ -212,6 +228,16 @@ class OWNSoundEvent(OWNEvent):
     @property
     def track_step_backward(self) -> int | None:
         return self._track_step_backward
+
+    @property
+    def frequency_step_forward(self) -> int | None:
+        """Steps of a WHAT 4001..4015 frequency increase (1..15), else ``None``."""
+        return self._frequency_step_forward
+
+    @property
+    def frequency_step_backward(self) -> int | None:
+        """Steps of a WHAT 4101..4115 frequency decrease (1..15), else ``None``."""
+        return self._frequency_step_backward
 
     @property
     def is_seek_up(self) -> bool:
@@ -394,6 +420,54 @@ class OWNSoundCommand(OWNCommand):
         target = _require_non_empty_where(where)
         message = cls(f"*16*5100*{target}##")
         message._human_readable_log = f"Seeking backward on {target}."
+        return message
+
+    @classmethod
+    def step_frequency_up(cls, where: str | int, step: int = 1) -> OWNSoundCommand:
+        """Increase the tuner frequency by 1..15 steps: ``*16*4001..4015*WHERE##``.
+
+        Encyclopedia Machine KB ``kb_who_16_what_frequency_step``: WHAT
+        ``4001..4015`` is the frequency step up, ``4101..4115`` the step
+        down (``5001..5015`` / ``5101..5115`` in the published WHO 16 table
+        are not what the F500 family answers to).
+        """
+        target = _require_non_empty_where(where)
+        s = int(step)
+        if not 1 <= s <= 15:
+            raise ValueError(f"step must be between 1 and 15, got {step}")
+        message = cls(f"*16*{4000 + s}*{target}##")
+        message._human_readable_log = f"Increasing frequency on {target} by {s} step(s)."
+        return message
+
+    @classmethod
+    def step_frequency_down(cls, where: str | int, step: int = 1) -> OWNSoundCommand:
+        """Decrease the tuner frequency by 1..15 steps: ``*16*4101..4115*WHERE##``."""
+        target = _require_non_empty_where(where)
+        s = int(step)
+        if not 1 <= s <= 15:
+            raise ValueError(f"step must be between 1 and 15, got {step}")
+        message = cls(f"*16*{4100 + s}*{target}##")
+        message._human_readable_log = f"Decreasing frequency on {target} by {s} step(s)."
+        return message
+
+    @classmethod
+    def store_station(cls, where: str | int, station: int) -> OWNSoundCommand:
+        """Store the tuned frequency into preset 1..15: ``*#16*WHERE*#10*STATION##``.
+
+        DIMENSION 10 is the memorized-station write (Encyclopedia Machine KB
+        ``kb_who_16_dim_station``; DIMENSION 7 reads the station). The
+        firmware oracle ACKs ``*#16*101*#10*5##`` on F453, F453AV, F454,
+        H4684, MH200 and MH200N (``sound-who16-source``, bus
+        ``$0493018FD4``); F450, F459, F460, F461, MH202 and MyHomeServer1
+        NACK it. The extended ``1..15`` range is the F500N one documented in
+        ``select_track``.
+        """
+        target = _require_non_empty_where(where)
+        st = int(station)
+        if not 1 <= st <= 15:
+            raise ValueError(f"station must be between 1 and 15, got {station}")
+        message = cls(f"*#16*{target}*#10*{st}##")
+        message._human_readable_log = f"Storing current frequency into station {st} on {target}."
         return message
 
     @classmethod
