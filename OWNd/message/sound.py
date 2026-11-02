@@ -17,6 +17,16 @@ from .base import (
 _require_non_empty_where = require_non_empty_where
 
 
+def _validate_frequency_step(step: object) -> int:
+    """Return ``step`` as an integer 1..15 (a WHO 16 / WHO 22 manual tuner step), else raise ``ValueError``."""
+    if isinstance(step, bool) or not isinstance(step, (int, str)):
+        raise ValueError(f"step must be between 1 and 15, got {step!r}")
+    s = int(step)
+    if not 1 <= s <= 15:
+        raise ValueError(f"step must be between 1 and 15, got {step}")
+    return s
+
+
 
 class OWNSoundEvent(OWNEvent):
     """State reported by a WHO 16 sound source or amplifier zone."""
@@ -47,6 +57,8 @@ class OWNSoundEvent(OWNEvent):
         self._is_source_busy: bool = False
         self._track_step_forward: int | None = None
         self._track_step_backward: int | None = None
+        self._frequency_step_forward: int | None = None
+        self._frequency_step_backward: int | None = None
         self._is_seek_up: bool = False
         self._is_seek_down: bool = False
 
@@ -91,6 +103,19 @@ class OWNSoundEvent(OWNEvent):
             self._track_step_backward = self._state - 6100
             self._human_readable_log = (
                 f"{subject} return track/station by {self._track_step_backward} step(s)."
+            )
+        elif self._state is not None and 5001 <= self._state <= 5015:
+            # Manual tuner steps (Encyclopedia ownkb:chunk:r000371,
+            # ownkb:claim:c002096 / c002098): 5001..5015 up, 5101..5115 down;
+            # 5000 / 5100 are the automatic seeks above.
+            self._frequency_step_forward = self._state - 5000
+            self._human_readable_log = (
+                f"{subject} increase frequency by {self._frequency_step_forward} step(s)."
+            )
+        elif self._state is not None and 5101 <= self._state <= 5115:
+            self._frequency_step_backward = self._state - 5100
+            self._human_readable_log = (
+                f"{subject} decrease frequency by {self._frequency_step_backward} step(s)."
             )
         elif self._state is not None:
             self._human_readable_log = f"{subject} received command: {self._state}."
@@ -212,6 +237,16 @@ class OWNSoundEvent(OWNEvent):
     @property
     def track_step_backward(self) -> int | None:
         return self._track_step_backward
+
+    @property
+    def frequency_step_forward(self) -> int | None:
+        """Steps of a WHAT 5001..5015 frequency increase (1..15), else ``None``."""
+        return self._frequency_step_forward
+
+    @property
+    def frequency_step_backward(self) -> int | None:
+        """Steps of a WHAT 5101..5115 frequency decrease (1..15), else ``None``."""
+        return self._frequency_step_backward
 
     @property
     def is_seek_up(self) -> bool:
@@ -394,6 +429,59 @@ class OWNSoundCommand(OWNCommand):
         target = _require_non_empty_where(where)
         message = cls(f"*16*5100*{target}##")
         message._human_readable_log = f"Seeking backward on {target}."
+        return message
+
+    @classmethod
+    def step_frequency_up(cls, where: str | int, step: int = 1) -> OWNSoundCommand:
+        """Increase the tuner frequency by 1..15 steps: ``*16*5001..5015*WHERE##``.
+
+        Encyclopedia Machine KB ``ownkb:chunk:r000371`` (``ownkb:claim:c002096``,
+        ``c002098``): WHAT ``5001..5015`` is the manual frequency step up,
+        ``5101..5115`` the step down; ``5000`` / ``5100`` are the automatic
+        seeks of ``seek_up`` / ``seek_down``. ``*16*5001*101##`` is
+        ACKed and put on the bus (``$0494018FA1``) by F453, F453AV, F454,
+        H4684, MH200 and MH200N in the firmware oracle
+        (``sound-who16-source``); F450, F459, F460, F461, MH202 and
+        MyHomeServer1 NACK it.
+        """
+        target = _require_non_empty_where(where)
+        s = _validate_frequency_step(step)
+        message = cls(f"*16*{5000 + s}*{target}##")
+        message._human_readable_log = f"Increasing frequency on {target} by {s} step(s)."
+        return message
+
+    @classmethod
+    def step_frequency_down(cls, where: str | int, step: int = 1) -> OWNSoundCommand:
+        """Decrease the tuner frequency by 1..15 steps: ``*16*5101..5115*WHERE##`` (oracle bus ``$0494018FB1``, as ``step_frequency_up``)."""
+        target = _require_non_empty_where(where)
+        s = _validate_frequency_step(step)
+        message = cls(f"*16*{5100 + s}*{target}##")
+        message._human_readable_log = f"Decreasing frequency on {target} by {s} step(s)."
+        return message
+
+    @classmethod
+    def store_station(cls, where: str | int, station: int) -> OWNSoundCommand:
+        """Store the tuned frequency into station 1..5: ``*#16*WHERE*#10*STATION##``.
+
+        DIMENSION 10 is the write-only memorised-station store (Encyclopedia
+        Machine KB ``ownkb:chunk:r000376``, ``ownkb:claim:c002128``: station
+        1 through 5; ``bt_difson`` NACKs 6 and above, and never emits a
+        DIMENSION 10 report, ``ownkb:claim:c002135``). Stations ``6..15`` of
+        an F500N are stored through WHO 22
+        :meth:`OWNSoundDiffusionCommand.store_preset` (``*22*33#P*2#S##``).
+        The firmware oracle ACKs ``*#16*101*#10*5##`` on F453, F453AV, F454,
+        H4684, MH200 and MH200N (``sound-who16-source``, bus
+        ``$0493018FD4``); F450, F459, F460, F461, MH202 and MyHomeServer1
+        NACK it.
+        """
+        target = _require_non_empty_where(where)
+        if isinstance(station, bool) or not isinstance(station, (int, str)):
+            raise ValueError(f"station must be between 1 and 5, got {station!r}")
+        st = int(station)
+        if not 1 <= st <= 5:
+            raise ValueError(f"station must be between 1 and 5, got {station}")
+        message = cls(f"*#16*{target}*#10*{st}##")
+        message._human_readable_log = f"Storing current frequency into station {st} on {target}."
         return message
 
     @classmethod
