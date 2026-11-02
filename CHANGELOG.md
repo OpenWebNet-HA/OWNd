@@ -4,6 +4,8 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+## [2.0.0b12] - 2026-11-01
+
 ### Added
 - **WHO 13 (`OWNGatewayEvent.model_name`)**: Dimension 27 model name reply (`*#13**27*70#52#54#49##` = `F461` on a live F461 2.0.11; `77#121#…#49` = `MyHomeServer1` on a live MyHomeServer1 3.87.13, `MyHOME#799`) parses instead of returning `None`; `human_readable_log` reads "Gateway's model name is: F461.". Only the single `#`-separated value is decoded. Non-ASCII digit codes are not a frame (`OWNMessage.parse` returns `None`).
 - **WHO 1 (`OWNLightingCommand`, `OWNLightingEvent`)**:

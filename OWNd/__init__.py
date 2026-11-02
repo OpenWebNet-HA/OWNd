@@ -9,7 +9,7 @@ from .exceptions import (
     OWNTimeoutError,
 )
 
-__version__ = "2.0.0b11"
+__version__ = "2.0.0b12"
 
 __all__ = [
     "__version__",
