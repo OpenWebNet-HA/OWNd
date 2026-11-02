@@ -1,8 +1,11 @@
 """Tests for WHO 16 sound messages."""
 
+import json
+from pathlib import Path
+
 import pytest
 
-from OWNd.message import OWNMessage, OWNSoundCommand, OWNSoundEvent
+from OWNd.message import OWNCommand, OWNEvent, OWNMessage, OWNSoundCommand, OWNSoundEvent
 
 
 def test_sound_source_and_zone_events_are_distinct() -> None:
@@ -309,3 +312,185 @@ def test_who16_infeasible_input_validation() -> None:
     for bad_freq in (float("nan"), float("inf"), float("-inf")):
         with pytest.raises(ValueError, match="frequency in kHz must be finite"):
             OWNSoundCommand.set_frequency("101", bad_freq)
+
+
+# WHO 16 FM tuner manual frequency steps (WHAT 5001..5015 / 5101..5115,
+# Encyclopedia ownkb:chunk:r000371, ownkb:claim:c002096 / c002098) and the
+# write-only DIMENSION 10 station store (ownkb:chunk:r000376,
+# ownkb:claim:c002128 / c002135). *16*5001*101##, *16*5101*101## and
+# *#16*101*#10*5## are in the firmware oracle (sound-who16-source). The
+# physical F500 frames *#16*101*6*0*105300## and *#16*101*7*0*5## (105.30 MHz,
+# station 5) come from an H/L4684 6.0.11 (MyHOME#839, fixture issue_466
+# myhome_trace_HL4684_all_2026-11-01T11-48-15.json). Nothing here reaches a
+# gateway.
+
+_ORACLE_PATH = Path(__file__).parent / "golden" / "firmware_oracle.json"
+_ORACLE = json.loads(_ORACLE_PATH.read_text(encoding="utf-8"))["verdicts"]
+_BT_DIFSON_ACK = ("F453", "F453AV", "F454", "H4684", "MH200", "MH200N")
+_BT_DIFSON_NACK = ("F450", "F459", "F460", "F461", "MH202", "MyHomeServer1")
+
+
+def _oracle_rows(frame: str) -> dict[str, dict[str, object]]:
+    assert frame in _ORACLE, frame
+    rows = {row["product"]: row for row in _ORACLE[frame]}
+    assert set(rows) == set(_BT_DIFSON_ACK) | set(_BT_DIFSON_NACK)
+    return rows
+
+
+def _bus_frame(row: dict[str, object]) -> str:
+    bus_frames = row["bus_frames"]
+    assert isinstance(bus_frames, list) and len(bus_frames) == 1
+    return bytes.fromhex(bus_frames[0].replace(" ", "")).decode("ascii").strip()
+
+
+def test_who16_frequency_step_builders() -> None:
+    assert str(OWNSoundCommand.step_frequency_up("101")) == "*16*5001*101##"
+    assert str(OWNSoundCommand.step_frequency_up(102, 15)) == "*16*5015*102##"
+    assert str(OWNSoundCommand.step_frequency_up("101", step=3)) == "*16*5003*101##"
+    assert str(OWNSoundCommand.step_frequency_down("101")) == "*16*5101*101##"
+    assert str(OWNSoundCommand.step_frequency_down(102, 15)) == "*16*5115*102##"
+    assert str(OWNSoundCommand.step_frequency_down("101", step="7")) == "*16*5107*101##"
+    assert OWNSoundCommand.step_frequency_up("101", 2).human_readable_log == (
+        "Increasing frequency on 101 by 2 step(s)."
+    )
+    assert OWNSoundCommand.step_frequency_down("101").human_readable_log == (
+        "Decreasing frequency on 101 by 1 step(s)."
+    )
+    # A step of 0 would be the automatic seek (5000 / 5100): refused here.
+    assert str(OWNSoundCommand.seek_up("101")) == "*16*5000*101##"
+    assert str(OWNSoundCommand.seek_down("101")) == "*16*5100*101##"
+    for builder in (OWNSoundCommand.step_frequency_up, OWNSoundCommand.step_frequency_down):
+        assert isinstance(builder("101"), OWNSoundCommand)
+        assert OWNCommand.parse(str(builder("101"))).__class__ is OWNSoundCommand
+        for step in (0, 16, -1, 100):
+            with pytest.raises(ValueError, match=f"step must be between 1 and 15, got {step}"):
+                builder("101", step)
+        for bad_step in (True, False, 1.5, None, [1]):
+            with pytest.raises(ValueError, match="step must be between 1 and 15"):
+                builder("101", bad_step)  # type: ignore[arg-type]
+        with pytest.raises(ValueError):
+            builder("101", "x")
+        for bad_where in ("", "   ", "21*1"):
+            with pytest.raises(ValueError, match="where must be a non-empty address without '\\*'"):
+                builder(bad_where)
+
+
+@pytest.mark.parametrize(
+    ("frame", "bus"),
+    [
+        ("*16*5001*101##", "$0494018FA1"),
+        ("*16*5101*101##", "$0494018FB1"),
+    ],
+)
+def test_who16_frequency_steps_match_the_firmware_oracle(frame: str, bus: str) -> None:
+    """``*16*5001*101##`` / ``*16*5101*101##`` are ACKed and put on the bus by the bt_difson gateways."""
+    builder = OWNSoundCommand.step_frequency_up if "5001" in frame else OWNSoundCommand.step_frequency_down
+    assert str(builder("101", 1)) == frame
+    rows = _oracle_rows(frame)
+    for product in _BT_DIFSON_ACK:
+        assert (rows[product]["reply"], rows[product]["verdict"]) == ("ack", "out"), product
+        assert _bus_frame(rows[product]) == bus, product
+    for product in _BT_DIFSON_NACK:
+        assert (rows[product]["reply"], rows[product]["verdict"]) == ("nack", "silent"), product
+        assert rows[product]["bus_frames"] == [], product
+    # The old WHAT 4001 / 4101 spelling is not what bt_difson answers: not in the index.
+    assert frame.replace("*5", "*4", 1) not in _ORACLE
+
+
+def test_who16_store_station_builder() -> None:
+    assert str(OWNSoundCommand.store_station("101", 5)) == "*#16*101*#10*5##"
+    assert str(OWNSoundCommand.store_station(101, 1)) == "*#16*101*#10*1##"
+    assert str(OWNSoundCommand.store_station("101", "3")) == "*#16*101*#10*3##"
+    assert OWNSoundCommand.store_station("101", 5).human_readable_log == (
+        "Storing current frequency into station 5 on 101."
+    )
+    assert OWNCommand.parse("*#16*101*#10*5##").__class__ is OWNSoundCommand
+    assert OWNMessage.parse("*#16*101*#10*5##").is_dimension_writing
+    # bt_difson: cmp r0, #5; bgt NACK. Stations 6..15 go through WHO 22 store_preset.
+    for station in (0, 6, 15, 16, -1):
+        with pytest.raises(ValueError, match=f"station must be between 1 and 5, got {station}"):
+            OWNSoundCommand.store_station("101", station)
+    for bad_station in (True, False, 2.5, None):
+        with pytest.raises(ValueError, match="station must be between 1 and 5"):
+            OWNSoundCommand.store_station("101", bad_station)  # type: ignore[arg-type]
+    for bad_where in ("", "   ", "21*1"):
+        with pytest.raises(ValueError, match="where must be a non-empty address without '\\*'"):
+            OWNSoundCommand.store_station(bad_where, 5)
+
+
+def test_who16_store_station_matches_the_firmware_oracle() -> None:
+    """``*#16*101*#10*5##`` is ACKed and put on the bus (``$0493018FD4``) by the bt_difson gateways."""
+    frame = str(OWNSoundCommand.store_station("101", 5))
+    rows = _oracle_rows(frame)
+    for product in _BT_DIFSON_ACK:
+        assert (rows[product]["reply"], rows[product]["verdict"]) == ("ack", "out"), product
+        assert _bus_frame(rows[product]) == "$0493018FD4", product
+    for product in _BT_DIFSON_NACK:
+        assert (rows[product]["reply"], rows[product]["verdict"]) == ("nack", "silent"), product
+
+
+@pytest.mark.parametrize(
+    ("frame", "forward", "backward", "log"),
+    [
+        ("*16*5001*101##", 1, None, "Audio Source 1 increase frequency by 1 step(s)."),
+        ("*16*5015*101##", 15, None, "Audio Source 1 increase frequency by 15 step(s)."),
+        ("*16*5101*101##", None, 1, "Audio Source 1 decrease frequency by 1 step(s)."),
+        ("*16*5115*101##", None, 15, "Audio Source 1 decrease frequency by 15 step(s)."),
+        ("*16*5003*21##", 3, None, "Audio Zone 21 increase frequency by 3 step(s)."),
+    ],
+)
+def test_who16_frequency_step_events(frame: str, forward: int | None, backward: int | None, log: str) -> None:
+    event = OWNMessage.parse(frame)
+    assert isinstance(event, OWNSoundEvent)
+    assert type(OWNEvent.parse(frame)) is OWNSoundEvent
+    assert event.frequency_step_forward == forward
+    assert event.frequency_step_backward == backward
+    assert event.track_step_forward is None
+    assert event.track_step_backward is None
+    assert event.is_seek_up is False
+    assert event.is_seek_down is False
+    assert event.volume_step_delta is None
+    assert event.human_readable_log == log
+
+
+def test_who16_seek_events_are_not_frequency_steps() -> None:
+    up = OWNMessage.parse("*16*5000*101##")
+    assert isinstance(up, OWNSoundEvent)
+    assert up.is_seek_up is True
+    assert up.frequency_step_forward is None
+    down = OWNMessage.parse("*16*5100*101##")
+    assert isinstance(down, OWNSoundEvent)
+    assert down.is_seek_down is True
+    assert down.frequency_step_backward is None
+
+
+@pytest.mark.parametrize(
+    "frame",
+    ["*16*5016*101##", "*16*5116*101##", "*16*4001*101##", "*16*4101*101##", "*16*4015*101##", "*16*4115*101##"],
+)
+def test_who16_values_outside_the_frequency_step_ranges_are_not_steps(frame: str) -> None:
+    event = OWNMessage.parse(frame)
+    assert isinstance(event, OWNSoundEvent)
+    assert event.frequency_step_forward is None
+    assert event.frequency_step_backward is None
+    assert event.is_seek_up is False
+    assert event.is_seek_down is False
+    assert "received command" in event.human_readable_log
+
+
+def test_who16_dimension_10_is_write_only() -> None:
+    """bt_difson never formats DIMENSION 10 (``ownkb:claim:c002135``): only DIMENSION 7 reads into ``track``."""
+    # Physical H/L4684 F500 DIMENSION 7 report (105.30 MHz, station 5).
+    physical = OWNMessage.parse("*#16*101*7*0*5##")
+    assert isinstance(physical, OWNSoundEvent)
+    assert physical.track == 5
+    assert physical.human_readable_log == "Audio Source 1 station/track is 5."
+    frequency = OWNMessage.parse("*#16*101*6*0*105300##")
+    assert isinstance(frequency, OWNSoundEvent)
+    assert frequency.frequency_khz == 105300
+    # A DIMENSION 10 value frame still parses as a WHO 16 event, with nothing decoded.
+    stored = OWNMessage.parse("*#16*101*10*0*5##")
+    assert isinstance(stored, OWNSoundEvent)
+    assert stored.track is None
+    assert stored.frequency_khz is None
+    assert stored.human_readable_log == "*#16*101*10*0*5##"

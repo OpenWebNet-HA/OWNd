@@ -1590,3 +1590,373 @@ class OWNHeatingCommand(OWNCommand):
 
 register_event_parser(4, OWNHeatingEvent)
 register_command_parser(4, OWNHeatingCommand)
+
+
+# WHO 1004: thermoregulation autodiagnostics (Encyclopedia Machine KB
+# ``ownkb:chunk:r000204``-``r000209``, ``ownkb:claim:c004423``,
+# ``ownkb:claim:c004429``-``c004448``, WHO_4 v2.0.0 pp. 69-74; unpacked by
+# ``OPN_OpenScsDiagGenTr`` / ``OPN_OpenScsDiagTermoTr`` in ``libdiag.so``).
+#
+# WHERE grammar, as ``OPN_ThermoWhereTransl`` in ``libwhere.so`` accepts it:
+#
+# - ``#0`` / ``#0#C``: the central unit (``_WHO4_CENTRAL_WHERE_REGEX``), scope
+#   ``"central"``;
+# - ``#Z`` / ``#Z#C`` (``Z`` 1..99, ``C`` 1..99): zone ``Z`` through the
+#   central unit, scope ``"zone"``;
+# - ``Z`` (1..99): the master probe of zone ``Z``, scope ``"probe"``;
+# - ``NZZ`` (``N`` 1..8, ``ZZ`` 01..99: 101..899): slave probe ``N`` of zone
+#   ``ZZ``, scope ``"slave_probe"``;
+# - ``[1-9]00`` (100..900): an external probe, scope ``"external_probe"``;
+# - ``Z#N`` (``Z`` 1..99, ``N`` 1..9): actuator ``N`` of zone ``Z``, scope
+#   ``"actuator"``;
+# - anything else (``0``, ``901``, ``66#0``, ``#0#0``, ``#66#1#2``): no scope.
+#
+# DIMENSIONS 7, 8, 11 and 12 are 24-bit ``0``/``1`` masks of the central
+# unit and of the addressed devices (``s2o_diagnosticsA``); DIMENSIONS 21
+# and 22 are 16-bit masks of a zone (``s2o_autoDiagnostics``, zone 1..99;
+# 22 is pushed by the gateway only, no request exists for it); DIMENSION 23
+# on the central unit is two counts, non-responding units and faulty units
+# (``s2o_autoDiagnostics``, zone 100); DIMENSION 20 is a request-only
+# trigger answered with zero or more DIMENSION 21 frames. ``1`` is a healthy
+# bit, ``0`` an active one; WHO_4 v2.0.0 pp. 69-74 names the active-low
+# conditions of bits 13..16 and 21..24 of the 24-bit central mask and
+# 11..16 of the 16-bit zone mask, but their indexing on the bus has not been
+# confirmed by fault injection, so the mask is exposed as sent with the
+# positions of its cleared bits, as ``OWNLightingDiagnosticEvent`` does for
+# WHO 1001.
+_WHO1004_ZONE_REGEX = re.compile(r"[1-9][0-9]?", re.ASCII)
+_WHO1004_CENTRAL_ZONE_REGEX = re.compile(
+    r"#(?P<zone>[1-9][0-9]?)(?:#(?P<unit>[1-9][0-9]?))?", re.ASCII
+)
+_WHO1004_SLAVE_PROBE_REGEX = re.compile(r"(?P<probe>[1-8])(?P<zone>0[1-9]|[1-9][0-9])", re.ASCII)
+_WHO1004_EXTERNAL_PROBE_REGEX = re.compile(r"[1-9]00", re.ASCII)
+_WHO1004_ACTUATOR_REGEX = re.compile(r"(?P<zone>[1-9][0-9]?)#(?P<actuator>[1-9])", re.ASCII)
+_WHO1004_DEVICE_REGEX = re.compile(
+    r"[1-9][0-9]?(?:#[1-9])?|[1-8](?:0[1-9]|[1-9][0-9])|[1-9]00", re.ASCII
+)
+_WHO1004_DEVICE_SCOPES = frozenset({"central", "probe", "slave_probe", "external_probe", "actuator"})
+_WHO1004_MASK_DIMENSIONS_24 = frozenset({7, 8, 11, 12})
+_WHO1004_MASK_DIMENSIONS_16 = frozenset({21, 22})
+_WHO1004_REQUEST_DIMENSIONS = (7, 8, 11, 12)
+_WHO1004_COUNT_REGEX = re.compile(r"[0-9]+", re.ASCII)
+
+
+def _who1004_address(where: str | None, where_param: list[str]) -> str:
+    """The full WHERE of a WHO 1004 frame (``#0#2``, ``#66#2``, ``66#1``)."""
+    return "#".join([where or "", *where_param])
+
+
+def _who1004_unique_id(where: str | None, where_param: list[str]) -> str:
+    """``1004-<full WHERE>``: ``#0#2``, ``#0`` and ``#0#1`` must not collide.
+
+    WHO 1004 is not in ``OWNMessage.interface`` (``#0#C`` is a central unit,
+    not a bus interface), so the inherited ``unique_id`` would drop the
+    WHERE parameters and give ``#0`` / ``#0#1`` / ``#0#2``, ``#66`` / ``#66#2``
+    and ``66`` / ``66#1`` the same id.
+    """
+    address = _who1004_address(where, where_param)
+    return f"1004-{address}" if address else "1004"
+
+
+class OWNHeatingDiagnosticEvent(OWNEvent):
+    """WHO 1004: autodiagnostics of the thermoregulation system.
+
+    WHO 1004 is the diagnostic WHO of the "Temperature control system"
+    (Encyclopedia Machine KB ``ownkb:chunk:r000204``-``r000209``,
+    ``ownkb:claim:c004423``, ``ownkb:claim:c004429``-``c004448``;
+    ``libdiag.so`` unpacks the SCS bytes). The first physical frames come
+    from an H/L4684 6.0.11 with a 3550 central unit and an F430/4 on zone
+    66, pushed once the actuator channel ``66#1`` came back online
+    (MyHOME#839, fixture ``issue_466``
+    ``myhome_trace_HL4684_all_2026-11-01T11-30-19.json``):
+
+    - ``*#1004*66*11*111111111111111111111111##``: master probe 66,
+      DIMENSION 11, 24-bit mask (``scope`` ``"probe"``);
+    - ``*#1004*#66*22*1111111111111111##``: zone 66 through the central
+      unit, DIMENSION 22, 16-bit mask (``scope`` ``"zone"``);
+    - ``*#1004*#0*11*111111111111111111111111##``: the 3550 central unit,
+      DIMENSION 11, 24-bit mask (``scope`` ``"central"``).
+
+    ``scope`` follows the ``OPN_ThermoWhereTransl`` WHERE grammar:
+    ``"central"`` (``#0``, ``#0#C``), ``"zone"`` (``#Z``, ``#Z#C``;
+    ``zone_number``), ``"probe"`` (``Z``; ``zone_number``), ``"slave_probe"``
+    (``NZZ``; ``zone_number`` ``ZZ``, ``probe_number`` ``N``),
+    ``"external_probe"`` (``[1-9]00``; no zone), ``"actuator"`` (``Z#N``;
+    ``zone_number``, ``actuator_number``) or ``None``. WHO 1004 is not in
+    ``OWNMessage.interface`` (the ``#4#IF`` suffix of WHO 1 / 2 would read
+    ``#0#C`` as an interface), and ``unique_id`` carries the full WHERE so
+    ``#0`` / ``#0#2``, ``#66`` / ``#66#2`` and ``66`` / ``66#1`` stay apart.
+
+    ``diagnostic_mask`` is the 24-bit mask of DIMENSIONS 7, 8, 11 and 12 on
+    the central unit and on the addressed devices (``ownkb:claim:c004423``)
+    or the 16-bit mask of DIMENSIONS 21 and 22 on a zone, only when the
+    frame carries exactly one all-``0``/``1`` value of that length;
+    ``cleared_bits`` and ``has_fault`` follow it. ``1`` is a healthy bit and
+    ``0`` an active one. WHO_4 v2.0.0 pp. 69-74 (``ownkb:chunk:r000206``-
+    ``r000207``) documents active-low conditions for bits 13..16 and 21..24
+    of the 24-bit central mask and 11..16 of the 16-bit zone mask; the
+    bit-order indexing on the bus has not been confirmed by hardware fault
+    injection, so the mask is kept raw and nothing is interpreted.
+    DIMENSION 23 on the central unit (``*#1004*#0*23*NO_RESPONSE*FAULTS##``,
+    ``ownkb:claim:c004442``) is decoded into ``non_responding_units`` and
+    ``faulty_units`` when it carries exactly two decimal values. Any other
+    value shape, dimension or WHERE fails closed with the raw values in
+    ``dimension_value``. The WHO 4 DIMENSION 22 guard anchors on WHO ``4``,
+    so ``*#1004*#66*22*...##`` is not a crash form.
+    """
+
+    def __init__(self, data: str) -> None:
+        super().__init__(data)
+        self._scope: str | None = None
+        self._zone_number: int | None = None
+        self._probe_number: int | None = None
+        self._actuator_number: int | None = None
+        self._diagnostic_mask: str | None = None
+        self._cleared_bits: tuple[int, ...] | None = None
+        self._non_responding_units: int | None = None
+        self._faulty_units: int | None = None
+
+        address = _who1004_address(self._where, self._where_param)
+        if _WHO4_CENTRAL_WHERE_REGEX.fullmatch(address):
+            self._scope = "central"
+            subject = f"Thermoregulation central unit {address}"
+        elif zone_match := _WHO1004_CENTRAL_ZONE_REGEX.fullmatch(address):
+            self._scope = "zone"
+            self._zone_number = int(zone_match.group("zone"))
+            unit = zone_match.group("unit")
+            subject = f"Thermoregulation zone {self._zone_number}" + (
+                f" of central unit {unit}" if unit else ""
+            )
+        elif actuator_match := _WHO1004_ACTUATOR_REGEX.fullmatch(address):
+            self._scope = "actuator"
+            self._zone_number = int(actuator_match.group("zone"))
+            self._actuator_number = int(actuator_match.group("actuator"))
+            subject = f"Thermoregulation zone {self._zone_number} actuator {self._actuator_number}"
+        elif _WHO1004_EXTERNAL_PROBE_REGEX.fullmatch(address):
+            self._scope = "external_probe"
+            subject = f"Thermoregulation external probe {address}"
+        elif slave_match := _WHO1004_SLAVE_PROBE_REGEX.fullmatch(address):
+            self._scope = "slave_probe"
+            self._zone_number = int(slave_match.group("zone"))
+            self._probe_number = int(slave_match.group("probe"))
+            subject = f"Thermoregulation zone {self._zone_number} slave probe {self._probe_number}"
+        elif _WHO1004_ZONE_REGEX.fullmatch(address):
+            self._scope = "probe"
+            self._zone_number = int(address)
+            subject = f"Thermoregulation probe {self._zone_number}"
+        else:
+            subject = f"Thermoregulation device {address}"
+
+        # Exactly one value of exactly the published length for this scope and
+        # dimension, all 0/1: a trailing value, another length, a non-binary
+        # character, an unrecognised WHERE or a mask dimension the scope does
+        # not report fail closed.
+        if self._dimension in _WHO1004_MASK_DIMENSIONS_24 and self._scope in _WHO1004_DEVICE_SCOPES:
+            expected_length: int | None = 24
+        elif self._dimension in _WHO1004_MASK_DIMENSIONS_16 and self._scope == "zone":
+            expected_length = 16
+        else:
+            expected_length = None
+        values = self._dimension_value
+        if expected_length is not None and len(values) == 1:
+            value = values[0]
+            if len(value) == expected_length and set(value) <= {"0", "1"}:
+                self._diagnostic_mask = value
+                self._cleared_bits = tuple(i for i, bit in enumerate(value, 1) if bit == "0")
+                self._human_readable_log = (
+                    f"{subject} autodiagnostic mask is {value}"
+                    f" (cleared bits: {', '.join(map(str, self._cleared_bits)) or 'none'})."
+                )
+        elif (
+            self._dimension == 23
+            and self._scope == "central"
+            and len(values) == 2
+            and all(_WHO1004_COUNT_REGEX.fullmatch(v) for v in values)
+        ):
+            self._non_responding_units = int(values[0])
+            self._faulty_units = int(values[1])
+            self._human_readable_log = (
+                f"{subject} reports {self._non_responding_units} non-responding unit(s)"
+                f" and {self._faulty_units} faulty unit(s)."
+            )
+
+    @property
+    def unique_id(self) -> str:
+        """``1004-<full WHERE>`` (``1004-#0#2``, ``1004-#66#2``, ``1004-66#1``)."""
+        return _who1004_unique_id(self._where, self._where_param)
+
+    @property
+    def scope(self) -> str | None:
+        """``"central"``, ``"zone"``, ``"probe"``, ``"slave_probe"``, ``"external_probe"``, ``"actuator"`` or ``None``."""
+        return self._scope
+
+    @property
+    def zone_number(self) -> int | None:
+        """Zone 1..99 of a zone, probe, slave probe or actuator; ``None`` for a central unit, an external probe or an unrecognized WHERE."""
+        return self._zone_number
+
+    @property
+    def probe_number(self) -> int | None:
+        """Slave probe number ``N`` (1..8) of a ``NZZ`` WHERE, else ``None``."""
+        return self._probe_number
+
+    @property
+    def actuator_number(self) -> int | None:
+        """Actuator number ``N`` (1..9) of a ``Z#N`` WHERE, else ``None``."""
+        return self._actuator_number
+
+    @property
+    def diagnostic_mask(self) -> str | None:
+        """The 24-bit (DIMENSIONS 7, 8, 11, 12) or 16-bit (DIMENSIONS 21, 22) bitmask as sent, else ``None``."""
+        return self._diagnostic_mask
+
+    @property
+    def cleared_bits(self) -> tuple[int, ...] | None:
+        """1-based positions, from the left, of the mask's ``0`` bits (``()`` when all set)."""
+        return self._cleared_bits
+
+    @property
+    def has_fault(self) -> bool | None:
+        """True when the mask has a cleared bit, False when all bits are set, ``None`` without a mask."""
+        return bool(self._cleared_bits) if self._cleared_bits is not None else None
+
+    @property
+    def non_responding_units(self) -> int | None:
+        """First count of a central-unit DIMENSION 23 report (``*#1004*#0*23*NO_RESPONSE*FAULTS##``), else ``None``."""
+        return self._non_responding_units
+
+    @property
+    def faulty_units(self) -> int | None:
+        """Second count of a central-unit DIMENSION 23 report, else ``None``."""
+        return self._faulty_units
+
+
+def _validate_who1004_dimension(dimension: object, purpose: str) -> int:
+    """Return ``dimension`` as one of the 24-bit mask DIMENSIONS 7, 8, 11, 12, else raise ``ValueError``."""
+    if isinstance(dimension, bool) or not isinstance(dimension, (int, str)):
+        raise ValueError(f"{purpose} needs a dimension of 7, 8, 11 or 12: {dimension!r}")
+    try:
+        value = int(dimension)
+    except ValueError:
+        raise ValueError(f"{purpose} needs a dimension of 7, 8, 11 or 12: {dimension!r}") from None
+    if value not in _WHO1004_REQUEST_DIMENSIONS:
+        raise ValueError(f"{purpose} needs a dimension of 7, 8, 11 or 12: {dimension!r}")
+    return value
+
+
+def _validate_who1004_device_where(where: object, purpose: str) -> str:
+    """Return ``where`` stripped when it addresses a bus device of WHO 1004, else raise ``ValueError``.
+
+    Accepted (``OPN_ThermoWhereTransl``): a master probe ``Z`` (1..99), a
+    slave probe ``NZZ`` (101..899), an external probe ``[1-9]00`` and an
+    actuator ``Z#N`` (``N`` 1..9). The central unit and the ``#Z`` zone
+    forms are refused: they take ``request_central_diagnostic`` and
+    ``request_zone_diagnostic``.
+    """
+    if isinstance(where, bool) or not isinstance(where, (int, str)):
+        raise ValueError(f"{purpose} needs a device address Z, NZZ, N00 or Z#N: {where!r}")
+    text = str(where).strip()
+    if not _WHO1004_DEVICE_REGEX.fullmatch(text):
+        raise ValueError(f"{purpose} needs a device address Z, NZZ, N00 or Z#N: {text!r}")
+    return text
+
+
+def _validate_who1004_zone_where(where: object, purpose: str) -> str:
+    """Return the ``R21P0`` target: ``#0``, ``#0#C``, ``#Z`` or ``#Z#C`` (a bare zone 1..99 becomes ``#Z``)."""
+    if isinstance(where, bool) or not isinstance(where, (int, str)):
+        raise ValueError(f"{purpose} needs '#0', '#0#C', a zone 1..99, '#Z' or '#Z#C': {where!r}")
+    text = str(where).strip()
+    if _WHO1004_ZONE_REGEX.fullmatch(text):
+        return f"#{text}"
+    if _WHO4_CENTRAL_WHERE_REGEX.fullmatch(text) or _WHO1004_CENTRAL_ZONE_REGEX.fullmatch(text):
+        return text
+    raise ValueError(f"{purpose} needs '#0', '#0#C', a zone 1..99, '#Z' or '#Z#C': {text!r}")
+
+
+class OWNHeatingDiagnosticCommand(OWNCommand):
+    """WHO 1004 requests: thermoregulation autodiagnostic reads.
+
+    Every builder emits one of the DIMENSION requests ``libdiag.so``
+    registers for WHO 1004 (``OPN_OpenScsDiagTermoTr``: ``R7P0``, ``R8P0``,
+    ``R11P0``, ``R12P0``, ``R20P0``, ``R21P0``, ``R23P0``; Encyclopedia
+    Machine KB ``ownkb:chunk:r000204``-``r000209``). There is no ``R22P0``:
+    DIMENSION 22 is pushed by the gateway only, so no builder emits
+    ``*22##``. The replies are decoded by :class:`OWNHeatingDiagnosticEvent`.
+    None of these frames has been replayed on the firmware oracle.
+    """
+
+    @property
+    def unique_id(self) -> str:
+        """``1004-<full WHERE>``, as :attr:`OWNHeatingDiagnosticEvent.unique_id`."""
+        return _who1004_unique_id(self._where, self._where_param)
+
+    @classmethod
+    def request_central_diagnostic(
+        cls, where: str = "#0", *, dimension: int = 7
+    ) -> OWNHeatingDiagnosticCommand:
+        """24-bit mask of the central unit: ``*#1004*#0*7##`` (``#0#C``; DIMENSION 7, 8, 11 or 12).
+
+        DIMENSION 7 is the diagnostic mask ``ownkb:chunk:r000205`` documents
+        for the request; 8, 11 and 12 are the other 24-bit masks
+        ``libdiag.so`` answers (``R8P0``, ``R11P0``, ``R12P0``).
+        """
+        target = _validate_central_where(where, "Central unit diagnostic request")
+        dim = _validate_who1004_dimension(dimension, "Central unit diagnostic request")
+        message = cls(f"*#1004*{target}*{dim}##")
+        message._human_readable_log = (
+            f"Requesting autodiagnostic mask (dimension {dim}) of thermoregulation central unit {target}."
+        )
+        return message
+
+    @classmethod
+    def request_device_diagnostic(
+        cls, where: int | str, *, dimension: int = 7
+    ) -> OWNHeatingDiagnosticCommand:
+        """24-bit mask of a bus device: ``*#1004*WHERE*7##`` (DIMENSION 7, 8, 11 or 12).
+
+        WHERE is a master probe ``Z`` (1..99), a slave probe ``NZZ``
+        (101..899), an external probe ``[1-9]00`` or an actuator ``Z#N``.
+        """
+        target = _validate_who1004_device_where(where, "Device diagnostic request")
+        dim = _validate_who1004_dimension(dimension, "Device diagnostic request")
+        message = cls(f"*#1004*{target}*{dim}##")
+        message._human_readable_log = (
+            f"Requesting autodiagnostic mask (dimension {dim}) of thermoregulation device {target}."
+        )
+        return message
+
+    @classmethod
+    def request_zones_with_failures(cls, where: str = "#0") -> OWNHeatingDiagnosticCommand:
+        """Zones with failures: ``*#1004*#0*20##`` (``R20P0``; ``#0#C``).
+
+        Answered with zero or more ``*#1004*#Z*21*<16-bit mask>##`` frames,
+        one per faulty zone.
+        """
+        target = _validate_central_where(where, "Zones with failures request")
+        message = cls(f"*#1004*{target}*20##")
+        message._human_readable_log = f"Requesting zones with failures of thermoregulation central unit {target}."
+        return message
+
+    @classmethod
+    def request_zone_diagnostic(cls, where: int | str = "#0") -> OWNHeatingDiagnosticCommand:
+        """16-bit zone mask: ``*#1004*#Z*21##`` (``R21P0``).
+
+        ``where`` is ``#0`` / ``#0#C`` (every zone of the central unit), a
+        zone ``1..99`` (sent as ``#Z``), ``#Z`` or ``#Z#C``.
+        """
+        target = _validate_who1004_zone_where(where, "Zone diagnostic request")
+        message = cls(f"*#1004*{target}*21##")
+        message._human_readable_log = f"Requesting zone autodiagnostic mask of thermoregulation {target}."
+        return message
+
+    @classmethod
+    def request_fault_counts(cls, where: str = "#0") -> OWNHeatingDiagnosticCommand:
+        """Non-responding and faulty unit counts: ``*#1004*#0*23##`` (``R23P0``; ``#0#C``)."""
+        target = _validate_central_where(where, "Fault counts request")
+        message = cls(f"*#1004*{target}*23##")
+        message._human_readable_log = f"Requesting fault counts of thermoregulation central unit {target}."
+        return message
+
+
+register_event_parser(1004, OWNHeatingDiagnosticEvent)
+register_command_parser(1004, OWNHeatingDiagnosticCommand)
