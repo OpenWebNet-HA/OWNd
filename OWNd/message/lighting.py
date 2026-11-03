@@ -28,7 +28,46 @@ LIGHTING_STATE_ANOMALY = 19
 # Legacy coarse-only dimmer transition-speed byte (0xF0 = 240) reported in WHO 1
 # DIMENSION 1 (*#1*WHERE*1*LEVEL100*240##) by pre-09W29 BTicino F414 dimmers
 # that only actuate live output on coarse WHAT 2..10 commands (MyHOME#767).
+# It is learned from DIMENSION 1 only: the F414 capture is a DIMENSION 1 reply
+# (golden ``light.dim.reply.level.30.speed240.61``) and the Encyclopedia records
+# that a DIMENSION 4 request to a classic F414 ends in NACK
+# (who-1-lighting/dimensions.md "DIMENSION 4 - 100-level status").
 DIMMER_SPEED_COARSE_ONLY = 240
+
+# Published LEVEL100 field (who-1-lighting/dimensions.md "Value fields"):
+# 100 = OFF, 101..199 = 1 %..99 %, 200 = maximum. Anything else is not a
+# level and "must not be decoded as 100%..200%".
+LEVEL100_MIN = 100
+LEVEL100_MAX = 200
+
+# Published SPEED field (who-1-lighting/what.md "Switching and levels" and
+# dimensions.md "Value fields"): 0 = last speed used, 1..254 explicit, 255 default.
+SPEED_MIN = 0
+SPEED_MAX = 255
+
+# Published blink period (who-1-lighting/what.md "Blinking operations"):
+# WHAT 20..29 = 0.5..5 s in 0.5 s steps.
+BLINK_PERIOD_MIN = 0.5
+BLINK_PERIOD_MAX = 5.0
+
+# DIMENSION 2 report the TS10_1_0_23 touchscreen ignores as an unusable timer
+# (who-1-lighting/dimensions.md "Historical timer handling").
+_UNUSABLE_TIMER_REPORT = (255, 255, 255)
+
+
+def _int_field(values: list[str], index: int) -> int | None:
+    """Return ``values[index]`` as an int, ``None`` when the field is absent or empty.
+
+    The frame grammar admits empty tags (``*#1*12*1*##``): a tokenizer must
+    preserve them and a decoder must not crash on them (Encyclopedia
+    protocol/frame-syntax.md "Delimiters and empty tags", ENCY_CONFIRM LS-L1).
+    """
+    if index >= len(values):
+        return None
+    value = values[index]
+    if not value.isdigit():
+        return None
+    return int(value)
 
 # Canonical BTicino libqtdevices (TS10_1_0_23, lighting_device.cpp) mapping
 # between coarse WHO 1 WHAT 2..10 presets and fine 1..100 % levels.
@@ -186,7 +225,7 @@ def is_coarse_dimmer_where(
 ) -> bool:
     """Return True if ``where`` reported the 240 (0xF0) coarse-only dimmer speed.
 
-    Learning is reactive: a WHO 1 ``DIMENSION 1`` or ``DIMENSION 4`` reply carrying
+    Learning is reactive: a WHO 1 ``DIMENSION 1`` reply (never ``DIMENSION 4``) carrying
     ``transition == 240`` (``*#1*WHERE*1*LEVEL100*240##``) must be observed first
     (or registered via :func:`register_coarse_dimmer_where`).
 
@@ -259,6 +298,11 @@ class OWNLightingEvent(OWNEvent):
         self._brightness: int | None = None
         self._brightness_preset: int | None = None
         self._transition: int | None = None
+        self._levels: int | None = None
+        self._status_level: int | None = None
+        self._status_speed: int | None = None
+        self._working_time: int | None = None
+        self._max_working_time: int | None = None
         self._is_coarse_dimmer: bool = False
         self._timer: float | None = None
         self._blinker: float | None = None
@@ -287,15 +331,21 @@ class OWNLightingEvent(OWNEvent):
 
         if self._what is not None and self._what != 1000:
             self._state = self._what
+            # WHAT parameters are digits by grammar ((?:#\d+)*), so int() cannot fail.
+            params = [int(p) for p in self._what_param]
 
-            if self._state == 0:  # Light off
-                self._human_readable_log = (
-                    f"Light {self._where}{self._interface_log_text} is switched off."
-                )
-            elif self._state == 1:  # Light on
-                self._human_readable_log = (
-                    f"Light {self._where}{self._interface_log_text} is switched on."
-                )
+            if self._state in (0, 1):  # Light off / on, optionally 0#SPEED / 1#SPEED
+                # what.md "Switching and levels": the parameterized forms switch
+                # using the requested transition speed and "must not be reduced
+                # to their leading numeric WHAT".
+                verb = "off" if self._state == 0 else "on"
+                if params:
+                    self._transition = params[0]
+                    self._human_readable_log = f"Light {self._where}{self._interface_log_text} is switched {verb} with transition speed {self._transition}."  # pylint: disable=line-too-long
+                else:
+                    self._human_readable_log = (
+                        f"Light {self._where}{self._interface_log_text} is switched {verb}."
+                    )
             elif self._state > 1 and self._state < 11:  # Light dimmed to preset value
                 self._brightness_preset = self._state
                 if is_coarse_dimmer_where(full_where):
@@ -337,8 +387,20 @@ class OWNLightingEvent(OWNEvent):
                 self._blinker = 0.5 * (self._state - 19)
                 self._human_readable_log = f"Light {self._where}{self._interface_log_text} is blinking every {self._blinker}s."
             elif self._state == 30 or self._state == 31:  # One level up/down
+                # what.md "Switching and levels": 30#LEVELS#SPEED / 31#LEVELS#SPEED
+                # change several levels at the specified speed.
                 direction = "up" if self._state == 30 else "down"
-                self._human_readable_log = f"Light {self._where}{self._interface_log_text} is dimmed {direction} one level."  # pylint: disable=line-too-long
+                if params:
+                    self._levels = params[0]
+                    self._transition = params[1] if len(params) > 1 else None
+                    speed_text = (
+                        f" at speed {self._transition}"
+                        if self._transition is not None
+                        else ""
+                    )
+                    self._human_readable_log = f"Light {self._where}{self._interface_log_text} is dimmed {direction} by {self._levels} levels{speed_text}."  # pylint: disable=line-too-long
+                else:
+                    self._human_readable_log = f"Light {self._where}{self._interface_log_text} is dimmed {direction} one level."  # pylint: disable=line-too-long
             elif self._state == 34:  # Motion detected
                 self._type = MESSAGE_TYPE_MOTION
                 self._motion = True
@@ -364,53 +426,96 @@ class OWNLightingEvent(OWNEvent):
                 self._human_readable_log = f"Light {self._where}{self._interface_log_text} reports unknown lighting WHAT {self._unknown_state}."  # pylint: disable=line-too-long
 
         if self._dimension is not None and self._dimension_value:
-            if self._dimension == 1 or self._dimension == 4:  # Brightness value
-                self._brightness = int(self._dimension_value[0]) - 100
-                # Some gateways omit the transition speed in the reply.
-                self._transition = (
-                    int(self._dimension_value[1])
-                    if len(self._dimension_value) > 1
-                    else None
-                )
-                if self._transition is not None:
-                    self._is_coarse_dimmer = (
-                        self._transition == DIMMER_SPEED_COARSE_ONLY
-                    )
-                    register_coarse_dimmer_where(full_where, self._is_coarse_dimmer)
-                if self._brightness == 0:
-                    self._state = 0
-                    self._human_readable_log = f"Light {self._where}{self._interface_log_text} is switched off."
-                else:
-                    self._state = 1
-                    self._human_readable_log = f"Light {self._where}{self._interface_log_text} is switched on at {self._brightness}%."
+            values = self._dimension_value
+            subject = f"Light {self._where}{self._interface_log_text}"
+            sensor = f"Light/motion sensor {self._where}{self._interface_log_text}"
+            if self._dimension == 1:  # Level and transition speed
+                # dimensions.md "DIMENSION 1 - level and speed":
+                # *#1*WHERE*1*LEVEL100*SPEED##. The speed is the only field the
+                # coarse-only F414 sentinel (240) is learned from.
+                self._brightness = self._decode_level100(1)
+                if self._brightness is not None:
+                    # Some gateways omit the transition speed in the reply.
+                    self._transition = _int_field(values, 1)
+                    if self._transition is not None:
+                        self._is_coarse_dimmer = (
+                            self._transition == DIMMER_SPEED_COARSE_ONLY
+                        )
+                        register_coarse_dimmer_where(full_where, self._is_coarse_dimmer)
+            elif self._dimension == 4:  # 100-level status with ON/OFF speed
+                # dimensions.md "DIMENSION 4 - 100-level status": a distinct
+                # state surface whose trailing value differs from DIMENSION 1
+                # at the same LEVEL100 (F418U2 through an MH202), so it is kept
+                # in its own field (status_speed) and never read as the
+                # DIMENSION 1 transition speed nor as the F414 coarse sentinel.
+                # The LEVEL100 field is the published level: an F454 answers a
+                # DIMENSION 1 request while OFF with this frame (golden
+                # light.dim.reply.level_transition.13, MyHOME#466), so it still
+                # carries brightness / is_on.
+                self._brightness = self._decode_level100(4)
+                if self._brightness is not None:
+                    self._status_level = self._brightness
+                    self._status_speed = _int_field(values, 1)
             elif self._dimension == 2:  # Time value
-                self._timer = (
-                    int(self._dimension_value[0]) * 3600
-                    + int(self._dimension_value[1]) * 60
-                    + int(self._dimension_value[2])
-                )
-                self._human_readable_log = f"Light {self._where}{self._interface_log_text} is switched on for {self._timer}s."
+                # dimensions.md "DIMENSION 2 - temporization":
+                # *#1*WHERE*2*HOURS*MINUTES*SECONDS## (three fields).
+                fields = tuple(_int_field(values, i) for i in range(3))
+                if None in fields:
+                    self._human_readable_log = f"{subject} timer report '{'*'.join(values)}' is incomplete (HOURS*MINUTES*SECONDS expected)."  # pylint: disable=line-too-long
+                elif fields == _UNUSABLE_TIMER_REPORT:
+                    # "Historical timer handling": the touchscreen ignores
+                    # 255*255*255 as unusable timer state.
+                    self._human_readable_log = f"{subject} reports no usable timer (255*255*255)."
+                else:
+                    hours, minutes, seconds = (int(f) for f in fields if f is not None)
+                    self._timer = hours * 3600 + minutes * 60 + seconds
+                    self._human_readable_log = f"{subject} is switched on for {self._timer}s."
             elif self._dimension == 5:  # PIR sensitivity
                 self._type = MESSAGE_TYPE_PIR_SENSITIVITY
-                self._pir_sensitivity = int(self._dimension_value[0])
-                _sensitivity = (
-                    PIR_SENSITIVITY_MAPPING[self._pir_sensitivity]
-                    if 0 <= self._pir_sensitivity < len(PIR_SENSITIVITY_MAPPING)
-                    else f"unknown ({self._pir_sensitivity})"
-                )
-                self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} PIR sensitivity is {_sensitivity}."  # pylint: disable=line-too-long
+                self._pir_sensitivity = _int_field(values, 0)
+                if self._pir_sensitivity is None:
+                    self._human_readable_log = f"{sensor} PIR sensitivity value is missing."
+                else:
+                    _sensitivity = (
+                        PIR_SENSITIVITY_MAPPING[self._pir_sensitivity]
+                        if 0 <= self._pir_sensitivity < len(PIR_SENSITIVITY_MAPPING)
+                        else f"unknown ({self._pir_sensitivity})"
+                    )
+                    self._human_readable_log = f"{sensor} PIR sensitivity is {_sensitivity}."
             elif self._dimension == 6:  # Illuminance value
                 self._type = MESSAGE_TYPE_ILLUMINANCE
-                self._illuminance = int(self._dimension_value[0])
-                self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} detected an illuminance value of {self._illuminance} lx."  # pylint: disable=line-too-long
+                self._illuminance = _int_field(values, 0)
+                if self._illuminance is None:
+                    self._human_readable_log = f"{sensor} illuminance value is missing."
+                else:
+                    self._human_readable_log = f"{sensor} detected an illuminance value of {self._illuminance} lx."  # pylint: disable=line-too-long
             elif self._dimension == 7:  # Motion timeout value
                 self._type = MESSAGE_TYPE_MOTION_TIMEOUT
-                self._motion_timeout = datetime.timedelta(
-                    hours=int(self._dimension_value[0]),
-                    minutes=int(self._dimension_value[1]),
-                    seconds=int(self._dimension_value[2]),
-                )
-                self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} has timeout set to {self._motion_timeout}."  # pylint: disable=line-too-long
+                fields = tuple(_int_field(values, i) for i in range(3))
+                if None in fields:
+                    self._human_readable_log = f"{sensor} timeout report '{'*'.join(values)}' is incomplete (HOURS*MINUTES*SECONDS expected)."  # pylint: disable=line-too-long
+                else:
+                    hours, minutes, seconds = (int(f) for f in fields if f is not None)
+                    self._motion_timeout = datetime.timedelta(
+                        hours=hours, minutes=minutes, seconds=seconds
+                    )
+                    self._human_readable_log = f"{sensor} has timeout set to {self._motion_timeout}."
+            elif self._dimension == 8:  # Accumulated lamp working time
+                # dimensions.md "DIMENSION 8 - working time":
+                # *#1*WHERE*8*WORKING_TIME## (hours, 1..100000).
+                self._working_time = _int_field(values, 0)
+                if self._working_time is None:
+                    self._human_readable_log = f"{subject} working time value is missing."
+                else:
+                    self._human_readable_log = f"{subject} has been working for {self._working_time} hours."  # pylint: disable=line-too-long
+            elif self._dimension == 9:  # Maximum lamp working time
+                # dimensions.md "DIMENSION 9 - maximum working time":
+                # *#1*WHERE*9*WORKING_TIME## (hours).
+                self._max_working_time = _int_field(values, 0)
+                if self._max_working_time is None:
+                    self._human_readable_log = f"{subject} maximum working time value is missing."
+                else:
+                    self._human_readable_log = f"{subject} maximum working time is {self._max_working_time} hours."  # pylint: disable=line-too-long
             elif self._dimension == 12:  # HSV Color (BTicino F429 DALI)
                 if len(self._dimension_value) >= 3:
                     try:
@@ -435,8 +540,10 @@ class OWNLightingEvent(OWNEvent):
                         self._rgb = (round(r * 255), round(g * 255), round(b * 255))
                         self._human_readable_log = f"Light {self._where}{self._interface_log_text} HSV color is ({h}°, {s}%, {v}%)."
             elif self._dimension == 14:  # Color temperature (Tunable white, mireds)
-                val = int(self._dimension_value[0])
-                if val == 1:
+                val = _int_field(values, 0)
+                if val is None:
+                    self._human_readable_log = f"{subject} color temperature value is missing."
+                elif val == 1:
                     self._supports_color_temp = False
                     self._human_readable_log = f"Light {self._where}{self._interface_log_text} reports tunable white is not supported."
                 else:
@@ -445,6 +552,32 @@ class OWNLightingEvent(OWNEvent):
                     self._human_readable_log = f"Light {self._where}{self._interface_log_text} color temperature is {self._color_temp} mireds."
             else:
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} has sent an unknown dimension {self._dimension}."
+
+    def _decode_level100(self, dimension: int) -> int | None:
+        """Decode the LEVEL100 field of a DIMENSION 1 / 4 report into 0..100 %.
+
+        dimensions.md "Value fields": ``100`` = OFF, ``101..199`` = 1 %..99 %,
+        ``200`` = maximum; LEVEL100 "is not a literal percentage field and must
+        not be decoded as 100%..200%", so a value outside 100..200 yields
+        ``None`` (``is_on`` stays ``None``) and an empty field yields ``None``
+        with the state untouched. On a valid level ``_state`` becomes 0 / 1.
+        """
+        subject = f"Light {self._where}{self._interface_log_text}"
+        level = _int_field(self._dimension_value, 0)
+        if level is None:
+            self._human_readable_log = f"{subject} DIMENSION {dimension} level value is missing."
+            return None
+        if not LEVEL100_MIN <= level <= LEVEL100_MAX:
+            self._human_readable_log = f"{subject} reported level {level} outside 100..200 in DIMENSION {dimension}; not a LEVEL100 percentage."  # pylint: disable=line-too-long
+            return None
+        brightness = level - LEVEL100_MIN
+        if brightness == 0:
+            self._state = 0
+            self._human_readable_log = f"{subject} is switched off."
+        else:
+            self._state = 1
+            self._human_readable_log = f"{subject} is switched on at {brightness}%."
+        return brightness
 
     @property
     def message_type(self) -> str | None:
@@ -467,11 +600,50 @@ class OWNLightingEvent(OWNEvent):
 
     @property
     def transition(self) -> int | None:
+        """Transition speed of a DIMENSION 1 report (``*#1*W*1*LEVEL100*SPEED##``)
+        or of a parameterized WHAT (``0#SPEED``, ``1#SPEED``, ``30#LEVELS#SPEED``,
+        ``31#LEVELS#SPEED``); ``None`` otherwise. A DIMENSION 4 trailing value is
+        :attr:`status_speed`, never this field (dimensions.md "DIMENSION 4")."""
         return self._transition
 
     @property
+    def levels(self) -> int | None:
+        """LEVELS of a ``30#LEVELS#SPEED`` / ``31#LEVELS#SPEED`` step, else ``None``."""
+        return self._levels
+
+    @property
+    def status_level(self) -> int | None:
+        """Level (0..100 %) of a DIMENSION 4 ``100-level status`` report, else ``None``.
+
+        The same value is also in :attr:`brightness`, since LEVEL100 is the
+        published level field of both DIMENSION 1 and DIMENSION 4.
+        """
+        return self._status_level
+
+    @property
+    def status_speed(self) -> int | None:
+        """Trailing ``ON/OFF speed`` value of a DIMENSION 4 report, else ``None``.
+
+        Kept apart from :attr:`transition`: an F418U2 reports ``5`` in
+        DIMENSION 1 and ``2`` in DIMENSION 4 at the same level, and the
+        Encyclopedia asks not to collapse the two secondary values
+        (who-1-lighting/dimensions.md "DIMENSION 4 - 100-level status").
+        """
+        return self._status_speed
+
+    @property
+    def working_time(self) -> int | None:
+        """Accumulated lamp working time in hours (DIMENSION 8), else ``None``."""
+        return self._working_time
+
+    @property
+    def max_working_time(self) -> int | None:
+        """Maximum lamp working time in hours (DIMENSION 9), else ``None``."""
+        return self._max_working_time
+
+    @property
     def is_coarse_dimmer(self) -> bool:
-        """True if this event indicates a coarse-only dimmer (speed 240 / 0xF0)."""
+        """True if this DIMENSION 1 report carries the coarse-only dimmer speed (240 / 0xF0)."""
         return self._is_coarse_dimmer
 
     @property
@@ -596,6 +768,38 @@ class OWNLightingEvent(OWNEvent):
 
 
 
+def _where_target(where: str | int) -> str:
+    """Validate the WHERE of a WHO 1 builder: non-empty, stripped, no ``*``.
+
+    WHERE is protocol syntax and ``*`` is a field separator
+    (who-1-lighting/addressing.md; protocol/addressing.md "Parsing rules",
+    ENCY_CONFIRM LS-L10). An empty WHERE builds ``*#1*##``, which is refused by
+    eleven emulated gateways and crashes the emulated MH202 010024
+    (ORACLE_CONFIRM.md row L10, crash table); a WHERE such as ``12*1`` turns a
+    status request into a DIMENSION 1 read (``*#1*12*1##``).
+    """
+    return require_non_empty_where(where)
+
+
+def _check_speed(speed: int | None, name: str = "transition speed") -> int | None:
+    """Return ``speed`` as an int within the published SPEED field, or raise.
+
+    what.md "Switching and levels": ``0`` = last speed used, ``1..254`` explicit,
+    ``255`` default. ``None`` means "no speed field". Anything else is not a
+    speed and must not be rewritten silently (audit rows L7, L8).
+    """
+    if speed is None:
+        return None
+    if isinstance(speed, bool) or (isinstance(speed, float) and speed % 1 != 0):
+        raise ValueError(f"{name} must be an integer between {SPEED_MIN} and {SPEED_MAX}")
+    value = int(speed)
+    if not SPEED_MIN <= value <= SPEED_MAX:
+        raise ValueError(
+            f"{name} must be between {SPEED_MIN} and {SPEED_MAX}, got {value}"
+        )
+    return value
+
+
 class OWNLightingCommand(OWNCommand):
     def __init__(self, data: str) -> None:
         super().__init__(data)
@@ -674,50 +878,53 @@ class OWNLightingCommand(OWNCommand):
 
     @classmethod
     def status(cls, where: str | int) -> OWNLightingCommand:
-        message = cls(f"*#1*{where}##")
+        """``*#1*WHERE##`` status request. WHERE must be a non-empty address
+        without ``*``: ``*#1*##`` crashes the emulated MH202 010024
+        (ORACLE_CONFIRM.md row L10) and ``12*1`` would build a DIMENSION 1 read."""
+        message = cls(f"*#1*{_where_target(where)}##")
         message._human_readable_log = f"Requesting light or switch {message._where}{message._interface_log_text} status."
         return message
 
     @classmethod
     def get_brightness(cls, where: str | int) -> OWNLightingCommand:
-        message = cls(f"*#1*{where}*1##")
+        message = cls(f"*#1*{_where_target(where)}*1##")
         message._human_readable_log = f"Requesting light {message._where}{message._interface_log_text} brightness."
         return message
 
     @classmethod
     def get_pir_sensitivity(cls, where: str | int) -> OWNLightingCommand:
-        message = cls(f"*#1*{where}*5##")
+        message = cls(f"*#1*{_where_target(where)}*5##")
         message._human_readable_log = f"Requesting light/motion sensor {message._where}{message._interface_log_text} PIR sensitivity."
         return message
 
     @classmethod
     def get_illuminance(cls, where: str | int) -> OWNLightingCommand:
-        message = cls(f"*#1*{where}*6##")
+        message = cls(f"*#1*{_where_target(where)}*6##")
         message._human_readable_log = f"Requesting light/motion sensor {message._where}{message._interface_log_text} illuminance."
         return message
 
     @classmethod
     def get_motion_timeout(cls, where: str | int) -> OWNLightingCommand:
-        message = cls(f"*#1*{where}*7##")
+        message = cls(f"*#1*{_where_target(where)}*7##")
         message._human_readable_log = f"Requesting light/motion sensor {message._where}{message._interface_log_text} motion timeout."
         return message
 
     @classmethod
     def get_color_temperature(cls, where: str | int) -> OWNLightingCommand:
-        message = cls(f"*#1*{where}*14##")
+        message = cls(f"*#1*{_where_target(where)}*14##")
         message._human_readable_log = f"Requesting light {message._where}{message._interface_log_text} color temperature."
         return message
 
     @classmethod
     def set_color_temperature(cls, where: str | int, mireds: int) -> OWNLightingCommand:
         mireds = max(50, min(1000, int(mireds)))
-        message = cls(f"*#1*{where}*#14*{mireds}##")
+        message = cls(f"*#1*{_where_target(where)}*#14*{mireds}##")
         message._human_readable_log = f"Setting light {message._where}{message._interface_log_text} color temperature to {mireds} mireds."
         return message
 
     @classmethod
     def get_hsv_color(cls, where: str | int) -> OWNLightingCommand:
-        message = cls(f"*#1*{where}*12##")
+        message = cls(f"*#1*{_where_target(where)}*12##")
         message._human_readable_log = f"Requesting light {message._where}{message._interface_log_text} HSV color."
         return message
 
@@ -726,7 +933,7 @@ class OWNLightingCommand(OWNCommand):
         h = max(0, min(359, int(h)))
         s = max(0, min(100, int(s)))
         v = max(0, min(100, int(v)))
-        message = cls(f"*#1*{where}*#12*{h}*{s}*{v}##")
+        message = cls(f"*#1*{_where_target(where)}*#12*{h}*{s}*{v}##")
         message._human_readable_log = f"Setting light {message._where}{message._interface_log_text} HSV color to ({h}°, {s}%, {v}%)."
         return message
 
@@ -752,35 +959,50 @@ class OWNLightingCommand(OWNCommand):
         _frequency: float | None = 0.5,
         _freqency: float | None = None,
     ) -> OWNLightingCommand:
+        """Blink every ``_frequency`` seconds: WHAT 20..29 = 0.5..5 s in 0.5 s steps
+        (what.md "Blinking operations"). ``None`` means the 0.5 s default; a
+        period outside 0.5..5 s raises ``ValueError`` (audit row L9); an
+        in-range period is rounded to the nearest 0.5 s step."""
         # Compatibility with the misspelled keyword exposed by bundled V2.
         if _freqency is not None:
             _frequency = _freqency
-        if _frequency is not None and _frequency >= 0.5 and _frequency <= 5:
-            _frequency = round(_frequency * 2) / 2
-        else:
-            _frequency = 0.5
+        if _frequency is None:
+            _frequency = BLINK_PERIOD_MIN
+        if isinstance(_frequency, bool) or not BLINK_PERIOD_MIN <= _frequency <= BLINK_PERIOD_MAX:
+            raise ValueError(
+                f"blink period must be between {BLINK_PERIOD_MIN} and {BLINK_PERIOD_MAX} seconds, got {_frequency!r}"  # pylint: disable=line-too-long
+            )
+        _frequency = round(_frequency * 2) / 2
         _what = int((_frequency / 0.5) + 19)
-        message = cls(f"*1*{_what}*{where}##")
+        message = cls(f"*1*{_what}*{_where_target(where)}##")
         message._human_readable_log = f"Flashing light {message._where}{message._interface_log_text} every {_frequency}s."
         return message
 
     @classmethod
     def switch_on(cls, where: str | int, _transition: int | None = None) -> OWNLightingCommand:
-        if _transition is not None and _transition >= 0 and _transition <= 255:
-            message = cls(f"*1*1#{_transition}*{where}##")
-            message._human_readable_log = f"Switching ON light {message._where}{message._interface_log_text} with transition speed {_transition}."
+        """``*1*1*WHERE##``, or ``*1*1#SPEED*WHERE##`` with a speed 0..255
+        (what.md "Switching and levels"); an out-of-range speed raises
+        ``ValueError`` instead of dropping the speed (audit row L7)."""
+        speed = _check_speed(_transition)
+        if speed is not None:
+            message = cls(f"*1*1#{speed}*{_where_target(where)}##")
+            message._human_readable_log = f"Switching ON light {message._where}{message._interface_log_text} with transition speed {speed}."
         else:
-            message = cls(f"*1*1*{where}##")
+            message = cls(f"*1*1*{_where_target(where)}##")
             message._human_readable_log = f"Switching ON light or switch {message._where}{message._interface_log_text}."
         return message
 
     @classmethod
     def switch_off(cls, where: str | int, _transition: int | None = None) -> OWNLightingCommand:
-        if _transition is not None and _transition >= 0 and _transition <= 255:
-            message = cls(f"*1*0#{_transition}*{where}##")
-            message._human_readable_log = f"Switching OFF light {message._where}{message._interface_log_text} with transition speed {_transition}."
+        """``*1*0*WHERE##``, or ``*1*0#SPEED*WHERE##`` with a speed 0..255
+        (what.md "Switching and levels"); an out-of-range speed raises
+        ``ValueError`` instead of dropping the speed (audit row L7)."""
+        speed = _check_speed(_transition)
+        if speed is not None:
+            message = cls(f"*1*0#{speed}*{_where_target(where)}##")
+            message._human_readable_log = f"Switching OFF light {message._where}{message._interface_log_text} with transition speed {speed}."
         else:
-            message = cls(f"*1*0*{where}##")
+            message = cls(f"*1*0*{_where_target(where)}##")
             message._human_readable_log = f"Switching OFF light or switch {message._where}{message._interface_log_text}."
         return message
 
@@ -793,7 +1015,7 @@ class OWNLightingCommand(OWNCommand):
         preset = int(preset)
         if not 2 <= preset <= 10:
             raise ValueError("preset must be between 2 and 10")
-        message = cls(f"*1*{preset}*{where}##")
+        message = cls(f"*1*{preset}*{_where_target(where)}##")
         message._human_readable_log = f"Setting light {message._where}{message._interface_log_text} to preset level {preset}."  # pylint: disable=line-too-long
         return message
 
@@ -818,14 +1040,14 @@ class OWNLightingCommand(OWNCommand):
         cls, where: str | int, what: int, direction: str, delta: int | None, speed: int | None
     ) -> OWNLightingCommand:
         if delta is None:
-            message = cls(f"*1*{what}*{where}##")
+            message = cls(f"*1*{what}*{_where_target(where)}##")
             message._human_readable_log = f"Dimming light {message._where}{message._interface_log_text} one level {direction}."  # pylint: disable=line-too-long
             return message
         delta = int(delta)
         speed = int(speed if speed is not None else 0)
         if not 1 <= delta <= 100 or not 0 <= speed <= 255:
             raise ValueError("delta must be 1..100 and speed 0..255")
-        message = cls(f"*1*{what}#{delta}#{speed}*{where}##")
+        message = cls(f"*1*{what}#{delta}#{speed}*{_where_target(where)}##")
         message._human_readable_log = f"Dimming light {message._where}{message._interface_log_text} {direction} by {delta}% at speed {speed}."  # pylint: disable=line-too-long
         return message
 
@@ -838,7 +1060,7 @@ class OWNLightingCommand(OWNCommand):
         what = int(what)
         if what not in cls._FIXED_TIMERS:
             raise ValueError("timer WHAT must be between 11 and 18")
-        message = cls(f"*1*{what}*{where}##")
+        message = cls(f"*1*{what}*{_where_target(where)}##")
         message._human_readable_log = f"Switching ON light {message._where}{message._interface_log_text} for {cls._FIXED_TIMERS[what]}s."  # pylint: disable=line-too-long
         return message
 
@@ -851,7 +1073,7 @@ class OWNLightingCommand(OWNCommand):
         h, m, s = int(hours), int(minutes), int(seconds)
         if not (0 <= h <= 255 and 0 <= m <= 59 and 0 <= s <= 59):
             raise ValueError("hours 0..255, minutes and seconds 0..59")
-        message = cls(f"*#1*{where}*#2*{h}*{m}*{s}##")
+        message = cls(f"*#1*{_where_target(where)}*#2*{h}*{m}*{s}##")
         message._human_readable_log = f"Setting light {message._where}{message._interface_log_text} timer to {h}h {m}m {s}s."  # pylint: disable=line-too-long
         return message
 
@@ -859,7 +1081,7 @@ class OWNLightingCommand(OWNCommand):
     def get_variable_timer(cls, where: str | int) -> OWNLightingCommand:
         """``*#1*W*2##`` (libqtdevices LightingDevice::requestVariableTiming,
         lighting_device.cpp:131-134)."""
-        message = cls(f"*#1*{where}*2##")
+        message = cls(f"*#1*{_where_target(where)}*2##")
         message._human_readable_log = f"Requesting light {message._where}{message._interface_log_text} timer."
         return message
 
@@ -879,23 +1101,27 @@ class OWNLightingCommand(OWNCommand):
         ``where`` (scoped to ``gateway`` when provided, or using the unscoped
         all-agree rule when ``gateway=None``). If ``where`` has reported the
         legacy ``SPEED = 240`` (``0xF0``) coarse-only sentinel in a prior
-        ``DIMENSION 1``/``4`` reply — or if ``coarse=True`` is passed explicitly —
+        ``DIMENSION 1`` reply — or if ``coarse=True`` is passed explicitly —
         emits ``*1*0*WHERE##`` for ``_level <= 0`` and ``*1*2..10*WHERE##`` via
         :func:`percent_to_brightness_preset` for ``1..100 %``. Otherwise emits the
         standard ``DIMENSION 1`` write ``*#1*WHERE*#1*<100+level>*<speed>##``.
+
+        ``_transition`` is the published SPEED field (``0`` = last speed used,
+        ``1..254``, ``255`` = default; dimensions.md "Value fields"): a value
+        outside 0..255 raises ``ValueError`` instead of being rewritten to ``0``
+        (audit row L8).
         """
         if any(
             isinstance(x, bool) or (isinstance(x, float) and x % 1 != 0)
             for x in (_level, _transition)
         ):
             raise ValueError("brightness level and transition must be integers")
+        transition_speed = int(_check_speed(_transition) or 0)
         use_coarse = (
             is_coarse_dimmer_where(where, gateway=gateway)
             if coarse is None
             else bool(coarse)
         )
-        trans_int = int(_transition)
-        transition_speed = trans_int if 0 <= trans_int <= 255 else 0
         if int(_level) <= 0:
             return cls.switch_off(
                 where,
@@ -912,7 +1138,7 @@ class OWNLightingCommand(OWNCommand):
             return cmd
         level = min(int(_level), 100)
         command_level = level + 100
-        message = cls(f"*#1*{where}*#1*{command_level}*{transition_speed}##")
+        message = cls(f"*#1*{_where_target(where)}*#1*{command_level}*{transition_speed}##")
         capped = f" (requested {_level}%)" if int(_level) > 100 else ""
         message._human_readable_log = (
             f"Setting light {message._where}{message._interface_log_text} brightness to {level}%{capped} with transition speed {transition_speed}."  # pylint: disable=line-too-long

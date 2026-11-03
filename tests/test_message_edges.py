@@ -882,10 +882,14 @@ class TestEnergyEdgeCases:
 
 class TestLightingEdgeCases:
     def test_brightness_dim4(self):
-        """Dimension 4 is also brightness."""
+        """Dimension 4 carries the same LEVEL100 level, but its trailing value
+        is status_speed, not the Dimension 1 transition (report 21 L4)."""
         msg = OWNEvent.parse("*#1*21*4*150*5##")
         assert isinstance(msg, OWNLightingEvent)
         assert msg.brightness == 50
+        assert msg.status_level == 50
+        assert msg.status_speed == 5
+        assert msg.transition is None
 
     def test_timer_dimension(self):
         """Dimension 2 = time value."""
@@ -894,23 +898,24 @@ class TestLightingEdgeCases:
         assert msg.timer == 5400  # 1*3600 + 30*60
 
     def test_flash_invalid_frequency(self):
-        """Invalid frequency should default to 0.5."""
-        cmd = OWNLightingCommand.flash("21", _freqency=-1)
-        assert str(cmd) == "*1*20*21##"
+        """A blink period outside 0.5..5 s raises (report 21 L9) instead of
+        silently becoming WHAT 20."""
+        with pytest.raises(ValueError, match="blink period"):
+            OWNLightingCommand.flash("21", _freqency=-1)
 
     def test_switch_on_invalid_transition(self):
-        """Transition out of range should use simple command."""
-        cmd = OWNLightingCommand.switch_on("21", _transition=300)
-        assert str(cmd) == "*1*1*21##"
+        """A speed outside 0..255 raises (report 21 L7) instead of being dropped."""
+        with pytest.raises(ValueError, match="transition speed"):
+            OWNLightingCommand.switch_on("21", _transition=300)
 
     def test_switch_off_invalid_transition(self):
-        cmd = OWNLightingCommand.switch_off("21", _transition=-1)
-        assert str(cmd) == "*1*0*21##"
+        with pytest.raises(ValueError, match="transition speed"):
+            OWNLightingCommand.switch_off("21", _transition=-1)
 
     def test_set_brightness_negative_transition(self):
-        """Negative transition should default to 0."""
-        cmd = OWNLightingCommand.set_brightness("21", _level=50, _transition=-5)
-        assert "*0##" in str(cmd)
+        """A negative transition raises (report 21 L8) instead of becoming 0 = last speed."""
+        with pytest.raises(ValueError, match="transition speed"):
+            OWNLightingCommand.set_brightness("21", _level=50, _transition=-5)
 
     def test_hsv_out_of_range_ignored(self):
         """Out-of-range HSV values should not set invalid hs/rgb tuples."""

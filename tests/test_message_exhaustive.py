@@ -99,8 +99,11 @@ class TestMessageExhaustiveCoverage:
         assert msg_lux.illuminance == 450
         assert "illuminance" in msg_lux.human_readable_log
 
+        # LEVEL100 1 is outside 100..200: not a level (report 21 L3)
         msg_blink = OWNLightingEvent("*#1*21*1*1##")
-        assert msg_blink.brightness == -99 or msg_blink.is_on is not None
+        assert msg_blink.brightness is None
+        assert msg_blink.is_on is None
+        assert "outside 100..200" in msg_blink.human_readable_log
 
         # Brightness 0 setting state 0 (lines 497-498)
         msg_b0 = OWNLightingEvent("*#1*21*1*100##")

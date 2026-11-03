@@ -396,8 +396,8 @@ def test_lighting_translation_wrapper_is_not_an_unknown_state(frame: str) -> Non
     [
         ("*1*30*21##", "Light 21 is dimmed up one level."),
         ("*1*31*21##", "Light 21 is dimmed down one level."),
-        ("*1*30#2#3*21##", "Light 21 is dimmed up one level."),
-        ("*1*31#2#3*21##", "Light 21 is dimmed down one level."),
+        ("*1*30#2#3*21##", "Light 21 is dimmed up by 2 levels at speed 3."),
+        ("*1*31#2#3*21##", "Light 21 is dimmed down by 2 levels at speed 3."),
     ],
 )
 def test_lighting_step_what_has_a_log(frame: str, log: str) -> None:
