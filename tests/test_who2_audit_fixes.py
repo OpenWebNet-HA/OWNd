@@ -16,6 +16,7 @@ import pytest
 from OWNd.message import (
     OWNAutomationCommand,
     OWNAutomationEvent,
+    OWNAuxEvent,
     OWNCommand,
     OWNEvent,
     OWNLoadCommand,
@@ -440,3 +441,38 @@ def test_l1_general_status_builder() -> None:
     assert command.is_valid is True
     assert command.human_readable_log == "Requesting general load status."
     assert str(OWNLoadCommand.status(1)) == "*#3*#1##"
+
+
+# ── X1: WHO 9 WHAT 2..10 are unverified names; WHERE as sent ────────────────
+
+
+def test_x1_established_whats_are_verified() -> None:
+    on = OWNEvent.parse("*9*1*1##")
+    off = OWNEvent.parse("*9*0*12##")
+    assert isinstance(on, OWNAuxEvent) and isinstance(off, OWNAuxEvent)
+    assert on.state_name == "ON" and on.is_state_name_verified is True
+    assert off.state_name == "OFF" and off.is_state_name_verified is True
+    assert off.channel == "12"  # WHERE as sent, no 1..9 range
+    assert on.human_readable_log == "Auxiliary channel 1 is set to 'ON'."
+    assert "unverified" not in on.human_readable_log
+
+
+@pytest.mark.parametrize(
+    ("what", "name"),
+    [(2, "TOGGLE"), (3, "STOP"), (4, "UP"), (5, "DOWN"), (6, "ENABLED"), (7, "DISABLED"), (8, "RESET_GEN"), (9, "RESET_BI"), (10, "RESET_TRI")],
+)
+def test_x1_unverified_whats_are_flagged(what: int, name: str) -> None:
+    # who-9-auxiliaries/README.md#corpus-status: only WHAT 0 / 1 are established.
+    event = OWNEvent.parse(f"*9*{what}*1##")
+    assert isinstance(event, OWNAuxEvent)
+    assert event.state_name == name
+    assert event.is_state_name_verified is False
+    assert event.human_readable_log == f"Auxiliary channel 1 is set to '{name}' (WHAT {what}, unverified name)."
+
+
+def test_x1_other_whats_and_requests_have_no_name() -> None:
+    other = OWNEvent.parse("*9*99*1##")
+    assert isinstance(other, OWNAuxEvent)
+    assert other.state_name is None and other.is_state_name_verified is None
+    request = OWNAuxEvent("*#9*1##")
+    assert request.state_name is None and request.is_state_name_verified is None

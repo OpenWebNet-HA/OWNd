@@ -150,7 +150,7 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
     WhoCatalogDefinition(
         who="**9**",
         name="Auxiliary",
-        description="Auxiliary channel status (aux 1–9) for remote relays and inter-system signaling",
+        description="Auxiliary channel ON/OFF indications (`*9*1*WHERE##` / `*9*0*WHERE##`, WHERE as sent) for remote relays and inter-system signaling",
         dispatch_who_keys=(9,),
     ),
     WhoCatalogDefinition(

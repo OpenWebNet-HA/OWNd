@@ -83,7 +83,7 @@ OWNd parses OpenWebNet frames and dispatches typed commands and events across th
 | **5** | Burglar Alarm | Zone status, system arming / disarming states | `OWNAlarmCommand`, `OWNAlarmEvent` |
 | **6** | Door Entry & Lock | Door entry unit and electric lock status, door open/close events, lock release commands | `OWNDoorEntryCommand`, `OWNDoorEntryEvent` |
 | **8** | Intercom / Video Door Entry | Video door entry and intercom call signaling, answering, camera and audio control | `OWNIntercomCommand`, `OWNIntercomEvent` |
-| **9** | Auxiliary | Auxiliary channel status (aux 1–9) for remote relays and inter-system signaling | `OWNAuxEvent` |
+| **9** | Auxiliary | Auxiliary channel ON/OFF indications (`*9*1*WHERE##` / `*9*0*WHERE##`, WHERE as sent) for remote relays and inter-system signaling | `OWNAuxEvent` |
 | **13** / **1013** | Gateway Diagnostics & Clock | Gateway date/time synchronization, timezone offsets, firmware and diagnostic object model metadata | `OWNGatewayCommand`, `OWNGatewayDiagnosticCommand`, `OWNGatewayEvent`, `OWNGatewayDiagnosticEvent` |
 | **14** | Special Commands / Actuator Lock | Actuator lock (`*14*0*WHERE##`, `$03WW001100`) and unlock (`*14*1*WHERE##`, `$03WW001000`) commands and events across Point-to-Point (`APL`) and `#4#01..09` local bus interface addresses | `OWNActuatorLockCommand`, `OWNActuatorLockEvent` |
 | **15** | CEN Scenarios | Scenario control, pushbutton push/release/extended press events, strongly typed command builders | `OWNCenCommand`, `OWNCENEvent` |

@@ -72,7 +72,37 @@ class OWNScenarioEvent(OWNEvent):
 
 
 
+#: WHAT names the Encyclopedia establishes for WHO 9 (``who-9-auxiliaries/README.md#corpus-status``):
+#: ``*9*1*WHERE##`` ON and ``*9*0*WHERE##`` OFF only.
+AUX_WHAT_NAMES: dict[int, str] = {0: "OFF", 1: "ON"}
+
+#: Names for WHAT 2..10 as used by openwebnet4j. They are NOT established by
+#: the Encyclopedia ("Unknown values remain unspecified rather than inferred";
+#: the TS10 decoder "rejects other WHAT cases"): kept so logs stay readable,
+#: flagged as unverified in the log line and in ``is_state_name_verified``.
+AUX_WHAT_NAMES_UNVERIFIED: dict[int, str] = {
+    2: "TOGGLE",
+    3: "STOP",
+    4: "UP",
+    5: "DOWN",
+    6: "ENABLED",
+    7: "DISABLED",
+    8: "RESET_GEN",
+    9: "RESET_BI",
+    10: "RESET_TRI",
+}
+
+
 class OWNAuxEvent(OWNEvent):
+    """WHO 9 auxiliary channel indication, ``*9*WHAT*WHERE##``.
+
+    Encyclopedia ``who-9-auxiliaries/README.md#corpus-status`` establishes only
+    ``*#9*WHERE##`` (status request), ``*9*1*WHERE##`` (ON) and ``*9*0*WHERE##``
+    (OFF), and "does not establish an auxiliary-address range": ``channel`` is
+    the WHERE as sent, not a 1..9 number. WHAT 2..10 names come from
+    openwebnet4j and are unverified (``AUX_WHAT_NAMES_UNVERIFIED``).
+    """
+
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
@@ -90,41 +120,11 @@ class OWNAuxEvent(OWNEvent):
             self._human_readable_log = (
                 f"Auxiliary channel {self._channel} is set to 'ON'."
             )
-        elif self._state == 2:
+        elif self._state in AUX_WHAT_NAMES_UNVERIFIED:
+            # Not an Encyclopedia-established WHAT: name shown, flagged.
             self._human_readable_log = (
-                f"Auxiliary channel {self._channel} is set to 'TOGGLE'."
-            )
-        elif self._state == 3:
-            self._human_readable_log = (
-                f"Auxiliary channel {self._channel} is set to 'STOP'."
-            )
-        elif self._state == 4:
-            self._human_readable_log = (
-                f"Auxiliary channel {self._channel} is set to 'UP'."
-            )
-        elif self._state == 5:
-            self._human_readable_log = (
-                f"Auxiliary channel {self._channel} is set to 'DOWN'."
-            )
-        elif self._state == 6:
-            self._human_readable_log = (
-                f"Auxiliary channel {self._channel} is set to 'ENABLED'."
-            )
-        elif self._state == 7:
-            self._human_readable_log = (
-                f"Auxiliary channel {self._channel} is set to 'DISABLED'."
-            )
-        elif self._state == 8:
-            self._human_readable_log = (
-                f"Auxiliary channel {self._channel} is set to 'RESET_GEN'."
-            )
-        elif self._state == 9:
-            self._human_readable_log = (
-                f"Auxiliary channel {self._channel} is set to 'RESET_BI'."
-            )
-        elif self._state == 10:
-            self._human_readable_log = (
-                f"Auxiliary channel {self._channel} is set to 'RESET_TRI'."
+                f"Auxiliary channel {self._channel} is set to "
+                f"'{AUX_WHAT_NAMES_UNVERIFIED[self._state]}' (WHAT {self._state}, unverified name)."
             )
         else:
             self._human_readable_log = (
@@ -133,11 +133,28 @@ class OWNAuxEvent(OWNEvent):
 
     @property
     def channel(self) -> str | None:
+        """The WHERE as sent; the Encyclopedia establishes no auxiliary-address range."""
         return self._channel
 
     @property
     def state_code(self) -> int | None:
         return self._state
+
+    @property
+    def state_name(self) -> str | None:
+        """``ON`` / ``OFF`` (established), an unverified openwebnet4j name for WHAT 2..10, None otherwise."""
+        if self._state is None:
+            return None
+        return AUX_WHAT_NAMES.get(self._state) or AUX_WHAT_NAMES_UNVERIFIED.get(self._state)
+
+    @property
+    def is_state_name_verified(self) -> bool | None:
+        """True for WHAT 0 / 1, False for the unverified 2..10 names, None for any other WHAT."""
+        if self._state in AUX_WHAT_NAMES:
+            return True
+        if self._state in AUX_WHAT_NAMES_UNVERIFIED:
+            return False
+        return None
 
     @property
     def is_on(self) -> bool:
