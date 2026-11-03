@@ -162,7 +162,7 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
     WhoCatalogDefinition(
         who="**14**",
         name="Special Commands / Actuator Lock",
-        description="Actuator lock (`*14*0*WHERE##`, `$03WW001100`) and unlock (`*14*1*WHERE##`, `$03WW001000`) commands and events across Point-to-Point (`APL`) and `#4#01..09` local bus interface addresses",
+        description="Actuator lock (`*14*0*WHERE##`, `$03WW001100`) and unlock (`*14*1*WHERE##`, `$03WW001000`) commands and events across Point-to-Point (`APL`) and `#4#01..09` local bus interface addresses (the parser also reads `#4#11..15` and the undocumented `*#14*WHERE##` shape; neither is built)",
         dispatch_who_keys=(14,),
     ),
     WhoCatalogDefinition(

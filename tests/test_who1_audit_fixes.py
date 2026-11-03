@@ -16,6 +16,8 @@ import datetime
 import pytest
 
 from OWNd.message import (
+    OWNActuatorLockCommand,
+    OWNActuatorLockEvent,
     OWNCommand,
     OWNEvent,
     OWNLightingCommand,
@@ -26,6 +28,7 @@ from OWNd.message import (
     clear_coarse_dimmer_wheres,
     is_coarse_dimmer_where,
 )
+from OWNd.message import actuator_lock
 from OWNd.message.lighting import (
     BLINK_PERIOD_MAX,
     BLINK_PERIOD_MIN,
@@ -578,3 +581,34 @@ def test_scene_builders_documented_forms() -> None:
     assert str(OWNSceneCommand.status("12")) == "*#17*12##"
     bare = OWNSceneCommand("*#17##")
     assert bare.human_readable_log == "Requesting global scene status (undocumented *#17## form)."
+
+
+# --- A1 / A2: WHO 14 ------------------------------------------------------------
+
+
+def test_who14_status_request_is_parsed_but_undocumented_and_not_built() -> None:
+    """A1 (who-14-special-commands/README.md "Scope of the semantics": only the
+    two lock / unlock command frames exist; ENCY_CONFIRM LS-A1: no status
+    request in any source)."""
+    req = OWNCommand.parse("*#14*32##")
+    assert isinstance(req, OWNActuatorLockCommand)
+    assert req.is_status_request is True
+    assert "Undocumented" in (OWNActuatorLockCommand.is_status_request.__doc__ or "")
+    assert not any(
+        name.startswith(("status", "get", "request"))
+        for name in vars(OWNActuatorLockCommand)
+        if not name.startswith("_") and callable(getattr(OWNActuatorLockCommand, name))
+    )
+
+
+@pytest.mark.parametrize("interface", [11, "11", 15, "15"])
+def test_who14_interfaces_11_15_parse_but_are_not_built(interface: int | str) -> None:
+    """A2 (who-1-lighting/addressing.md "Address scopes": Int is 01..09 or 11..15;
+    ENCY_CONFIRM LS-A2: "Implementations should preserve that discrepancy").
+    The builders refuse 11..15 on bt_luci evidence; the parser keeps them."""
+    evt = OWNActuatorLockEvent(f"*14*0*12#4#{interface}##")
+    assert evt.interface == str(interface)
+    assert evt.is_locked is True
+    with pytest.raises(ValueError, match="between 1 and 9"):
+        OWNActuatorLockCommand.lock("12", interface=interface)
+    assert "11..15" in (actuator_lock.__doc__ or "")
