@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import math
 import re
+import warnings
 
 from .base import (
     OWNCommand,
@@ -76,12 +77,22 @@ def _who22_target_area(target: str) -> int | None:
     return None
 
 
-def _validate_area(area: object, where: str, target: str) -> int:
-    """Return the area of a WHO 22 power / route frame: ``area`` if given, else the area of ``target``."""
+def _validate_area(area: object, where: str, target: str, default: int | None = None) -> int:
+    """Return the area of a WHO 22 power / route frame: ``area`` if given, else the area of ``target``.
+
+    The derived area is range-checked like an explicit one (``3#12#1`` is
+    refused). For a source (``2#S``) or general (``6``) target no area can be
+    derived: ``default`` is used when given (the power builders keep the
+    pre-2.0.0b13 ``0``), otherwise ``ValueError`` asks for ``area=``.
+    """
     if area is None:
         derived = _who22_target_area(target)
         if derived is None:
+            if default is not None:
+                return default
             raise ValueError(f"area is required for target '{where}': it carries no area (give area=)")
+        if not 0 <= derived <= 9:
+            raise ValueError(f"area {derived} of target '{where}' must be between 0 and 9")
         return derived
     if isinstance(area, bool) or not isinstance(area, (int, str)):
         raise ValueError(f"area must be between 0 and 9, got {area!r}")
@@ -1560,13 +1571,15 @@ class OWNSoundDiffusionCommand(OWNCommand):
         forms of #historical-touchscreen-syntax-and-extensions, plant
         captures ``*22*2#4#1*5#2#1##`` = area 1 / source 1, ENCY_CONFIRM
         SD-D1). It is derived from ``3#AREA#POINT``, ``4#AREA`` or
-        ``5#3#AREA#POINT``; a source or ``6`` target needs ``area=``. The
-        emulated gateways copy the parameter verbatim onto the bus
-        (``*22*1#4#2*3#2#1##`` -> ``$0490018223``, ORACLE_CONFIRM D1), so a
-        wrong value reaches the plant. TYPE 4 (stereo) on the traced plant.
+        ``5#3#AREA#POINT``; a source (``2#S``) or general (``6``) target
+        carries no area, so ``0`` is sent for it unless ``area=`` is given
+        (the value the pre-2.0.0b13 builders used). The emulated gateways
+        copy the parameter verbatim onto the bus (``*22*1#4#2*3#2#1##`` ->
+        ``$0490018223``, ORACLE_CONFIRM D1), so a wrong value reaches the
+        plant. TYPE 4 (stereo) on the traced plant.
         """
         target = _require_non_empty_where(where)
-        a = _validate_area(area, str(where), target)
+        a = _validate_area(area, str(where), target, default=0)
         mm_type = int(multimedia_type)
         if mm_type < 0:
             raise ValueError("multimedia_type must be non-negative")
@@ -1576,25 +1589,41 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def turn_on_with_source(
-        cls,
-        where: str | int,
-        source_id: int | str,
-        multimedia_type: int | str = 4,
-        area: int | str | None = None,
+        cls, where: str | int, source_id: int | str, multimedia_type: int | str = 4
     ) -> OWNSoundDiffusionCommand:
-        """Deprecated: ``turn_on_atomic`` under its pre-2.0.0b13 name; the source is not on the wire.
+        """Deprecated: builds ``*22*1#TYPE#SOURCE*WHERE##`` unchanged; use ``turn_on_atomic`` + ``route_source``.
 
-        Until 2.0.0b13 this built ``*22*1#TYPE#SOURCE*WHERE##``, reading the
-        AREA slot as a source (audit 2026-10-28 D1). WHAT 1 carries no source
-        (Encyclopedia who-22-sound-diffusion#what); selecting a source is
-        WHAT 35, ``route_source``. ``source_id`` is validated (1..) for
-        compatibility and otherwise ignored; the frame is
-        ``*22*1#TYPE#AREA*WHERE##`` with the target's area (or ``area=``).
+        The frame is the pre-2.0.0b13 one, with ``source_id`` in the second
+        WHAT parameter, so existing callers' frames do not change silently;
+        a ``DeprecationWarning`` is emitted. The Encyclopedia reads that
+        parameter as the AREA of the target (who-22-sound-diffusion#what
+        "source power uses ``WHAT#MULTIMEDIA_TYPE#AREA``"; plant captures
+        ``*22*2#4#1*5#2#1##`` = area 1 / source 1, ENCY_CONFIRM SD-D1) and
+        a source is selected with WHAT 35 (``route_source``); the firmware
+        oracle could not distinguish the two readings (ORACLE_CONFIRM D1,
+        NOT DISTINGUISHED: the gateway copies ``WHAT#4#X`` verbatim into the
+        last bus byte, ``$0490018213`` / ``$0490018223``, and whether that
+        nibble is an area or a source cannot be settled without a device).
+        ``turn_on_atomic(where)`` sends the target's area; ``route_source``
+        selects the source.
         """
+        warnings.warn(
+            "OWNSoundDiffusionCommand.turn_on_with_source() puts the source in the "
+            "AREA slot of WHAT 1 (*22*1#TYPE#SOURCE*WHERE##); use turn_on_atomic() and "
+            "route_source() instead",
+            DeprecationWarning,
+            stacklevel=2,
+        )
+        target = _require_non_empty_where(where)
         source = int(source_id)
         if source < 1:
             raise ValueError("source must be positive")
-        return cls.turn_on_atomic(where, area, multimedia_type)
+        mm_type = int(multimedia_type)
+        if mm_type < 0:
+            raise ValueError("multimedia_type must be non-negative")
+        message = cls(f"*22*1#{mm_type}#{source}*{target}##")
+        message._human_readable_log = f"Turning ON sound diffusion device {target} with source {source}."
+        return message
 
     @classmethod
     def turn_off_atomic(
@@ -1607,7 +1636,9 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
         Tested touchscreen emission ``*22*0#4#AREA*3#AREA#POINT##``
         (Encyclopedia who-22-sound-diffusion#historical-touchscreen-syntax-and-extensions);
-        the area is derived from the target as in ``turn_on_atomic``. Until
+        the area is derived from the target as in ``turn_on_atomic``; for a
+        source (``2#S``) or general (``6``) target no area can be derived and
+        the pre-2.0.0b13 ``0`` is kept unless ``area=`` is given. Until
         2.0.0b13 the area slot was a constant ``0`` (audit 2026-10-28 D1);
         ``*22*0#4#0*3#2#1##`` and ``*22*0#4#2*3#2#1##`` both reach the bus
         with the parameter copied verbatim (``$0491018203`` / ``$0491018223``,
@@ -1615,7 +1646,7 @@ class OWNSoundDiffusionCommand(OWNCommand):
         (area 0 targets) are in the firmware oracle (``sound-who22``).
         """
         target = _require_non_empty_where(where)
-        a = _validate_area(area, str(where), target)
+        a = _validate_area(area, str(where), target, default=0)
         mm_type = int(multimedia_type)
         if mm_type < 0:
             raise ValueError("multimedia_type must be non-negative")
@@ -2080,17 +2111,20 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def source_address(cls, source_id: int | str) -> str:
-        """Format structured source target: ``2#SOURCE_ID``, source 1..4 (Encyclopedia who-22-sound-diffusion#core-parameters).
+        """Format structured source target: ``2#SOURCE_ID``, source 1..9.
 
-        Until 2.0.0b13 any positive value was accepted (``2#9``, audit
-        2026-10-28 D7). The published Source ID domain is ``1..4``; the
-        historical touchscreen matrix model admits sources 1..4 as well.
-        A plant-specific source outside it (the traced ``7``) can be spelled
-        directly as ``2#7``.
+        The published Source ID domain is ``1..4`` (Encyclopedia
+        who-22-sound-diffusion#core-parameters; the historical touchscreen
+        matrix model admits sources 1..4 as well); ``5..9`` is plant
+        evidence: ``7`` is the FM tuner of the traced MH200N / F441 plant
+        (MyHOME#839) and ``*22*35#4#2#7*3#2#0##`` is forwarded by nine
+        emulated gateways (firmware oracle ``sound-who22``), the same domain
+        ``route_source`` accepts. Until 2.0.0b13 any positive value was
+        accepted (``2#10``, audit 2026-10-28 D7).
         """
         s = int(source_id)
-        if not 1 <= s <= 4:
-            raise ValueError(f"Source ID ({s}) must be between 1 and 4 per WHO 22 specification")
+        if not 1 <= s <= 9:
+            raise ValueError(f"Source ID ({s}) must be between 1 and 9 (published 1..4, plant 5..9)")
         return f"2#{s}"
 
     @classmethod

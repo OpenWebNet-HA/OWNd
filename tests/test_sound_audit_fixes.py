@@ -124,10 +124,17 @@ def test_d1_turn_on_atomic_explicit_area_and_errors() -> None:
     assert str(OWNSoundDiffusionCommand.turn_on_atomic("2#1", area=3)) == "*22*1#4#3*2#1##"
     assert str(OWNSoundDiffusionCommand.turn_on_atomic("6", "2", multimedia_type=1)) == "*22*1#1#2*6##"
     assert str(OWNSoundDiffusionCommand.turn_on_atomic("3#2#1", area=5)) == "*22*1#4#5*3#2#1##"
-    with pytest.raises(ValueError, match="area is required for target '2#1'"):
-        OWNSoundDiffusionCommand.turn_on_atomic("2#1")
-    with pytest.raises(ValueError, match="area is required for target '6'"):
-        OWNSoundDiffusionCommand.turn_on_atomic("6")
+    # A source / general target carries no area: the pre-2.0.0b13 `0` is kept.
+    assert str(OWNSoundDiffusionCommand.turn_on_atomic("2#1")) == "*22*1#4#0*2#1##"
+    assert str(OWNSoundDiffusionCommand.turn_on_atomic("6")) == "*22*1#4#0*6##"
+    # A derived area is range-checked like an explicit one.
+    for where in ("3#12#1", "4#12", "5#3#12#1"):
+        with pytest.raises(ValueError, match=f"area 12 of target '{where}' must be between 0 and 9"):
+            OWNSoundDiffusionCommand.turn_on_atomic(where)
+        with pytest.raises(ValueError, match="area 12 of target"):
+            OWNSoundDiffusionCommand.turn_off_atomic(where)
+        with pytest.raises(ValueError, match="area 12 of target"):
+            OWNSoundDiffusionCommand.route_source(where, 1)
     with pytest.raises(ValueError, match="area must be between 0 and 9, got 10"):
         OWNSoundDiffusionCommand.turn_on_atomic("3#1#1", area=10)
     with pytest.raises(ValueError, match="area must be between 0 and 9, got True"):
@@ -138,11 +145,23 @@ def test_d1_turn_on_atomic_explicit_area_and_errors() -> None:
         OWNSoundDiffusionCommand.turn_on_atomic("3#1#1", multimedia_type=-1)
 
 
-def test_d1_turn_on_with_source_is_the_deprecated_spelling_without_the_source() -> None:
-    assert str(OWNSoundDiffusionCommand.turn_on_with_source("3#2#1", 1)) == "*22*1#4#2*3#2#1##"
-    assert str(OWNSoundDiffusionCommand.turn_on_with_source("2#1", 1, area=4)) == "*22*1#4#4*2#1##"
-    with pytest.raises(ValueError, match="source must be positive"):
+def test_d1_turn_on_with_source_is_deprecated_and_keeps_its_frame() -> None:
+    # The pre-2.0.0b13 frame is kept (no silent change of a caller's frame);
+    # the oracle could not distinguish area from source in that slot
+    # (ORACLE_CONFIRM D1, NOT DISTINGUISHED).
+    with pytest.deprecated_call(match="use turn_on_atomic\\(\\) and route_source\\(\\)"):
+        command = OWNSoundDiffusionCommand.turn_on_with_source("3#2#1", 1)
+    assert str(command) == "*22*1#4#1*3#2#1##"
+    assert command.human_readable_log == "Turning ON sound diffusion device 3#2#1 with source 1."
+    with pytest.deprecated_call():
+        assert str(OWNSoundDiffusionCommand.turn_on_with_source("2#1", 7, 1)) == "*22*1#1#7*2#1##"
+    with pytest.deprecated_call(), pytest.raises(ValueError, match="source must be positive"):
         OWNSoundDiffusionCommand.turn_on_with_source("3#2#1", 0)
+    with pytest.deprecated_call(), pytest.raises(ValueError, match="multimedia_type must be non-negative"):
+        OWNSoundDiffusionCommand.turn_on_with_source("3#2#1", 1, multimedia_type=-1)
+    doc = OWNSoundDiffusionCommand.turn_on_with_source.__doc__ or ""
+    assert "NOT DISTINGUISHED" in doc
+    assert "ORACLE_CONFIRM D1" in doc
 
 
 def test_d1_turn_off_atomic_derives_the_area_from_the_target() -> None:
@@ -150,8 +169,9 @@ def test_d1_turn_off_atomic_derives_the_area_from_the_target() -> None:
     assert str(OWNSoundDiffusionCommand.turn_off_atomic("4#5")) == "*22*0#4#5*4#5##"
     assert str(OWNSoundDiffusionCommand.turn_off_atomic("6", area=1)) == "*22*0#4#1*6##"
     assert str(OWNSoundDiffusionCommand.turn_off_atomic("3#2#1", 1, 0)) == "*22*0#1#0*3#2#1##"
-    with pytest.raises(ValueError, match="area is required for target '6'"):
-        OWNSoundDiffusionCommand.turn_off_atomic("6")
+    # Source / general targets keep the pre-2.0.0b13 area 0 (master's frame).
+    assert str(OWNSoundDiffusionCommand.turn_off_atomic("6")) == "*22*0#4#0*6##"
+    assert str(OWNSoundDiffusionCommand.turn_off_atomic("2#1")) == "*22*0#4#0*2#1##"
 
 
 def test_d1_power_frames_with_the_target_area_are_in_the_firmware_oracle() -> None:
@@ -537,12 +557,18 @@ def test_d6_balance_whats_and_presets() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_d7_source_address_is_limited_to_the_published_domain() -> None:
+def test_d7_source_address_accepts_the_route_source_domain() -> None:
+    # Published 1..4, plant evidence 5..9 (source 7 is the traced FM tuner,
+    # MyHOME#839); the same domain as `route_source`.
     assert OWNSoundDiffusionCommand.source_address(1) == "2#1"
     assert OWNSoundDiffusionCommand.source_address("4") == "2#4"
-    for bad in (0, 5, 9):
-        with pytest.raises(ValueError, match="between 1 and 4"):
+    assert OWNSoundDiffusionCommand.source_address(7) == "2#7"
+    assert OWNSoundDiffusionCommand.source_address(9) == "2#9"
+    for bad in (0, 10):
+        with pytest.raises(ValueError, match="between 1 and 9"):
             OWNSoundDiffusionCommand.source_address(bad)
+        with pytest.raises(ValueError, match="between 1 and 9"):
+            OWNSoundDiffusionCommand.route_source("3#2#1", bad)
 
 
 def test_d7_undocumented_builders_say_so() -> None:
