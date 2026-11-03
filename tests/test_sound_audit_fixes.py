@@ -573,7 +573,7 @@ def test_d7_source_address_accepts_the_route_source_domain() -> None:
 
 def test_d7_undocumented_builders_say_so() -> None:
     assert "Not in the published grammar" in (OWNSoundDiffusionCommand.send_rds_text.__doc__ or "")
-    assert "not in the published grammar" in (OWNSoundDiffusionCommand.set_preset.__doc__ or "")
+    assert "§3.4.1.1" in (OWNSoundDiffusionCommand.set_preset.__doc__ or "")  # dim 11 write is published
     assert "Not in the published grammar" in (OWNSoundDiffusionCommand.open_paging.__doc__ or "")
     assert "not in the published grammar" in (OWNSoundDiffusionCommand.start_paging_voice.__doc__ or "")
     assert "Deprecated" in (OWNSoundDiffusionCommand.turn_on_with_source.__doc__ or "")

@@ -1784,12 +1784,12 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
         Without ``frequency_khz`` this is ``select_station``:
         ``*#22*WHERE*#6*STATION##``. With ``frequency_khz`` it writes
-        ``*#22*WHERE*#11*BAND*FREQ*STATION##``, not in the published grammar:
-        dimension 11 is a report payload (Encyclopedia
-        who-22-sound-diffusion#payloads-and-concrete-operations) and no
-        client write of it is documented (ENCY_CONFIRM SD-D7). The emulated
-        gateways forward ``*#22*2#1*#11*1*10150*3##`` (``$06D101F83202031FB8``,
-        ORACLE_CONFIRM D7) without any evidence of what a tuner does with it.
+        ``*#22*WHERE*#11*BAND*FREQ*STATION##``, the published dimension 11
+        "state memorized station" write (Legrand WHO 22 v1.1 §3.4.1.1
+        "State Memorized Station - Dimension = 11", ``*#22*5#2#S*#11*MOD*FREQ*ST##``
+        answered with Ack). The emulated gateways forward
+        ``*#22*2#1*#11*1*10150*3##`` (``$06D101F83202031FB8``, ORACLE_CONFIRM D7);
+        the effect on a physical tuner is not yet confirmed (D50).
         The equalizer preset of dimension 19 is ``set_equalizer_preset``.
         """
         target = _require_non_empty_where(where)
