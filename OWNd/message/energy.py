@@ -857,20 +857,28 @@ class OWNEnergyCommand(OWNCommand):
 
         DIMENSION 52 exists only with the two-digit year and the month
         (Encyclopedia who-18 dimensions.md "DIMENSION 52 - monthly energy/unit
-        totalizer"); ``year`` and ``month`` default to the current month. The
-        parameter-less ``*#18*51*52*100##`` this builder used to emit is
-        refused by 11 of the 12 emulated gateways, and a four-digit year
-        (``52#2026#10``) crashes the emulated F460 020012 and F461 020011
-        (ORACLE_CONFIRM E1); ``*#18*51*52#26#9##`` goes out on nine
-        (firmware oracle ``energy-params`` / ``energy-ts10``).
+        totalizer"): pass ``year`` and ``month`` to build that form. The
+        parameter-less ``*#18*51*52*100##`` is refused by 11 of the 12
+        emulated gateways, and a four-digit year (``52#2026#10``) crashes the
+        emulated F460 020012 and F461 020011 (ORACLE_CONFIRM E1);
+        ``*#18*51*52#26#9##`` goes out on nine (firmware oracle
+        ``energy-params`` / ``energy-ts10``).
+
+        Deprecated: with ``year`` and ``month`` both omitted the legacy
+        parameter-less ``*#18*WHERE*52*Wh##`` is still built, because MyHOME
+        ``expose.py`` relies on it (``tests/test_expose.py`` pins
+        ``*#18*51*52*120500##``); callers should pass the year and month.
         """
         target = _normalize_actuator_where(where)
         val = _validate_non_negative_energy(wh, "wh")
         if (year is None) != (month is None):
             raise ValueError("year and month must both be provided or both omitted")
         if year is None or month is None:
-            today = datetime.date.today()
-            year, month = today.year, today.month
+            message = cls(f"*#18*{target}*52*{val}##")
+            message._human_readable_log = (
+                f"Reporting monthly energy consumption of {val} Wh for sensor {target}."
+            )
+            return message
         if any(
             isinstance(x, bool) or (isinstance(x, float) and x % 1 != 0)
             for x in (year, month)
@@ -890,17 +898,25 @@ class OWNEnergyCommand(OWNCommand):
 
     @classmethod
     def report_partial_month_energy(
-        cls, where: str | int, wh: int | float
+        cls, where: str | int, wh: int | float, month: int | None = None
     ) -> OWNEnergyCommand:
         """Build a WHO 18 Dimension 53 current-month partial energy report (*#18*WHERE*53*Wh##).
 
         DIMENSION 53 is a parameter-less scalar (Encyclopedia who-18
         dimensions.md "DIMENSION 53 - current-month partial totalizer"); the
-        ``53#M`` form is not defined. Capture: ``*#18*52*53*1##`` (F454 2.0.5,
-        MyHOME#466).
+        ``53#M`` form is not defined there, and mcp#24 classifies the WHO 18
+        forms beyond the published table as ``TS10_1_0_23`` touchscreen
+        extensions rather than ``WHO_18.pdf`` forms, so no ``#M`` parameter is
+        emitted. Capture: ``*#18*52*53*1##`` (F454 2.0.5, MyHOME#466).
+
+        ``month`` is deprecated and ignored on the wire: it is still accepted
+        (and validated as an integer 1..12, ``ValueError`` otherwise) so that
+        existing callers such as MyHOME ``expose.py`` keep working.
         """
         target = _normalize_actuator_where(where)
         val = _validate_non_negative_energy(wh, "wh")
+        if month is not None:
+            _validate_int_range(month, "month", 1, 12)
         message = cls(f"*#18*{target}*53*{val}##")
         message._human_readable_log = (
             f"Reporting partial monthly energy consumption of {val} Wh for sensor {target}."
@@ -909,17 +925,24 @@ class OWNEnergyCommand(OWNCommand):
 
     @classmethod
     def report_partial_day_energy(
-        cls, where: str | int, wh: int | float
+        cls, where: str | int, wh: int | float, day: int | None = None
     ) -> OWNEnergyCommand:
         """Build a WHO 18 Dimension 54 current-day partial energy report (*#18*WHERE*54*Wh##).
 
         DIMENSION 54 is a parameter-less scalar (Encyclopedia who-18
         dimensions.md "DIMENSION 54 - current-day partial totalizer"); the
-        ``54#D`` form is not defined. Capture: ``*#18*51*54*13165##`` (F454
-        2.0, MyHOME#661).
+        ``54#D`` form is not defined there (see ``report_partial_month_energy``
+        for the mcp#24 touchscreen-extension framing), so no ``#D`` parameter
+        is emitted. Capture: ``*#18*51*54*13165##`` (F454 2.0, MyHOME#661).
+
+        ``day`` is deprecated and ignored on the wire: it is still accepted
+        (and validated as an integer 1..31, ``ValueError`` otherwise) so that
+        existing callers such as MyHOME ``expose.py`` keep working.
         """
         target = _normalize_actuator_where(where)
         val = _validate_non_negative_energy(wh, "wh")
+        if day is not None:
+            _validate_int_range(day, "day", 1, 31)
         message = cls(f"*#18*{target}*54*{val}##")
         message._human_readable_log = (
             f"Reporting partial daily energy consumption of {val} Wh for sensor {target}."
@@ -1439,14 +1462,21 @@ class OWNStopAndGoCommand(OWNCommand):
     @classmethod
     def set_test_frequency(cls, where: str | int, days: int) -> OWNStopAndGoCommand:
         target = _normalize_stop_and_go_where(where)
-        # DAYS = 1..180 (Encyclopedia who-18 dimensions.md "Stop&Go self-test
-        # interval"); *#18*11*#212*200## is nack/silent on all 12 emulated
-        # gateways while *#18*11*#212*180## goes out on nine (ORACLE_CONFIRM E3).
+        # DIMENSION 212 is a TS10_1_0_23 touchscreen extension, not a
+        # WHO_18.pdf form (Encyclopedia who-18 dimensions.md "Historical
+        # touchscreen extensions" > "Stop&Go self-test interval": the library
+        # defines DAYS = 1..180; mcp#24); *#18*11*#212*200## is nack/silent on
+        # all 12 emulated gateways while *#18*11*#212*180## goes out on nine
+        # (ORACLE_CONFIRM E3).
+        if isinstance(days, bool) or (isinstance(days, float) and days % 1 != 0):
+            raise ValueError(
+                f"Self-test frequency days must be an integer between 1 and 180, got {days!r}"
+            )
         if days < 1 or days > 180:
             raise ValueError(
                 f"Self-test frequency days must be between 1 and 180, got {days}"
             )
-        return cls(f"*#18*{target}*#{STOP_AND_GO_DIM_TEST_FREQUENCY}*{days}##")
+        return cls(f"*#18*{target}*#{STOP_AND_GO_DIM_TEST_FREQUENCY}*{int(days)}##")
 
     @classmethod
     def request_test_frequency(cls, where: str | int) -> OWNStopAndGoCommand:

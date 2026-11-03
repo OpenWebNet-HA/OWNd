@@ -610,11 +610,7 @@ def test_own_message_helper_properties_and_effective_what() -> None:
     assert en_stream.stream_duration == 65
     assert str(OWNEnergyCommand.report_active_power("51", 640)) == "*#18*51*113*640##"
     assert str(OWNEnergyCommand.report_total_energy("51", 12345)) == "*#18*51*51*12345##"
-    today = datetime.date.today()
-    assert (
-        str(OWNEnergyCommand.report_current_month_energy("51", 500))
-        == f"*#18*51*52#{today.year % 100:02d}#{today.month}*500##"
-    )
+    assert str(OWNEnergyCommand.report_current_month_energy("51", 500)) == "*#18*51*52*500##"
     assert str(OWNEnergyCommand.report_current_month_energy("51", 500, 2026, 10)) == "*#18*51*52#26#10*500##"
     assert str(OWNEnergyCommand.report_partial_month_energy("51", 300)) == "*#18*51*53*300##"
     assert str(OWNEnergyCommand.report_partial_day_energy("51", 120)) == "*#18*51*54*120##"

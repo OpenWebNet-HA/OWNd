@@ -66,10 +66,11 @@ def test_e1_report_current_month_energy_emits_two_digit_year() -> None:
         str(OWNEnergyCommand.report_current_month_energy("51", 100, 2026, 9))
         == "*#18*51*52#26#9*100##"
     )
-    today = datetime.date.today()
+    # Deprecated legacy form, kept because MyHOME `expose.py` relies on it
+    # (`tests/test_expose.py` pins `*#18*51*52*120500##`).
     default = OWNEnergyCommand.report_current_month_energy("51", 100)
-    assert str(default) == f"*#18*51*52#{today.year % 100:02d}#{today.month}*100##"
-    assert "*52*" not in str(default)
+    assert str(default) == "*#18*51*52*100##"
+    assert default.human_readable_log == "Reporting monthly energy consumption of 100 Wh for sensor 51."
     assert "#2026#" not in str(
         OWNEnergyCommand.report_current_month_energy("51", 100, 2026, 10)
     )
@@ -207,6 +208,11 @@ def test_e3_test_frequency_range_is_1_to_180() -> None:
     for days in (0, 181, 200, 255):
         with pytest.raises(ValueError, match="between 1 and 180"):
             OWNStopAndGoCommand.set_test_frequency(11, days)
+    # D21: builders reject bool / fractional values.
+    for bad_days in (True, False, 10.5):
+        with pytest.raises(ValueError, match="must be an integer between 1 and 180"):
+            OWNStopAndGoCommand.set_test_frequency(11, bad_days)
+    assert str(OWNStopAndGoCommand.set_test_frequency(11, 10.0)) == "*#18*11*#212*10##"
 
 
 # ---------------------------------------------------------------------------
@@ -581,10 +587,16 @@ def test_e6_dimension_511_tag_range() -> None:
 def test_e7_partial_report_builders_have_no_parameter() -> None:
     assert str(OWNEnergyCommand.report_partial_month_energy("52", 1)) == "*#18*52*53*1##"
     assert str(OWNEnergyCommand.report_partial_day_energy("51", 13165)) == "*#18*51*54*13165##"
-    with pytest.raises(TypeError):
-        OWNEnergyCommand.report_partial_month_energy("51", 100, 10)  # type: ignore[call-arg]
-    with pytest.raises(TypeError):
-        OWNEnergyCommand.report_partial_day_energy("51", 100, 5)  # type: ignore[call-arg]
+    # Deprecated `month` / `day` are accepted, validated and never emitted
+    # (MyHOME `expose.py` / `tests/test_expose.py` call these builders).
+    assert str(OWNEnergyCommand.report_partial_month_energy("51", 100, 10)) == "*#18*51*53*100##"
+    assert str(OWNEnergyCommand.report_partial_day_energy("51", 100, day=5)) == "*#18*51*54*100##"
+    for bad in (0, 13, True, 10.5, float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="month must be between 1 and 12"):
+            OWNEnergyCommand.report_partial_month_energy("51", 100, month=bad)
+    for bad in (0, 32, False, 5.5, float("inf"), float("nan")):
+        with pytest.raises(ValueError, match="day must be between 1 and 31"):
+            OWNEnergyCommand.report_partial_day_energy("51", 100, day=bad)
     assert str(OWNEnergyCommand.get_partial_monthly_consumption("51")) == "*#18*51*53##"
     assert str(OWNEnergyCommand.get_partial_daily_consumption("51")) == "*#18*51*54##"
 
