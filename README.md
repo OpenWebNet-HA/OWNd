@@ -75,7 +75,7 @@ OWNd parses OpenWebNet frames and dispatches typed commands and events across th
 <!-- START_WHO_CATALOG_TABLE -->
 | WHO | Subsystem | Description & Capabilities | Event / Command Classes |
 |:---:|:---|:---|:---|
-| **0** | Scenarios | Basic scenario execution (1–32) from control panels, scenario module programming and memory lock states | `OWNScenarioEvent` |
+| **0** | Scenarios | Stored scenario activation (`WHAT 1–16` on F420 and 3456, `17–20` on 3456 only) from control panels, F420 scenario recording / erase and central-unit lock, unavailable and memory-full states | `OWNScenarioEvent` |
 | **1** / **1001** | Lighting | On/off switching, dimming level (0–100%) with automatic legacy pre-09W29 F414 coarse preset fallback (speed 240 / 0xF0), DALI Tunable White (Dimension 14, 2000K–6535K / mireds), status queries, actuator autodiagnostic masks (WHO 1001 Dimensions 7 and 11, from lighting and automation actuators alike) | `OWNLightingCommand`, `OWNLightingEvent`, `OWNLightingDiagnosticEvent` |
 | **2** | Automation | Shutters, blinds, motorized curtains, tilt angles, short & full replies | `OWNAutomationCommand`, `OWNAutomationEvent` |
 | **3** | Load Control | Priority forcing (`*3*2*#N##`, firmware-verified), priority states 0–3, priority status and central-unit measurement requests with typed voltage, current, power, and energy properties (`WHO_3.pdf` v1.0.0 & `bt_energia` register mappings) | `OWNLoadCommand`, `OWNLoadEvent` |

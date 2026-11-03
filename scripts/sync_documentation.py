@@ -102,7 +102,7 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
     WhoCatalogDefinition(
         who="**0**",
         name="Scenarios",
-        description="Basic scenario execution (1–32) from control panels, scenario module programming and memory lock states",
+        description="Stored scenario activation (`WHAT 1–16` on F420 and 3456, `17–20` on 3456 only) from control panels, F420 scenario recording / erase and central-unit lock, unavailable and memory-full states",
         dispatch_who_keys=(0,),
     ),
     WhoCatalogDefinition(

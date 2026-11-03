@@ -21,6 +21,8 @@ from OWNd.message import (
     OWNLightingCommand,
     OWNLightingEvent,
     OWNMessage,
+    OWNScenarioEvent,
+    OWNSceneCommand,
     clear_coarse_dimmer_wheres,
     is_coarse_dimmer_where,
 )
@@ -33,6 +35,12 @@ from OWNd.message.lighting import (
     SPEED_MIN,
     _check_speed,
     _int_field,
+)
+from OWNd.message.scenario import (
+    SCENARIO_AVAILABILITY_3456,
+    SCENARIO_AVAILABILITY_F420_AND_3456,
+    SCENARIO_MAX_3456,
+    SCENARIO_MAX_F420,
 )
 
 
@@ -454,3 +462,119 @@ def test_unusable_timer_report_decodes_to_none() -> None:
     assert zero.timer == 0
 
 
+# --- S1 / S2: WHO 0 WHAT ranges and central-unit states ----------------------
+
+
+@pytest.mark.parametrize(
+    ("what", "availability", "note"),
+    [(1, SCENARIO_AVAILABILITY_F420_AND_3456, ""), (16, SCENARIO_AVAILABILITY_F420_AND_3456, ""),
+     (17, SCENARIO_AVAILABILITY_3456, " (3456 IR interface only)"), (20, SCENARIO_AVAILABILITY_3456, " (3456 IR interface only)")],
+)
+def test_scenario_activation_ranges(what: int, availability: str, note: str) -> None:
+    """S1 (who-0-scenarios/README.md "WHAT reference": 1..16 F420 and 3456,
+    17..20 3456 only; ENCY_CONFIRM LS-S1: the 1..31 API assertions do not
+    extend the published capacities)."""
+    msg = OWNEvent.parse(f"*0*{what}*11##")
+    assert isinstance(msg, OWNScenarioEvent)
+    assert msg.scenario == what
+    assert msg.event == "launched"
+    assert msg.scenario_availability == availability
+    assert msg.unknown_what is None
+    assert msg.human_readable_log == f"Scenario {what} from control panel 11 has been launched{note}."
+    assert SCENARIO_MAX_F420 == 16 and SCENARIO_MAX_3456 == 20
+
+
+@pytest.mark.parametrize("what", [0, 21, 31, 32, 39, 47, 99])
+def test_scenario_what_outside_the_page_is_unknown_not_launched(what: int) -> None:
+    msg = OWNEvent.parse(f"*0*{what}*01##")
+    assert isinstance(msg, OWNScenarioEvent)
+    assert msg.scenario is None
+    assert msg.event is None
+    assert msg.scenario_availability is None
+    assert msg.unknown_what == what
+    assert msg.human_readable_log == f"Scenario module 01 reports unknown WHAT {what}."
+    assert "launched" not in msg.human_readable_log
+
+
+@pytest.mark.parametrize(
+    ("frame", "event", "target", "log"),
+    [
+        ("*0*40#1*11##", "programming started", 1, "Scenario module 11: recording of scenario 1 started."),
+        ("*0*40*11##", "programming started", None, "Scenario module 11: recording started (no scenario selected)."),
+        ("*0*41#2*11##", "programming stopped", 2, "Scenario module 11: recording of scenario 2 ended."),
+        ("*0*41*11##", "programming stopped", None, "Scenario module 11: recording ended (no scenario selected)."),
+        ("*0*42#1*11##", "deleted", 1, "Scenario module 11: scenario 1 erased."),
+        ("*0*42*31##", "deleted", None, "Scenario module 31: all scenarios erased."),
+        ("*0*43*01##", "locked", None, "Scenario central unit 01 is locked."),
+        ("*0*44*01##", "unlocked", None, "Scenario central unit 01 is unlocked."),
+        ("*0*45*99##", "unavailable", None, "Scenario central unit 99 is unavailable."),
+        ("*0*46*01##", "memory full", None, "Scenario central unit 01 memory is full."),
+        ("*0*46#9*99##", "memory full", 9, "Scenario central unit 99 memory is full (scenario 9)."),
+    ],
+)
+def test_programming_and_central_unit_states_use_the_page_wording(frame: str, event: str, target: int | None, log: str) -> None:
+    """S2 (who-0-scenarios/README.md "Lock and unlock - WHAT 43 / 44": 43 / 44
+    lock / unlock "the addressed scenario central unit"; 45 / 46 "describe
+    central-unit state rather than a stored scenario number"; "Erase
+    operations - WHAT 42": bare 42 erases all; ENCY_CONFIRM LS-S2). The
+    ``event`` values stay as before."""
+    msg = OWNEvent.parse(frame)
+    assert isinstance(msg, OWNScenarioEvent)
+    assert msg.event == event
+    assert msg.programming_scenario == target
+    assert msg.scenario is None
+    assert msg.unknown_what is None
+    assert msg.human_readable_log == log
+
+
+def test_scenario_status_request_has_no_event() -> None:
+    msg = OWNEvent.parse("*#0*11##")
+    assert isinstance(msg, OWNScenarioEvent)
+    assert msg.scenario is None and msg.event is None and msg.unknown_what is None
+
+
+# --- M1 / M2: WHO 17 ----------------------------------------------------------
+
+
+def test_dimension_40_frames_are_not_status_requests() -> None:
+    """M1 (who-17-scenario-management/README.md "Status request": the request is
+    *#17*WHERE##; DIMENSION 40 is a MyHOME_Suite "Set, request and report
+    scenario state" operation)."""
+    write = OWNCommand.parse("*#17*5*#40*1##")
+    assert isinstance(write, OWNSceneCommand)
+    assert write.is_dimension_writing is True
+    assert write.human_readable_log == "Writing scene 5 dimension 40."
+    read = OWNCommand.parse("*#17*5*40##")
+    assert isinstance(read, OWNSceneCommand)
+    assert read.human_readable_log == "Requesting scene 5 dimension 40."
+    report = OWNSceneCommand("*#17*5*40*1##")
+    assert report.human_readable_log == "Scene 5 dimension 40 report."
+    status = OWNCommand.parse("*#17*5##")
+    assert isinstance(status, OWNSceneCommand)
+    assert status.human_readable_log == "Requesting status of scene 5."
+
+
+@pytest.mark.parametrize("where", ["", " ", "*", "1*2", None])
+def test_scene_builders_reject_empty_where(where: str | None) -> None:
+    """M1 (start('') built *17*1*## with the log "Requesting global scene
+    status") and M2 (status(None) emitted *#17##: not on the page, NACKed
+    on all 12 emulated gateways, ORACLE_CONFIRM.md row M2 "UNDECIDED": both
+    *#17## and *#17*0## nack, silent on 12/12)."""
+    for build in (
+        OWNSceneCommand.start,
+        OWNSceneCommand.stop,
+        OWNSceneCommand.enable,
+        OWNSceneCommand.disable,
+        OWNSceneCommand.status,
+    ):
+        with pytest.raises(ValueError, match="where must be a non-empty address without"):
+            build(where)  # type: ignore[arg-type]
+
+
+def test_scene_builders_documented_forms() -> None:
+    assert str(OWNSceneCommand.start(" 5 ")) == "*17*1*5##"
+    assert str(OWNSceneCommand.status()) == "*#17*0##"
+    assert str(OWNSceneCommand.status(0)) == "*#17*0##"
+    assert str(OWNSceneCommand.status("12")) == "*#17*12##"
+    bare = OWNSceneCommand("*#17##")
+    assert bare.human_readable_log == "Requesting global scene status (undocumented *#17## form)."

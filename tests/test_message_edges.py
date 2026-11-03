@@ -625,15 +625,13 @@ class TestSceneEdgeCases:
         assert str(cmd_st0) == "*#17*0##"
         assert cmd_st0.human_readable_log == "Requesting status of scene 0."
 
-        # Status global (None or empty)
-        cmd_st_global = OWNSceneCommand.status(None)
-        assert str(cmd_st_global) == "*#17##"
-        assert cmd_st_global.scenario is None
-        assert cmd_st_global.human_readable_log == "Requesting global scene status."
-
-        cmd_st_empty = OWNSceneCommand.status("")
-        assert str(cmd_st_empty) == "*#17##"
-        assert cmd_st_empty.human_readable_log == "Requesting global scene status."
+        # None / empty WHERE: the page has no bare *#17## and the firmware
+        # oracle NACKs it on all 12 emulated gateways (report 21 M2), so the
+        # builder raises instead of emitting it.
+        with pytest.raises(ValueError, match="non-empty"):
+            OWNSceneCommand.status(None)
+        with pytest.raises(ValueError, match="non-empty"):
+            OWNSceneCommand.status("")
 
     def test_scene_command_parse(self):
         c1 = OWNCommand.parse("*17*1*10##")
@@ -667,7 +665,7 @@ class TestSceneEdgeCases:
         assert isinstance(cg, OWNSceneCommand)
         assert cg.action is None
         assert cg.scenario is None
-        assert cg.human_readable_log == "Requesting global scene status."
+        assert cg.human_readable_log == "Requesting global scene status (undocumented *#17## form)."
 
         c_unknown = OWNSceneCommand("*17*99*10##")
         assert c_unknown.action == 99
