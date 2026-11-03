@@ -23,7 +23,8 @@ def test_auto_update_confirmation_is_parsed():
     assert msg.stream_duration == 255
     assert msg.is_streaming_active is True
     assert msg.energy_type == 1
-    assert msg.human_readable_log == "Sensor 1 automatic updates for 255 minutes."
+    assert msg.address == "51"
+    assert msg.human_readable_log == "Sensor 51 automatic updates for 255 minutes."
 
 
 def test_auto_update_stop_is_parsed():
@@ -33,7 +34,7 @@ def test_auto_update_stop_is_parsed():
     assert msg.update_interval == 0
     assert msg.stream_duration == 0
     assert msg.is_streaming_active is False
-    assert msg.human_readable_log == "Sensor 1 automatic updates stopped."
+    assert msg.human_readable_log == "Sensor 51 automatic updates stopped."
 
 
 def test_other_dimensions_are_untouched():
@@ -88,7 +89,7 @@ def test_negative_interval_clamped_to_stopped(monkeypatch):
     assert event.update_interval == 0
     assert event.stream_duration == 0
     assert event.is_streaming_active is False
-    assert event.human_readable_log == "Sensor 1 automatic updates stopped."
+    assert event.human_readable_log == "Sensor 51 automatic updates stopped."
 
 
 def test_empty_interval_clamped_to_stopped():
@@ -97,7 +98,7 @@ def test_empty_interval_clamped_to_stopped():
     assert event.update_interval == 0
     assert event.stream_duration == 0
     assert event.is_streaming_active is False
-    assert event.human_readable_log == "Sensor 1 automatic updates stopped."
+    assert event.human_readable_log == "Sensor 51 automatic updates stopped."
 
 
 def test_actuator_address_preserves_hash_zero():
@@ -108,7 +109,8 @@ def test_actuator_address_preserves_hash_zero():
     assert actuator_evt.sensor == "6"
     assert actuator_evt.is_actuator is True
     assert actuator_evt.active_power == 0
-    assert actuator_evt.human_readable_log == "Sensor 6 is reporting an active power draw of 0 W."
+    assert actuator_evt.address == "76#0"
+    assert actuator_evt.human_readable_log == "Sensor 76#0 is reporting an active power draw of 0 W."
 
     actuator_evt2 = OWNEnergyEvent("*#18*77#0*113*161##")
     assert actuator_evt2.where == "77"
@@ -124,11 +126,13 @@ def test_actuator_address_preserves_hash_zero():
     assert meter_evt.sensor == "6"
     assert meter_evt.is_actuator is False
     assert meter_evt.active_power == 0
-    assert meter_evt.human_readable_log == "Sensor 6 is reporting an active power draw of 0 W."
+    assert meter_evt.address == "56"
+    assert meter_evt.human_readable_log == "Sensor 56 is reporting an active power draw of 0 W."
 
-    # Fallback to empty string if where is empty
-    meter_evt._where = None
-    assert meter_evt.target_address == ""
+    # An event without a WHERE has an empty address
+    empty_evt = OWNEnergyEvent("*#18**113*0##")
+    assert empty_evt.address == ""
+    assert empty_evt.target_address == ""
 
     # Command builder preserves address whether #0 was already provided or inferred
     cmd1 = OWNEnergyCommand.stop_sending_instant_power("76")
