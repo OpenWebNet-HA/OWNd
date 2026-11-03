@@ -51,26 +51,53 @@ class OWNCENEvent(OWNEvent):
 
 
 class OWNDryContactEvent(OWNEvent):
+    """WHO 25 WHAT 31 / 32 dry contact and IR frames.
+
+    Page grammar (Encyclopedia ``functional/who-25-transversal/dry-contact-ir.md``
+    #what, #where): ``*25*31#P*WHERE##`` is ON / IR detection, ``*25*32#P*WHERE##``
+    OFF / no detection; the parameter ``P`` is always present, ``0`` for a state
+    returned by a request and ``1`` for an event. ``WHERE`` is ``1..201`` for
+    automation interfaces or ``[1-9][1-9]`` (``Z`` ``N``) for alarm / IR devices.
+
+    Firmware behaviour (ORACLE_CONFIRM.md row T1, report 21 §Confirmation): the
+    emulated gateways read a leading ``3`` on the WHERE as a prefix in front of
+    the sensor number: ``*#25*35##`` polls sensor ``05`` (bus telegram
+    ``$04B4009005``), ``*#25*39##`` sensor ``09``, ``*#25*339##`` sensor ``39``,
+    and the prefix-less ``*#25*5##`` is refused by all 12 gateways. Every dry
+    contact captured on a bus carries that prefix (``31``, ``33``, ``331..339``
+    on MH200N, MH202, F454 and H4890; golden fixture ``dry_contact.event.on.339``).
+    ``where`` keeps the bus form; ``sensor`` is the number the firmware reads
+    (the prefix stripped), so a documented page address ``35`` and the bus form
+    of sensor ``5`` are the same frame on the wire.
+
+    A frame without the ``P`` parameter (``*25*31*33##``) is not a published
+    form: ``is_detection`` and ``is_state_reply`` are both ``False`` and the log
+    says so.
+    """
+
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._state = 1 if self._what == 31 else 0
+        self._detection: int | None
         try:
-            self._detection = int(self._what_param[0]) if self._what_param else 1
+            self._detection = int(self._what_param[0]) if self._what_param else None
         except (IndexError, TypeError, ValueError):
-            self._detection = 1
+            self._detection = None
         where = self._where or ""
         self._sensor = (
             where[1:] if len(where) > 1 and where.startswith("3") else where
         )
 
+        state_text = "ON" if self._state == 1 else "OFF"
         if self._detection == 1:
-            self._human_readable_log = (
-                f"Sensor {self._sensor} detected {'ON' if self._state == 1 else 'OFF'}."
-            )
+            self._human_readable_log = f"Sensor {self._sensor} detected {state_text}."
+        elif self._detection == 0:
+            self._human_readable_log = f"Sensor {self._sensor} reported {state_text}."
         else:
             self._human_readable_log = (
-                f"Sensor {self._sensor} reported {'ON' if self._state == 1 else 'OFF'}."
+                f"Sensor {self._sensor} sent {state_text} without the WHAT parameter "
+                "(not a published WHO 25 form: dry-contact-ir.md#what)."
             )
 
     @property
@@ -79,11 +106,22 @@ class OWNDryContactEvent(OWNEvent):
 
     @property
     def sensor(self) -> str:
+        """Sensor number as the firmware reads it: the bus WHERE without its ``3`` prefix.
+
+        ``*25*31#1*339##`` -> ``"39"``; ``*25*31#1*35##`` -> ``"5"``. The inverse
+        builder is ``OWNDryContactCommand.status_for_sensor``.
+        """
         return self._sensor
 
     @property
     def is_detection(self) -> bool:
+        """True for an event (``#1``); False for a state reply or a missing parameter."""
         return self._detection == 1
+
+    @property
+    def is_state_reply(self) -> bool:
+        """True for a state returned by a request (``#0``)."""
+        return self._detection == 0
 
     @property
     def human_readable_log(self) -> str:
@@ -92,19 +130,49 @@ class OWNDryContactEvent(OWNEvent):
 
 
 class OWNCENPlusEvent(OWNEvent):
+    """WHO 25 WHAT 21..28 CEN+ frames (``*25*WHAT#PUSHBUTTON*2OBJECT##``).
+
+    Encyclopedia ``functional/who-25-transversal/cen-plus.md``: #pushbutton-parameter
+    gives the pushbutton range ``0..31`` (``0`` is a real button), #where---virtual-object
+    the WHERE as the prefix ``2`` followed by an Object ``0..2047``. A pushbutton
+    outside the range, or a missing one, leaves ``push_button`` ``None`` instead of
+    pretending button 0 was pressed; a bare WHERE ``2`` carries no Object and
+    leaves ``object`` ``None``. Both are logged.
+    """
+
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._state = self._what
+        self.push_button: int | None
         try:
-            push_button = int(self._what_param[0]) if self._what_param else 0
-            self.push_button = push_button if 0 <= push_button <= 31 else 0
+            push_button = int(self._what_param[0]) if self._what_param else None
         except (IndexError, TypeError, ValueError):
-            self.push_button = 0
+            push_button = None
+        self.push_button = (
+            push_button if push_button is not None and 0 <= push_button <= 31 else None
+        )
         where = self._where or ""
-        self.object = where[1:] if len(where) > 1 and where.startswith("2") else where
+        self.object: str | None
+        if len(where) > 1 and where.startswith("2"):
+            self.object = where[1:]
+        elif where == "2":
+            self.object = None
+        else:
+            self.object = where
 
-        if self._state == 21:
+        if self.push_button is None:
+            self._human_readable_log = (
+                f"CEN+ object {self.object} sent WHAT {self._state} with pushbutton "
+                f"{self._what_param[0] if self._what_param else 'missing'} "
+                "(outside the published 0..31: cen-plus.md#pushbutton-parameter)."
+            )
+        elif self.object is None:
+            self._human_readable_log = (
+                f"CEN+ WHAT {self._state} on bare WHERE 2 carries no Object "
+                "(WHERE is 2 + OBJECT: cen-plus.md#where---virtual-object)."
+            )
+        elif self._state == 21:
             self._human_readable_log = f"Button {self.push_button} of CEN+ object {self.object} has been pressed"  # pylint: disable=line-too-long
         elif self._state == 22:
             self._human_readable_log = f"Button {self.push_button} of CEN+ object {self.object} is being held pressed"  # pylint: disable=line-too-long
@@ -227,11 +295,47 @@ class OWNScenarioPlusCommand(OWNCommand):
 
 
 class OWNDryContactCommand(OWNCommand):
+    """WHO 25 dry contact / IR status request ``*#25*WHERE##``.
+
+    The page (``dry-contact-ir.md`` #what, #where) writes the request with the
+    configured address (``1..201`` or ``ZN``). The emulated gateways read a
+    leading ``3`` as a prefix in front of the sensor number (ORACLE_CONFIRM.md
+    row T1): ``*#25*39##`` -> sensor ``09``, ``*#25*35##`` -> ``05``,
+    ``*#25*339##`` -> ``39``, ``*#25*5##`` refused 12/12. On a bus the same
+    string can therefore be the bus form of one sensor or the page address of
+    another (``39``: bus form of sensor 9, page address of sensor 39), so the
+    two builders say which one they take:
+
+    - ``status(where)`` sends the bus-form WHERE verbatim: what
+      ``OWNDryContactEvent.where`` carried and what MyHOME configures
+      (``33``, ``339`` in the captures).
+    - ``status_for_sensor(sensor)`` takes the sensor number the firmware
+      reads, as ``OWNDryContactEvent.sensor`` reports it, and adds the prefix:
+      ``status_for_sensor(39)`` -> ``*#25*339##``, ``status_for_sensor(5)`` ->
+      ``*#25*35##``.
+    """
+
     @classmethod
     def status(cls, where: str | int) -> OWNDryContactCommand:
+        """Status request with the bus-form WHERE sent as given (``339`` -> ``*#25*339##``)."""
         w = _require_non_empty_where(where)
         message = cls(f"*#25*{w}##")
         message._human_readable_log = f"Requesting dry contact {w} status."
+        return message
+
+    @classmethod
+    def status_for_sensor(cls, sensor: str | int) -> OWNDryContactCommand:
+        """Status request for the sensor number the firmware reads (``39`` -> ``*#25*339##``).
+
+        The inverse of ``OWNDryContactEvent.sensor``: the ``3`` prefix the
+        gateways strip is put back. ``sensor`` must be digits; the prefix is
+        never doubled by the caller (pass ``39``, not ``339``).
+        """
+        s = str(sensor).strip()
+        if not s.isdigit():
+            raise ValueError("dry contact sensor must be a number (the WHERE without its 3 prefix)")
+        message = cls(f"*#25*3{s}##")
+        message._human_readable_log = f"Requesting dry contact sensor {s} status (WHERE 3{s})."
         return message
 
 
@@ -305,7 +409,14 @@ class OWNCenCommand(OWNCommand):
 
 
 class OWNCenPlusCommand(OWNCommand):
-    """Command builder for WHO=25 CEN+ scenario pushbuttons."""
+    """Command builder for WHO=25 CEN+ scenario pushbuttons (``WHAT 21..24``).
+
+    Only the pushbutton action frames of ``cen-plus.md`` (#short-pressure---what-21
+    to #end-of-extended-pressure---what-24) are built. The rotary-selector
+    values ``WHAT 25..28`` (#rotary-selector-events---what-2528) are decoded by
+    ``OWNCENPlusEvent`` but the page describes them as events of a physical
+    selector and gives no action frame for them, so there is no rotary builder.
+    """
 
     @staticmethod
     def _button(button: int | str) -> int:

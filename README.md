@@ -25,7 +25,7 @@ It powers the [Home Assistant MyHOME integration](https://github.com/OpenWebNet-
 ## Key Features
 
 - **Hardened Dual-Session Architecture**: Decouples real-time bus event monitoring (`OWNEventSession`) from command and query execution (`OWNCommandSession`), preventing command bursts from interrupting event monitoring.
-- **Strongly Typed CEN / CEN+ Command Builders (P2)**: Dedicated fluent builders (`OWNCenCommand`, `OWNCenPlusCommand`) with strict OpenWebNet golden corpus frame parity for short press, start pressure, still held, and release actions across pushbuttons and rotary encoders.
+- **Strongly Typed CEN / CEN+ Command Builders (P2)**: Dedicated fluent builders (`OWNCenCommand`, `OWNCenPlusCommand`) with strict OpenWebNet golden corpus frame parity for short press, start pressure, still held, and release actions on pushbuttons 0..31 (`WHAT 21..24`); CEN+ rotary-selector frames (`WHAT 25..28`) are decoded by `OWNCENPlusEvent` only, the Encyclopedia defines no action frame for them.
 - **Thermoregulation Central Unit Coordination (P4)**: Dedicated builder support for 3550 (`#0`) and 4695 (`#0#1`) central units (`OWNHeatingCommand.set_central_mode`, `set_central_temperature`, `set_central_antifreeze`, `set_central_thermal_protection`, `set_central_off`), enabling master heating/cooling state distribution.
 - **DALI Tunable White & Color Temperature**: Built-in support for DALI DT8 ballasts (F429 / F461) with Dimension 14 color temperature encoding and bidirectional Kelvin/mireds conversion.
 - **OpenWebNet Golden Corpus Validation**: Cross-checked and validated against the community OpenWebNet Golden Corpus (75+ real-world captured frame scenarios) ensuring exact frame encodings, dimensions, and edge cases.

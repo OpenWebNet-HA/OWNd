@@ -66,8 +66,12 @@ def test_who25_malformed_parameters_do_not_raise() -> None:
     cen_plus = OWNCENPlusEvent("*25*21*21##")
     dry_contact = OWNDryContactEvent("*25*31*21##")
 
-    assert cen_plus.push_button == 0
-    assert dry_contact.is_detection is True
+    # Report 21 T2 / T4: a missing pushbutton is None (0 is a real button,
+    # cen-plus.md#pushbutton-parameter) and a missing #0/#1 parameter is not a
+    # detection (dry-contact-ir.md#what: the parameter is always present).
+    assert cen_plus.push_button is None
+    assert dry_contact.is_detection is False
+    assert dry_contact.is_state_reply is False
 
 
 def test_who25_status_request_is_a_dry_contact_command() -> None:
