@@ -337,25 +337,30 @@ def test_gateway_date_year_must_be_four_digits_and_weekday_00_to_06() -> None:
         OWNGatewayCommand.set_date(datetime.date(26, 10, 15))
 
 
-def test_gateway_write_frame_logs_setting_not_broadcasting() -> None:
-    """``*#13**#0*...##`` / ``#1`` / ``#22`` are client writes (dimensions.md "Write form", G6)."""
+def test_gateway_parsed_clock_frames_keep_the_broadcasting_log() -> None:
+    """Parsed write and reply frames keep the historical log text.
+
+    MyHOME pins "Gateway broadcasting internal time: 22:50:00." for the write
+    form ``*#13**#0*22*50*00*##`` (tests/test_f461_who13_clock_tz_live_2026_10_26_trace.py),
+    so the report 21 G6 wording change is not applied to parsed frames; the
+    builders keep their own "Setting gateway ..." text.
+    """
     assert (
         OWNMessage.parse("*#13**#0*11*30*00*002##").human_readable_log
-        == "Setting gateway time to: 11:30:00+02:00."
+        == "Gateway broadcasting internal time: 11:30:00+02:00."
     )
     assert (
         OWNMessage.parse("*#13**#1*03*07*10*2026##").human_readable_log
-        == "Setting gateway date to: 2026-10-07."
+        == "Gateway broadcasting internal date: 2026-10-07."
     )
     assert (
         OWNMessage.parse("*#13**#22*17*33*54*002*05*11*09*2026##").human_readable_log
-        == "Setting gateway time to: 2026-09-11 17:33:54+02:00."
+        == "Gateway broadcasting internal datetime: 2026-09-11 17:33:54+02:00."
     )
     assert (
-        OWNMessage.parse("*#13**#0*13*12*11**##").human_readable_log
-        == "Setting gateway time to: 13:12:11."
+        OWNMessage.parse("*#13**#0*22*50*00*##").human_readable_log
+        == "Gateway broadcasting internal time: 22:50:00."
     )
-    # The reply form built by report_* keeps reporting the clock.
     assert (
         OWNGatewayCommand("*#13**0*20*54*00*002##").human_readable_log
         == "Gateway broadcasting internal time: 20:54:00+02:00."

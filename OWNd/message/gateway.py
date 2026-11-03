@@ -488,7 +488,7 @@ class OWNGatewayCommand(OWNCommand):
                 f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
             )
             self._human_readable_log = (
-                f"{self._clock_log_verb} time{self._clock_log_to}: {self._time}."
+                f"Gateway broadcasting internal time: {self._time}."
             )
 
         elif self._dimension == 1:
@@ -499,7 +499,7 @@ class OWNGatewayCommand(OWNCommand):
             self._date = _gateway_date(self._year, self._month, self._day)
             if self._date is not None:
                 self._human_readable_log = (
-                    f"{self._clock_log_verb} date{self._clock_log_to}: {self._date}."
+                    f"Gateway broadcasting internal date: {self._date}."
                 )
 
         elif self._dimension == 22:
@@ -530,8 +530,7 @@ class OWNGatewayCommand(OWNCommand):
                 else self._datetime.time()
             )
             self._human_readable_log = (
-                f"{self._clock_log_verb} {'time' if self.is_dimension_writing else 'datetime'}"
-                f"{self._clock_log_to}: {self._datetime}."
+                f"Gateway broadcasting internal datetime: {self._datetime}."
             )
 
     @property
@@ -573,18 +572,6 @@ class OWNGatewayCommand(OWNCommand):
     def is_timezone_unconfigured(self) -> bool:
         """Return True if the gateway reported an unconfigured timezone (sentinel 999)."""
         return self._raw_timezone == "999"
-
-    @property
-    def _clock_log_verb(self) -> str:
-        # ``*#13**#0*...##`` / ``#1`` / ``#22`` are client -> gateway writes
-        # (Encyclopedia dimensions.md "Write form"; the touchscreen clock
-        # writes of "Historical touchscreen platform properties"); the reply
-        # form ``*#13**0*...##`` built by ``report_*`` reports the clock.
-        return "Setting gateway" if self.is_dimension_writing else "Gateway broadcasting internal"
-
-    @property
-    def _clock_log_to(self) -> str:
-        return " to" if self.is_dimension_writing else ""
 
     @property
     def is_clock_query(self) -> bool:
