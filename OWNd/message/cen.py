@@ -470,11 +470,15 @@ class OWNCenCommand(OWNCommand):
 class OWNCenPlusCommand(OWNCommand):
     """Command builder for WHO=25 CEN+ scenario pushbuttons (``WHAT 21..24``).
 
-    Only the pushbutton action frames of ``cen-plus.md`` (#short-pressure---what-21
-    to #end-of-extended-pressure---what-24) are built. The rotary-selector
-    values ``WHAT 25..28`` (#rotary-selector-events---what-2528) are decoded by
-    ``OWNCENPlusEvent`` but the page describes them as events of a physical
-    selector and gives no action frame for them, so there is no rotary builder.
+    The pushbutton action frames ``WHAT 21..24`` (``cen-plus.md``
+    #short-pressure---what-21 to #end-of-extended-pressure---what-24) and the
+    rotary-selector frames ``WHAT 25..28`` are built. The WHO 15/25 PDF WHAT
+    table marks WHAT 25..28 (slow/fast clockwise, slow/fast counter-clockwise
+    rotation) ACTION=W, i.e. a client may send them; the PDF's explicit action
+    grammar is written only for 21..24, but the rotary send frame follows the
+    identical ``*25*WHAT#pushbutton*WHERE##`` pattern and a live F461 2.0.11
+    ACKs and echoes ``*25*25#1*22047##`` .. ``*25*28#1*22047##``
+    (``reports/data/live_f461_cenplus_rotary_2026-11-04/probe.txt``).
 
     Bounds (decisions D20 / D21, ``ValueError``): ``where`` is the virtual
     address ``2`` + Object with the Object in ``0..2047``
@@ -554,6 +558,50 @@ class OWNCenPlusCommand(OWNCommand):
         message = cls(f"*25*23#{btn}*{w}##")
         message._human_readable_log = (
             f"CEN+ button {btn} of module {w} still held."
+        )
+        return message
+
+    @classmethod
+    def rotate_slow_cw(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
+        """CEN+ slow clockwise rotation (*25*25#<button>*<where>##)."""
+        w = cls._cen_plus_where(where)
+        btn = cls._button(button)
+        message = cls(f"*25*25#{btn}*{w}##")
+        message._human_readable_log = (
+            f"CEN+ slow clockwise rotation on button {btn} of module {w}."
+        )
+        return message
+
+    @classmethod
+    def rotate_fast_cw(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
+        """CEN+ fast clockwise rotation (*25*26#<button>*<where>##)."""
+        w = cls._cen_plus_where(where)
+        btn = cls._button(button)
+        message = cls(f"*25*26#{btn}*{w}##")
+        message._human_readable_log = (
+            f"CEN+ fast clockwise rotation on button {btn} of module {w}."
+        )
+        return message
+
+    @classmethod
+    def rotate_slow_ccw(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
+        """CEN+ slow counter-clockwise rotation (*25*27#<button>*<where>##)."""
+        w = cls._cen_plus_where(where)
+        btn = cls._button(button)
+        message = cls(f"*25*27#{btn}*{w}##")
+        message._human_readable_log = (
+            f"CEN+ slow counter-clockwise rotation on button {btn} of module {w}."
+        )
+        return message
+
+    @classmethod
+    def rotate_fast_ccw(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
+        """CEN+ fast counter-clockwise rotation (*25*28#<button>*<where>##)."""
+        w = cls._cen_plus_where(where)
+        btn = cls._button(button)
+        message = cls(f"*25*28#{btn}*{w}##")
+        message._human_readable_log = (
+            f"CEN+ fast counter-clockwise rotation on button {btn} of module {w}."
         )
         return message
 

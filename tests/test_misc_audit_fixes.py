@@ -181,14 +181,24 @@ def test_t2_out_of_range_log_names_the_parameter() -> None:
     )
 
 
-# ── T3: no rotary builder ────────────────────────────────────────────────────
+# ── T3: rotary builders (WHAT 25-28, ACTION=W) ──────────────────────────────
 
 
-def test_t3_rotary_whats_are_events_only() -> None:
+def test_t3_rotary_builders_match_spec_and_hardware() -> None:
+    # WHO 15/25 PDF WHAT table marks WHAT 25-28 ACTION=W; a live F461 2.0.11 ACKs
+    # and echoes *25*25#1*22047##..*25*28#1*22047## (reports/data/
+    # live_f461_cenplus_rotary_2026-11-04/probe.txt). The builders exist.
     from OWNd.message import OWNCenPlusCommand
 
     builders = {m for m in dir(OWNCenPlusCommand) if not m.startswith("_")} - set(dir(OWNCommand))
-    assert builders == {"press", "start_long_press", "still_held", "release"}
+    assert builders == {
+        "press", "start_long_press", "still_held", "release",
+        "rotate_slow_cw", "rotate_fast_cw", "rotate_slow_ccw", "rotate_fast_ccw",
+    }
+    assert str(OWNCenPlusCommand.rotate_slow_cw("21", 3)) == "*25*25#3*21##"
+    assert str(OWNCenPlusCommand.rotate_fast_cw("21", 3)) == "*25*26#3*21##"
+    assert str(OWNCenPlusCommand.rotate_slow_ccw("21", 3)) == "*25*27#3*21##"
+    assert str(OWNCenPlusCommand.rotate_fast_ccw("21", 3)) == "*25*28#3*21##"
     event = OWNMessage.parse("*25*26#3*21##")
     assert isinstance(event, OWNCENPlusEvent)
     assert event.is_quickly_turned_cw is True
@@ -589,6 +599,10 @@ def _cen_plus_builders():
         (OWNCenPlusCommand.start_long_press, 22),
         (OWNCenPlusCommand.still_held, 23),
         (OWNCenPlusCommand.release, 24),
+        (OWNCenPlusCommand.rotate_slow_cw, 25),
+        (OWNCenPlusCommand.rotate_fast_cw, 26),
+        (OWNCenPlusCommand.rotate_slow_ccw, 27),
+        (OWNCenPlusCommand.rotate_fast_ccw, 28),
     )
 
 

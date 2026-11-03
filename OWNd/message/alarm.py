@@ -33,6 +33,15 @@ class OWNAlarmEvent(OWNEvent):
     WHAT semantics (``what.md``): ``0`` Maintenance and ``1`` Activation are
     central-unit states, ``11`` Active zone / ``18`` Non-active zone are zone
     states, ``8`` / ``9`` Engage / Disengage the armed state.
+
+    Legacy note: the 2008 "burglar alarm v1.0.0" PDF (section 1.4.6, async
+    signalling) labels the WHERE-0 forms ``*5*0*0##`` "system disactivated"
+    and ``*5*2*0##`` "silent alarm". That wording is superseded by the modern
+    WHAT vocabulary used here: ``*5*0*0##`` decodes as WHAT 0 (maintenance),
+    ``*5*2*0##`` as WHAT 2 (deactivation), and the silent alarm is WHAT 31
+    (``*5*31*...##``). Decoding the 2008 labels would mislabel a genuine
+    modern deactivation as an alarm, so the decoder follows the WHAT code,
+    independent of WHERE (regression-pinned in ``test_misc_audit_fixes.py``).
     """
 
     def __init__(self, data: str) -> None:
