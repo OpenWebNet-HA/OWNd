@@ -8,6 +8,9 @@ Evidence: Encyclopedia ``functional/who-25-transversal/{dry-contact-ir,cen-plus}
 
 from __future__ import annotations
 
+import warnings
+from unittest.mock import patch
+
 import pytest
 
 from OWNd.message import (
@@ -204,14 +207,36 @@ def test_t3_rotary_whats_are_events_only() -> None:
         (OWNDoorEntryCommand.camera_cycle, "*6*18*4001##"),
     ],
 )
-def test_e1_who6_builders_require_an_explicit_where(builder, frame: str) -> None:  # type: ignore[no-untyped-def]
+def test_e1_who6_builders_take_an_explicit_where(builder, frame: str) -> None:  # type: ignore[no-untyped-def]
     assert str(builder(4001)) == frame
     assert str(builder("4001#2")) == frame.replace("4001", "4001#2")
-    with pytest.raises(TypeError):
-        builder()  # no where=0 default: *6*10*0## is nack/silent on 12/12
     for empty in ("", "  ", "40*01"):
         with pytest.raises(ValueError, match="where must be a non-empty address"):
             builder(empty)
+
+
+@pytest.mark.parametrize(
+    ("builder", "frame"),
+    [
+        (OWNDoorEntryCommand.open_lock, "*6*10*0##"),
+        (OWNDoorEntryCommand.staircase_light_on, "*6*12*0##"),
+        (OWNDoorEntryCommand.staircase_light_off, "*6*11*0##"),
+    ],
+)
+def test_e1_who6_where_0_default_is_deprecated(builder, frame: str) -> None:  # type: ignore[no-untyped-def]
+    """The historical default stays for existing callers but warns (review follow-up)."""
+    with pytest.warns(DeprecationWarning, match="refused by all twelve emulated gateways") as record:
+        assert str(builder()) == frame
+    assert frame in str(record[0].message)
+    with pytest.warns(DeprecationWarning):
+        assert str(builder(0)) == frame
+    with pytest.warns(DeprecationWarning):
+        assert str(builder("0")) == frame
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert str(builder("4001")) == frame.replace("*0##", "*4001##")
+    with pytest.raises(TypeError):
+        OWNDoorEntryCommand.camera_on()  # type: ignore[call-arg]  # never had a default
 
 
 def test_e1_camera_cycle_log_and_event() -> None:
@@ -234,10 +259,25 @@ def test_i1_end_call_concatenates_the_literal_4() -> None:
     assert OWNIntercomCommand.end_call("11").human_readable_log == "Ending call session of 11."
     assert END_CALL_PREFIX == "4"
     assert END_ALL_CALLS == END_CALL_PREFIX
-    with pytest.raises(TypeError):
-        OWNIntercomCommand.end_call()  # type: ignore[call-arg]
     with pytest.raises(ValueError, match="where must be a non-empty address"):
         OWNIntercomCommand.end_call("")
+    with pytest.raises(ValueError, match="where must be a non-empty address"):
+        OWNIntercomCommand.end_call("4*1")
+
+
+def test_i1_end_call_without_a_local_address_keeps_the_old_frame_and_warns() -> None:
+    """``end_call()`` / ``end_call(END_ALL_CALLS)`` build master's ``*8*3#6#2*4##`` (review follow-up)."""
+    with pytest.warns(DeprecationWarning, match="nack, silent on the 12 emulated gateways"):
+        command = OWNIntercomCommand.end_call()
+    assert str(command) == "*8*3#6#2*4##"
+    assert command.human_readable_log == "Ending call session on 4."
+    with pytest.warns(DeprecationWarning):
+        assert str(OWNIntercomCommand.end_call(END_ALL_CALLS)) == "*8*3#6#2*4##"
+    with pytest.warns(DeprecationWarning):
+        assert str(OWNIntercomCommand.end_call(4, kind=KIND_PE1, mm_type=MMTYPE_AUDIO_VIDEO)) == "*8*3#1#4*4##"
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        assert str(OWNIntercomCommand.end_call("11")) == "*8*3#6#2*411##"
 
 
 def test_i1_end_call_frame_parses_as_an_end_session() -> None:
@@ -344,6 +384,40 @@ def test_a1_where_is_validated() -> None:
         OWNAlarmCommand.arm("12345", where="")
     with pytest.raises(ValueError, match="where must be a non-empty address"):
         OWNAlarmCommand.set_zones("12345", "11000001", where="")
+
+
+@pytest.mark.parametrize("target", ["#1", "*", "0#2", "1*", "c", " #0 "])
+def test_a1_target_must_be_digits_only(target: str) -> None:
+    """``0`` or a zone number only (review follow-up): ``#`` / ``*`` are refused."""
+    with pytest.raises(ValueError, match="digits only|non-empty address"):
+        OWNAlarmCommand.arm("12345", where=target)
+    with pytest.raises(ValueError, match="digits only|non-empty address"):
+        OWNAlarmCommand.set_zones("12345", "11000001", where=target)
+    assert str(OWNAlarmCommand.arm("12345", where=" 3 ")) == "*5*36#12345*3##"
+    assert str(OWNAlarmCommand.set_zones("12345", {1}, where=0)) == "*5*50#12345#10000000*0##"
+
+
+def test_a2_non_numeric_selector_keeps_zone_str_and_zone_number_none() -> None:
+    """``#c`` / ``#`` never come out of OWNMessage.parse, but a directly built event must not raise (review follow-up)."""
+    orig_init = OWNMessage.__init__
+
+    def make(where: str) -> OWNAlarmEvent:
+        def fake_init(self, data):  # type: ignore[no-untyped-def]
+            orig_init(self, data)
+            self._what = 11
+            self._where = where
+
+        with patch.object(OWNMessage, "__init__", fake_init):
+            return OWNAlarmEvent("*5*11*#1##")
+
+    for where in ("#c", "#"):
+        event = make(where)
+        assert event.zone == where[1:]
+        assert event.zone_number is None
+        assert event.is_auxiliary is False
+        assert event.human_readable_log == f"Zone {where[1:]} is reporting: 'active zone'."
+    numeric = make("#3")
+    assert numeric.zone == "3" and numeric.zone_number == 3
 
 
 @pytest.mark.parametrize(

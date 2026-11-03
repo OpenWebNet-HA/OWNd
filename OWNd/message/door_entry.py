@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import warnings
+
 from .base import (
     OWNCommand,
     OWNEvent,
@@ -199,16 +201,36 @@ class OWNDoorEntryCommand(OWNCommand):
     #l4686sdk-reference publishes ``WHERE = 4000..4095`` (riser form ``#2``)
     for Camera ON, Open lock and Camera cycling; the page is product-scoped
     (L4686SDK 1.0.0) and the historical simulator accepts a wider index range,
-    so the builders do not enforce the range. They do require an explicit,
-    non-empty WHERE: the old ``where=0`` default built ``*6*10*0##``, which is
-    ``nack, silent`` on all 12 emulated gateways while ``*6*10*4001##`` goes
-    out on F453, F453AV, H4684 and MH200 (ORACLE_CONFIRM.md row E1-door).
+    so the builders do not enforce the range. The historical ``where=0``
+    default of ``open_lock`` / ``staircase_light_on`` / ``staircase_light_off``
+    is kept for existing callers but deprecated: it builds ``*6*10*0##``, which
+    is ``nack, silent`` on all 12 emulated gateways while ``*6*10*4001##`` goes
+    out on F453, F453AV, H4684 and MH200 (ORACLE_CONFIRM.md row E1-door), so a
+    ``DeprecationWarning`` says a WHERE must be given. An empty WHERE raises.
     """
 
-    @classmethod
-    def open_lock(cls, where: str | int) -> OWNDoorEntryCommand:
-        """Open / release door lock at the entrance panel address (``*6*10*WHERE##``)."""
+    @staticmethod
+    def _where_or_deprecated_default(where: str | int | None, what: str) -> str:
+        if where is None:
+            where = 0
         ep = require_non_empty_where(where)
+        if ep == "0":
+            warnings.warn(
+                f"*6*{what}*0## (WHERE 0, the historical default) is refused by all twelve "
+                "emulated gateways (ORACLE_CONFIRM.md row E1-door); give the entrance panel "
+                "WHERE (4000..4095, who-6 README #l4686sdk-reference).",
+                DeprecationWarning,
+                stacklevel=3,
+            )
+        return ep
+
+    @classmethod
+    def open_lock(cls, where: str | int | None = None) -> OWNDoorEntryCommand:
+        """Open / release door lock at the entrance panel address (``*6*10*WHERE##``).
+
+        The ``0`` default is deprecated (see the class docstring).
+        """
+        ep = cls._where_or_deprecated_default(where, "10")
         message = cls(f"*6*10*{ep}##")
         message._human_readable_log = (
             f"Opening door lock at entrance panel {ep}."
@@ -216,9 +238,12 @@ class OWNDoorEntryCommand(OWNCommand):
         return message
 
     @classmethod
-    def staircase_light_on(cls, where: str | int) -> OWNDoorEntryCommand:
-        """Switch ON the staircase light from the door entry system (``*6*12*WHERE##``)."""
-        ep = require_non_empty_where(where)
+    def staircase_light_on(cls, where: str | int | None = None) -> OWNDoorEntryCommand:
+        """Switch ON the staircase light from the door entry system (``*6*12*WHERE##``).
+
+        The ``0`` default is deprecated (see the class docstring).
+        """
+        ep = cls._where_or_deprecated_default(where, "12")
         message = cls(f"*6*12*{ep}##")
         message._human_readable_log = (
             f"Switching ON staircase light from door entry at {ep}."
@@ -226,9 +251,12 @@ class OWNDoorEntryCommand(OWNCommand):
         return message
 
     @classmethod
-    def staircase_light_off(cls, where: str | int) -> OWNDoorEntryCommand:
-        """Switch OFF the staircase light from the door entry system (``*6*11*WHERE##``)."""
-        ep = require_non_empty_where(where)
+    def staircase_light_off(cls, where: str | int | None = None) -> OWNDoorEntryCommand:
+        """Switch OFF the staircase light from the door entry system (``*6*11*WHERE##``).
+
+        The ``0`` default is deprecated (see the class docstring).
+        """
+        ep = cls._where_or_deprecated_default(where, "11")
         message = cls(f"*6*11*{ep}##")
         message._human_readable_log = (
             f"Switching OFF staircase light from door entry at {ep}."
@@ -788,11 +816,16 @@ class OWNIntercomCommand(OWNCommand):
     @classmethod
     def end_call(
         cls,
-        where: str | int,
+        where: str | int | None = None,
         kind: int = KIND_INTERNAL_INTERCOM,
         mm_type: int = MMTYPE_AUDIO,
     ) -> OWNIntercomCommand:
         """Terminate the call session of local address ``where``: ``*8*3#KIND#MMTYPE*4LOCAL##``.
+
+        Without ``where`` (or with ``where == END_ALL_CALLS``) the builder keeps
+        emitting master's ``*8*3#KIND#MMTYPE*4##`` for existing callers, with a
+        ``DeprecationWarning``: that spelling has no page and is ``nack, silent``
+        on the 12 emulated gateways (ORACLE_CONFIRM.md row I1).
 
         Encyclopedia ``functional/who-8-video-door-entry-telephony/README.md``
         #historical-touchscreen-call-model: "The end-call writer concatenates
@@ -804,6 +837,18 @@ class OWNIntercomCommand(OWNCommand):
         gateways (ORACLE_CONFIRM.md row I1, UNDECIDED), so the page is the only
         authority on the form.
         """
+        if where is None or str(where).strip() == END_ALL_CALLS:
+            warnings.warn(
+                f"end_call() without a local address builds *8*3#{kind}#{mm_type}*4## "
+                "(the old END_ALL_CALLS default), a form on no Encyclopedia page and "
+                "nack, silent on the 12 emulated gateways (ORACLE_CONFIRM.md row I1); "
+                "pass the local address: end_call('11') -> *8*3#6#2*411##.",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            message = cls(f"*8*3#{kind}#{mm_type}*{END_CALL_PREFIX}##")
+            message._human_readable_log = f"Ending call session on {END_CALL_PREFIX}."
+            return message
         local = require_non_empty_where(where)
         message = cls(f"*8*3#{kind}#{mm_type}*{END_CALL_PREFIX}{local}##")
         message._human_readable_log = f"Ending call session of {local}."

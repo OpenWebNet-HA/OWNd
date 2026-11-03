@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import warnings
 from collections.abc import Iterable
 
@@ -67,9 +68,12 @@ class OWNAlarmEvent(OWNEvent):
                 self._auxiliary = True
                 self._human_readable_log = "Auxiliary 9 (anti-panic) is reporting: "
             else:
-                # The frame grammar only lets digits follow the '#'.
+                # OWNMessage.parse only lets digits follow the '#'; a directly
+                # built event may carry anything, so keep zone as the str and
+                # leave zone_number None for a non-numeric selector.
                 self._zone = selector
-                self._zone_number = int(selector)
+                if re.fullmatch(r"[0-9]+", selector) is not None:
+                    self._zone_number = int(selector)
                 self._human_readable_log = f"Zone {self._zone} is reporting: "
         elif len(where) > 1:
             self._zone = int(where[0])
@@ -332,6 +336,14 @@ class OWNAlarmCommand(OWNCommand):
             raise ValueError("alarm password must be a non-empty string without '*' or '#'")
         return pwd
 
+    @staticmethod
+    def _target(where: str | int) -> str:
+        """``0`` (central unit) or a zone number: digits only, no ``#`` / ``*`` (protocol.md)."""
+        target = require_non_empty_where(where)
+        if re.fullmatch(r"[0-9]+", target) is None:
+            raise ValueError("alarm target must be 0 or a zone number (digits only)")
+        return target
+
     @classmethod
     def arm(cls, password: str | int, where: str | int = "0") -> OWNAlarmCommand:
         """Toggle the armed / disarmed state with the panel password: ``*5*36#PASSWORD*0##``.
@@ -342,7 +354,7 @@ class OWNAlarmCommand(OWNCommand):
         read back from the WHAT 8 / 9 reports (``is_engaged`` / ``is_disarmed``).
         """
         pwd = cls._password(password)
-        target = require_non_empty_where(where)
+        target = cls._target(where)
         message = cls(f"*5*36#{pwd}*{target}##")
         message._human_readable_log = (
             f"Toggling burglar alarm armed state on {target} (password redacted)."
@@ -371,7 +383,7 @@ class OWNAlarmCommand(OWNCommand):
             if any(z < 1 or z > 8 for z in zones):
                 raise ValueError("alarm zones must be between 1 and 8")
             bits = "".join("1" if z in zones else "0" for z in range(1, 9))
-        target = require_non_empty_where(where)
+        target = cls._target(where)
         message = cls(f"*5*50#{pwd}#{bits}*{target}##")
         message._human_readable_log = (
             f"Setting burglar alarm zone partialization {bits} on {target} (password redacted)."
