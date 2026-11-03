@@ -46,7 +46,7 @@ def _gateway_weekday(value: str) -> int | None:
     Not checked against the calendar date: the touchscreen client writes a
     fixed ``00`` (dimensions.md "Historical touchscreen platform properties").
     """
-    if value.isdigit() and 0 <= int(value) <= 6:
+    if re.fullmatch(r"[0-9]{1,2}", value) is not None and int(value) <= 6:
         return int(value)
     return None
 
@@ -58,7 +58,7 @@ def _gateway_date(year: str, month: str, day: str) -> _dt.date | None:
     stays valid with the raw values and ``date`` ``None``. Out-of-range day
     and month values keep raising ``ValueError`` as before (OWNd#144).
     """
-    if re.fullmatch(r"\d{4}", year) is None:
+    if re.fullmatch(r"[0-9]{4}", year) is None:
         return None
     return _dt.date(year=int(year), month=int(month), day=int(day))
 
@@ -161,6 +161,7 @@ class OWNGatewayEvent(OWNEvent):
         self._ip_address = None
         self._netmask = None
         self._mac_address = None
+        self._valid_mac_address: str | None = None
 
         self._device_type = None
         self._firmware_version = None
@@ -208,18 +209,26 @@ class OWNGatewayEvent(OWNEvent):
             self._netmask = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}.{self._dimension_value[3]}"  # pylint: disable=line-too-long
             self._human_readable_log = f"Gateway's netmask is: {self._netmask}."
 
-        elif self._dimension == 12:
-            # Six decimal octets, hexadecimal only at presentation (Encyclopedia
-            # dimensions.md "DIMENSION 12 - MAC address"). Eight values are the
-            # ZigBee interface IEEE address (zigbee-network-management.md
-            # "DIMENSION 12 - Interface IEEE address"), not a MAC: the values
-            # stay raw in ``dimension_value`` and ``mac_address`` is ``None``,
-            # as it is for an octet outside 0..255 or an empty field.
+        elif self._dimension == 12 and len(self._dimension_value) >= 6:
+            # ``mac_address`` keeps formatting the first six values as hex
+            # without a range check (MyHOME#804: the integration validates the
+            # value itself and its tests pin that an octet ``256`` reads
+            # ``100``). ``valid_mac_address`` is the checked form: exactly six
+            # decimal ASCII octets in 0..255 (Encyclopedia dimensions.md
+            # "DIMENSION 12 - MAC address"), else ``None``. Eight values are
+            # the ZigBee interface IEEE address (zigbee-network-management.md
+            # "DIMENSION 12 - Interface IEEE address"), not a MAC: the log
+            # says so and the values stay raw in ``dimension_value``.
             octets = self._dimension_value
+            try:
+                self._mac_address = ":".join(f"{int(o):02x}" for o in octets[:6])
+            except (TypeError, ValueError):
+                pass
             if len(octets) == 6 and all(
-                o.isdigit() and int(o) <= 255 for o in octets
+                re.fullmatch(r"[0-9]{1,3}", o) is not None and int(o) <= 255
+                for o in octets
             ):
-                self._mac_address = ":".join(f"{int(o):02x}" for o in octets)
+                self._valid_mac_address = self._mac_address
                 self._human_readable_log = f"Gateway's MAC address is: {self._mac_address}."
             elif len(octets) == 8:
                 self._human_readable_log = (
@@ -382,6 +391,18 @@ class OWNGatewayEvent(OWNEvent):
     def netmask(self) -> str | None:
         """Return the decoded gateway netmask."""
         return self._netmask
+
+    @property
+    def valid_mac_address(self) -> str | None:
+        """Dimension 12 as a MAC address, or ``None`` when it is not one.
+
+        Six decimal ASCII octets in ``0..255`` (Encyclopedia
+        who-13-integration-gateway/dimensions.md "DIMENSION 12 - MAC address");
+        ``None`` for an octet outside the range, a seven-value reply or the
+        eight-value ZigBee interface IEEE address. ``mac_address`` keeps the
+        unchecked formatting of the first six values.
+        """
+        return self._valid_mac_address
 
     @property
     def mac_address(self) -> str | None:

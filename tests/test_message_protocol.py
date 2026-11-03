@@ -375,22 +375,47 @@ def test_gateway_write_frame_logs_setting_not_broadcasting() -> None:
 
 
 def test_gateway_mac_address_octets_are_range_checked() -> None:
-    """Six decimal octets 0..255 (dimensions.md "DIMENSION 12 - MAC address", G2)."""
-    assert OWNGatewayEvent("*#13**12*0*3*80*0*4*97##").mac_address == "00:03:50:00:04:61"
-    assert OWNGatewayEvent("*#13**12*0*3*80*0*4*255##").mac_address == "00:03:50:00:04:ff"
+    """``valid_mac_address`` is six decimal octets 0..255 (dimensions.md "DIMENSION 12 - MAC address", G2).
+
+    ``mac_address`` keeps the unchecked formatting MyHOME pins (MyHOME#804:
+    an octet ``256`` reads ``100`` and the integration refuses it itself).
+    """
+    good = OWNGatewayEvent("*#13**12*0*3*80*0*4*97##")
+    assert good.mac_address == "00:03:50:00:04:61"
+    assert good.valid_mac_address == "00:03:50:00:04:61"
+    assert good.human_readable_log == "Gateway's MAC address is: 00:03:50:00:04:61."
+    assert OWNGatewayEvent("*#13**12*0*3*80*0*4*255##").valid_mac_address == "00:03:50:00:04:ff"
     too_big = OWNGatewayEvent("*#13**12*0*3*80*1*2*300##")
-    assert too_big.mac_address is None
+    assert too_big.mac_address == "00:03:50:01:02:12c"
+    assert too_big.valid_mac_address is None
     assert too_big.dimension_value == ["0", "3", "80", "1", "2", "300"]
     assert too_big.human_readable_log == "*#13**12*0*3*80*1*2*300##"
-    assert OWNGatewayEvent("*#13**12*0*3*80*1*2##").mac_address is None
-    assert OWNGatewayEvent("*#13**12*0*3*80*1*2*3*4##").mac_address is None
+    assert OWNGatewayEvent("*#13**12*256*3*80*0*7*119##").mac_address == "100:03:50:00:07:77"
+    short = OWNGatewayEvent("*#13**12*0*3*80*1*2##")
+    assert short.mac_address is None
+    assert short.valid_mac_address is None
+    seven = OWNGatewayEvent("*#13**12*0*3*80*1*2*3*4##")
+    assert seven.mac_address == "00:03:50:01:02:03"
+    assert seven.valid_mac_address is None
+    empty = OWNGatewayEvent("*#13**12*0*3*80*1*2*##")
+    assert empty.mac_address is None
+    assert empty.valid_mac_address is None
+
+
+def test_gateway_who13_decoders_take_ascii_digits_only() -> None:
+    """Non-ASCII digits never make a checked MAC, a weekday or a date (OWNd#139 rule)."""
+    arabic_zero = OWNGatewayEvent("*#13**12*\u0660*3*80*1*2*3##")
+    assert arabic_zero.valid_mac_address is None
+    assert OWNGatewayEvent("*#13**1*\u0660\u0660*15*10*2026##").weekday is None
+    assert OWNGatewayEvent("*#13**1*00*15*10*\u0662026##").date is None
 
 
 def test_gateway_dimension_12_with_eight_values_is_not_a_mac() -> None:
     """Eight values are the ZigBee interface IEEE address (zigbee-network-management.md, G3)."""
     message = OWNMessage.parse("*#13**12*0*3*80*1*2*3*4*5##")
     assert isinstance(message, OWNGatewayEvent)
-    assert message.mac_address is None
+    assert message.mac_address == "00:03:50:01:02:03"
+    assert message.valid_mac_address is None
     assert message.dimension_value == ["0", "3", "80", "1", "2", "3", "4", "5"]
     assert message.human_readable_log == (
         "Gateway reported an eight-value dimension 12 "
