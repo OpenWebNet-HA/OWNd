@@ -59,8 +59,8 @@ HISTORICAL_SERIES_DIMENSIONS = {
     ENERGY_SERIES_PREVIOUS_YEAR: 514,
 }
 
-# Stop&Go family WHERE is 1N with N = 1..127 (Encyclopedia who-18
-# addressing.md "Published WHERE forms"; README.md "Device families").
+# Stop&Go family WHERE is 1N with N = 1..127 (WHO 18 PDF WHERE table,
+# "1N  N=[1-127]  Stop & Go"; also Encyclopedia who-18 addressing.md).
 STOP_AND_GO_LINE_MAX = 127
 _STOP_AND_GO_WHERE = re.compile(r"^1(?P<line>[1-9]\d{0,2})$", re.ASCII)
 
@@ -629,7 +629,8 @@ class OWNEnergyEvent(OWNEvent):
 
 
 # Energy Management actuator address ``7N#0``, N = 1..255, no leading zero
-# (Encyclopedia who-18 addressing.md "Published WHERE forms").
+# (WHO 18 PDF WHERE table, "7N#0  N=[1-255]  Energy Management Actuators";
+# also Encyclopedia who-18 addressing.md).
 _ACTUATOR_WHERE = re.compile(r"^7(?P<number>[1-9]\d{0,2})#0$")
 
 
