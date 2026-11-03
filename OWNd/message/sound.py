@@ -1278,10 +1278,14 @@ class OWNSoundDiffusionEvent(OWNEvent):
 
     @property
     def balance_level(self) -> int | None:
-        """Magnitude digits of the dimension 17 balance after the side digit (``030`` -> 30, ``115`` -> 15), raw."""
+        """Balance magnitude as the touchscreen reads it: the digits after the side
+        divided by 3 (``030`` -> 10, ``115`` -> 5; Encyclopedia who-22
+        #tone-balance-and-presets). The touchscreen steps balance in threes, so
+        the division is exact for the values it emits; a stray non-multiple
+        floors. The raw string as sent is ``balance``."""
         if self._balance is None:
             return None
-        return int(self._balance[1:] or "0")
+        return int(self._balance[1:] or "0") // 3
 
     @property
     def sound_3d(self) -> int | None:

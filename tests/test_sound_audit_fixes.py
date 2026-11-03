@@ -472,13 +472,13 @@ def test_d6_balance_is_textual() -> None:
     left = _who22("*#22*3#1#1*17*030##")
     assert left.balance == "030"
     assert left.balance_side == "left"
-    assert left.balance_level == 30
+    assert left.balance_level == 10
     assert left.dimension_value == ["030"]
-    assert left.human_readable_log == "Speaker 3#1#1 (Zone 11) balance is 030 (left 30)."
+    assert left.human_readable_log == "Speaker 3#1#1 (Zone 11) balance is 030 (left 10)."
     right = _who22("*#22*3#1#1*17*115##")
     assert right.balance == "115"
     assert right.balance_side == "right"
-    assert right.balance_level == 15
+    assert right.balance_level == 5
     centre = _who22("*#22*3#1#1*17*0##")
     assert centre.balance == "0"
     assert centre.balance_side == "left"
