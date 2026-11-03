@@ -203,9 +203,9 @@ def test_who22_command_builders() -> None:
     assert str(OWNSoundDiffusionCommand.request_device_state(speaker)) == "*#22*3#4#1*12##"
 
     # Volume controls
-    assert str(OWNSoundDiffusionCommand.volume_up(speaker)) == "*22*3#1*3#4#1##"
+    assert str(OWNSoundDiffusionCommand.volume_up(speaker)) == "*22*3*3#4#1##"
     assert str(OWNSoundDiffusionCommand.volume_up(speaker, step=3)) == "*22*3#3*3#4#1##"
-    assert str(OWNSoundDiffusionCommand.volume_down(speaker)) == "*22*4#1*3#4#1##"
+    assert str(OWNSoundDiffusionCommand.volume_down(speaker)) == "*22*4*3#4#1##"
     assert str(OWNSoundDiffusionCommand.volume_down(speaker, step=2)) == "*22*4#2*3#4#1##"
     assert str(OWNSoundDiffusionCommand.set_volume(speaker, 20)) == "*#22*3#4#1*#1*20##"
 

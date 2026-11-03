@@ -1917,35 +1917,38 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def volume_up(cls, where: str | int, step: int = 1) -> OWNSoundDiffusionCommand:
-        """Increase the volume by ``step`` (1..31): ``*22*3#STEP*WHERE##``.
+        """Increase the volume by ``step`` (1..31): ``*22*3*WHERE##`` / ``*22*3#STEP*WHERE##``.
 
-        The step is always present (Encyclopedia
-        who-22-sound-diffusion#payloads-and-concrete-operations
-        ``*22*3#VOLUME_STEP*3#AREA#POINT##``, #core-parameters step
-        ``1..31``). Until 2.0.0b13 a step of 1 was sent as the bare
-        ``*22*3*WHERE##`` (kept on purpose by #127): that form is not on the
-        page, and F454, F459 and MyHomeServer1 put it on the bus with step
-        ``00`` (``$0494018100``) where ``3#1`` gives ``01``; F453, F453AV,
-        F460, F461, MH200N and MH202 send the same bytes for both
-        (ORACLE_CONFIRM D5). ``*22*3#1*3#1#1##`` is in the firmware oracle
-        (``sound-who22``).
+        A step of 1 is sent as the bare ``*22*3*WHERE##`` and a larger step as
+        ``*22*3#STEP*WHERE##``: both forms are preserved on purpose (#127,
+        maintainer decision D19; #128 bounds ``step`` to ``1..31``). The page
+        defines only ``*22*3#VOLUME_STEP*3#AREA#POINT##`` (Encyclopedia
+        who-22-sound-diffusion#payloads-and-concrete-operations,
+        #core-parameters step ``1..31``). Oracle note (ORACLE_CONFIRM D5,
+        audit 2026-10-28): F454, F459 and MyHomeServer1 put the bare form on
+        the bus with step ``00`` (``$0494018100``) where ``3#1`` gives ``01``;
+        F453, F453AV, F460, F461, MH200N and MH202 send the same bytes for
+        both. ``*22*3#1*3#1#1##`` is in the firmware oracle (``sound-who22``);
+        the bare form is not. Changing the step-1 form needs a #127 reopen.
         """
         s = int(step)
         if not 1 <= s <= 31:
             raise ValueError("step must be positive and between 1 and 31")
         target = _require_non_empty_where(where)
-        message = cls(f"*22*3#{s}*{target}##")
+        what = f"3#{s}" if s > 1 else "3"
+        message = cls(f"*22*{what}*{target}##")
         message._human_readable_log = f"Increasing sound diffusion device {target} volume."
         return message
 
     @classmethod
     def volume_down(cls, where: str | int, step: int = 1) -> OWNSoundDiffusionCommand:
-        """Decrease the volume by ``step`` (1..31): ``*22*4#STEP*WHERE##`` (the step is always present, as ``volume_up``)."""
+        """Decrease the volume by ``step`` (1..31): bare ``*22*4*WHERE##`` for step 1, ``*22*4#STEP*WHERE##`` above (both kept on purpose, #127 / D19; see ``volume_up`` for the oracle note)."""
         s = int(step)
         if not 1 <= s <= 31:
             raise ValueError("step must be positive and between 1 and 31")
         target = _require_non_empty_where(where)
-        message = cls(f"*22*4#{s}*{target}##")
+        what = f"4#{s}" if s > 1 else "4"
+        message = cls(f"*22*{what}*{target}##")
         message._human_readable_log = f"Decreasing sound diffusion device {target} volume."
         return message
 

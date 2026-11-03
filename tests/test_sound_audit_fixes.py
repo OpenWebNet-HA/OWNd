@@ -380,20 +380,25 @@ def test_d4_station_and_preset_builders() -> None:
 
 
 # ---------------------------------------------------------------------------
-# D5: the volume step is always present
+# D5: the bare single-step form is preserved (#127 / decision D19); the
+# multi-step form carries the step. The oracle finding stays a docstring note.
 # ---------------------------------------------------------------------------
 
 
-def test_d5_volume_steps_always_carry_the_step() -> None:
+def test_d5_volume_step_forms_are_both_preserved() -> None:
     up = OWNSoundDiffusionCommand.volume_up("3#1#1")
     down = OWNSoundDiffusionCommand.volume_down("3#1#1")
-    assert str(up) == "*22*3#1*3#1#1##"
-    assert str(down) == "*22*4#1*3#1#1##"
+    assert str(up) == "*22*3*3#1#1##"
+    assert str(down) == "*22*4*3#1#1##"
+    assert str(OWNSoundDiffusionCommand.volume_up("3#1#1", step=2)) == "*22*3#2*3#1#1##"
+    assert str(OWNSoundDiffusionCommand.volume_down("3#1#1", step=2)) == "*22*4#2*3#1#1##"
     assert str(OWNSoundDiffusionCommand.volume_up("3#1#1", step=31)) == "*22*3#31*3#1#1##"
     # `*22*3#1*3#1#1##` is in the firmware oracle (`sound-who22`); the bare
-    # `*22*3*3#1#1##` is not.
-    assert _out_products(str(up)) >= _BT_MULTI_OUT
+    # `*22*3*3#1#1##` is not (ORACLE_CONFIRM D5, recorded in the docstring).
+    assert _out_products("*22*3#1*3#1#1##") >= _BT_MULTI_OUT
     assert "*22*3*3#1#1##" not in _ORACLE
+    assert "#127" in (OWNSoundDiffusionCommand.volume_up.__doc__ or "")
+    assert "ORACLE_CONFIRM D5" in (OWNSoundDiffusionCommand.volume_up.__doc__ or "")
     event = _who22(str(up))
     assert event.volume_step == 1
     assert event.is_volume_up is True
