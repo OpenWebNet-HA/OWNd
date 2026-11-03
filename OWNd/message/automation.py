@@ -71,19 +71,24 @@ ADVANCED_STOP = 10
 ADVANCED_UP = 11
 ADVANCED_DOWN = 12
 
-_PRIORITY_BITFIELD = re.compile(r"^[01]{1,3}$")
+_PRIORITY_BITFIELD = re.compile(r"^[01]{3}$")
 _SHUTTER_LEVEL_UNKNOWN = 255
 
 
 def _priority_bitfield(value: str | None) -> str | None:
-    """The 3-digit ``p1p2p3`` form of a priority field, None when it is not one.
+    """The ``p1p2p3`` bit field of a priority value, None when it is not one.
 
-    Gateways send ``001``; a short reply may carry ``1`` (``*#2*21*10*10*75*1*0##``),
-    which is the same field without its leading zeros.
+    Rule: exactly three ``0`` / ``1`` characters are the bit field (Safety,
+    High, Medium; ``what.md#parameter-format``, ``dimensions.md#shutter-priority``,
+    the ``001`` every gateway capture carries). Anything else (``1``, ``7``,
+    ``10``) is only a decimal ``priority`` integer with no bit field: the
+    Encyclopedia records no shortened form, and reading ``10`` as ``010`` would
+    invent a High flag. ``report_shutter_level(priority=10)`` therefore emits
+    ``*10*`` and parses back as ``priority 10``, ``priority_bitfield None``.
     """
     if value is None or not _PRIORITY_BITFIELD.match(value):
         return None
-    return value.zfill(3)
+    return value
 
 
 def _int_or_none(value: str | None) -> int | None:
@@ -222,16 +227,17 @@ class OWNAutomationEvent(OWNEvent):
         if self._what == ADVANCED_STOP:
             priority = params[0] if params else None
             selector = params[1] if len(params) > 1 else None
-        elif len(params) >= 2:
+        elif params:
+            # The grammar fixes the first field as STEP (what.md#parameter-format:
+            # ``11#STEP#PRIORITY``), so a single parameter is the STEP and the
+            # priority is simply absent. STEP 1..99 relative, 100 end point
+            # (what.md#step); anything else is not a step and is left as None
+            # with the raw what_param.
             step = _int_or_none(params[0])
-            # STEP 1..99 relative, 100 end point (what.md#step); anything
-            # else is not a step and is left as None with the raw what_param.
             self._step = step if step is not None and 1 <= step <= 100 else None
-            priority = params[1]
+            priority = params[1] if len(params) > 1 else None
             selector = params[2] if len(params) > 2 else None
         else:
-            # Published grammar needs STEP#PRIORITY; a single parameter is
-            # ambiguous (inference: not decoded, kept raw in what_param).
             priority = None
             selector = None
         self._priority_bitfield = _priority_bitfield(priority)
@@ -251,10 +257,10 @@ class OWNAutomationEvent(OWNEvent):
         direction = "up" if self._what == ADVANCED_UP else "down"
         self._is_opening = self._what == ADVANCED_UP
         self._is_closing = self._what == ADVANCED_DOWN
-        if len(params) < 2:
+        if not params:
             # No parameter at all: an omitted STEP is the end point (what.md#step).
-            self._end_point = True if not params else None
-            movement = "to the end point" if not params else "(parameters not decoded)"
+            self._end_point = True
+            movement = "to the end point"
         elif self._step is None:
             self._end_point = None
             movement = "(step not decoded)"

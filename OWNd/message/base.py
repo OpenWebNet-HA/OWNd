@@ -531,9 +531,10 @@ class OWNCommand(OWNMessage):
 
     @classmethod
     def parse(cls, data: str, *, gateway: Any = None) -> OWNCommand | None:
-        # ``.*`` (not ``.+``): the WHO 3 general status ``*#3*##`` has nothing
-        # between its last star and the terminator.
-        _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.*)?##$", data)
+        # The pre-screen needs something after the last star, except for the
+        # WHO 3 general status ``*#3*##`` (``_LOAD_GENERAL_STATUS``): an empty
+        # last field on any other WHO (``*#2*##``, ``*#13*##``) stays ``None``.
+        _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.+)?##$", data) or cls._LOAD_GENERAL_STATUS.match(data)
 
         if _match:
             _who = int(_match.group("who"))

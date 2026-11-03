@@ -128,15 +128,31 @@ def test_a2_omitted_step_means_end_point_and_single_parameter_is_not_decoded() -
     assert omitted.priority is None
     assert omitted.human_readable_log == "Cover 31 advanced up to the end point."
 
-    # A single parameter does not match STEP#PRIORITY: fail closed, keep it raw.
-    single = OWNEvent.parse("*2*12#001*31##")
+    # A single parameter is the STEP (what.md#parameter-format fixes the first
+    # field as STEP); the priority is absent (review follow-up).
+    end_point = OWNEvent.parse("*2*11#100*31##")
+    assert isinstance(end_point, OWNAutomationEvent)
+    assert end_point.is_advanced_up is True
+    assert end_point.step == 100
+    assert end_point.moves_to_end_point is True
+    assert end_point.priority is None and end_point.priority_bitfield is None
+    assert end_point.what_param == ["100"]
+    assert end_point.human_readable_log == "Cover 31 advanced up to the end point."
+    relative = OWNMessage.parse("*2*11#50*31##")
+    assert isinstance(relative, OWNAutomationEvent)
+    assert relative.step == 50
+    assert relative.moves_to_end_point is False
+    assert relative.priority is None
+    assert relative.human_readable_log == "Cover 31 advanced up by 50%."
+    # A single parameter outside 1..100 is not a step: kept raw.
+    single = OWNEvent.parse("*2*12#0*31##")
     assert isinstance(single, OWNAutomationEvent)
     assert single.is_advanced_down is True
     assert single.step is None
     assert single.moves_to_end_point is None
     assert single.priority is None
-    assert single.what_param == ["001"]
-    assert single.human_readable_log == "Cover 31 advanced down (parameters not decoded)."
+    assert single.what_param == ["0"]
+    assert single.human_readable_log == "Cover 31 advanced down (step not decoded)."
 
 
 @pytest.mark.parametrize("frame", ["*2*11#0#001*31##", "*2*11#150#001*31##"])
@@ -365,8 +381,15 @@ def test_a7_priority_int_and_bit_field_forms() -> None:
     full = OWNAutomationEvent("*#2*21*10*10*75*001*0##")
     assert full.priority == 1 and full.priority_bitfield == "001"
     assert full._priority == 1  # MyHOME test_issue_445 reads the private int
+    # Only exactly three [01] characters are the bit field: `1` is a decimal
+    # priority with no bit field (no shortened form is recorded by the page).
     short = OWNAutomationEvent("*#2*21*10*10*75*1*0##")
-    assert short.priority == 1 and short.priority_bitfield == "001"
+    assert short.priority == 1 and short.priority_bitfield is None
+    assert short.priority_safety is None and short.priority_high is None
+    ten = OWNAutomationEvent("*#2*21*10*10*75*10*0##")
+    assert ten.priority == 10 and ten.priority_bitfield is None and ten.priority_high is None
+    bits = OWNAutomationEvent("*#2*21*10*10*75*010*0##")
+    assert bits.priority == 10 and bits.priority_bitfield == "010" and bits.priority_high is True
     none = OWNAutomationEvent("*#2*21*10*10*75##")
     assert none.priority is None and none.priority_bitfield is None
     assert none.info is None and none.info_name is None
@@ -384,7 +407,9 @@ def test_helpers_fail_closed() -> None:
     assert _int_or_none("x") is None
     assert _int_or_none("12") == 12
     assert _priority_bitfield(None) is None
-    assert _priority_bitfield("1") == "001"
+    assert _priority_bitfield("1") is None  # no shortened form: decimal priority only
+    assert _priority_bitfield("001") == "001"
+    assert _priority_bitfield("0101") is None
     assert _priority_bitfield("0011") is None
     assert _priority_bitfield("2") is None
 
@@ -406,6 +431,14 @@ def test_a8_report_shutter_level_states_priority_and_unknown_position() -> None:
     assert str(OWNAutomationCommand.report_shutter_level("31", 40, priority="100", info=14)) == "*#2*31*10*10*40*100*14##"
     assert str(OWNAutomationCommand.report_shutter_level("21", 40, state=12)) == "*#2*21*10*12*40*0*0##"  # MyHOME expose
     assert str(OWNAutomationCommand.report_shutter_level("31", 40, priority="00001")) == "*#2*31*10*10*40*1*0##"  # MyHOME expose
+    # Round trip of a decimal int priority: `*10*` is priority 10, not bit field 010.
+    ten = OWNEvent.parse(str(OWNAutomationCommand.report_shutter_level("31", 40, priority=10)))
+    assert isinstance(ten, OWNAutomationEvent)
+    assert str(ten) == "*#2*31*10*10*40*10*0##"
+    assert ten.priority == 10 and ten.priority_bitfield is None and ten.priority_high is None
+    one = OWNEvent.parse(str(OWNAutomationCommand.report_shutter_level("31", 40, priority=1)))
+    assert isinstance(one, OWNAutomationEvent)
+    assert one.priority == 1 and one.priority_bitfield is None
     for bad in (-1, 256, "256", "abc"):
         with pytest.raises(ValueError):
             OWNAutomationCommand.report_shutter_level("31", 40, priority=bad)
@@ -473,9 +506,12 @@ def test_l1_both_firmware_general_status_spellings_parse() -> None:
     assert bare.human_readable_log == "Requesting general load status."
     assert str(star) == "*#3*##"
     assert isinstance(OWNCommand.parse("*#3*##"), OWNLoadCommand)
-    # The empty-WHERE spelling is WHO 3 only.
+    # The empty-WHERE spelling is WHO 3 only, on both parsers (review follow-up).
     assert OWNMessage.parse("*#1*##") is None
     assert OWNMessage.parse("*#2*##") is None
+    for frame in ("*#1*##", "*#2*##", "*#13*##", "*#4*##"):
+        assert OWNCommand.parse(frame) is None, frame
+    assert isinstance(OWNCommand.parse("*#3*##"), OWNLoadCommand)
     # The documented *#3*0## keeps its raw log (no builder, refused by the firmware).
     documented = OWNMessage.parse("*#3*0##")
     assert isinstance(documented, OWNLoadCommand)
