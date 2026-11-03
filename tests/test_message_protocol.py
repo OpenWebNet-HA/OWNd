@@ -571,14 +571,16 @@ def test_own_message_helper_properties_and_effective_what() -> None:
     assert shutter_q.is_shutter_status_query is False
     shutter_dim_q = OWNAutomationCommand("*#2*98*10##")
     assert shutter_dim_q.is_shutter_status_query is True
+    # Priority is the 3-digit p1p2p3 bit field (Encyclopedia
+    # who-2-automation/dimensions.md#shutter-priority): int 0 is emitted as 000.
     rep_shutter = OWNAutomationCommand.report_shutter_level("98", 60, state=10)
-    assert str(rep_shutter) == "*#2*98*10*10*60*0*0##"
+    assert str(rep_shutter) == "*#2*98*10*10*60*000*0##"
     rep_shutter_bitfield = OWNAutomationCommand.report_shutter_level(
         "31", 40, state=10, priority="001"
     )
     assert str(rep_shutter_bitfield) == "*#2*31*10*10*40*001*0##"
     rep_shutter_unk = OWNAutomationCommand.report_shutter_level("98", 255)
-    assert str(rep_shutter_unk) == "*#2*98*10*10*255*0*0##"
+    assert str(rep_shutter_unk) == "*#2*98*10*10*255*000*0##"
 
     # Heating encode_temperature, report_temperature, write_temperature
     assert OWNHeatingCommand.encode_temperature(18.5) == "0185"
@@ -705,17 +707,20 @@ def test_expose_builders_infeasible_inputs() -> None:
     for bad_lvl in (-1, 101, 254, 256):
         with pytest.raises(ValueError, match="shutter level must be between 0 and 100 or 255"):
             OWNAutomationCommand.report_shutter_level("21", bad_lvl)
-    for bad_state in (9, 16):
-        with pytest.raises(ValueError, match="shutter state must be between 10 and 15"):
+    # shutterStatus is 10..14 (dimensions.md#shutter-status): 15 is not a state.
+    for bad_state in (9, 15, 16):
+        with pytest.raises(ValueError, match="shutter state must be between 10 and 14"):
             OWNAutomationCommand.report_shutter_level("21", 50, state=bad_state)
-    for bad_pr, bad_inf in ((-1, 0), (256, 0), (0, -1), (0, 256)):
-        with pytest.raises(ValueError, match="priority and info must be between 0 and 255"):
-            OWNAutomationCommand.report_shutter_level(
-                "21", 50, state=10, priority=bad_pr, info=bad_inf
-            )
+    for bad_pr in (-1, 8, 256, "00001", "2", "12", "abc", ""):
+        with pytest.raises(ValueError, match="priority must be a 3-digit bit field"):
+            OWNAutomationCommand.report_shutter_level("21", 50, state=10, priority=bad_pr)
+    # shutterInfo is 0, 12, 13, 14 or 15 (dimensions.md#shutter-information).
+    for bad_inf in (-1, 1, 11, 16, 256):
+        with pytest.raises(ValueError, match="shutter info must be 0, 12, 13, 14 or 15"):
+            OWNAutomationCommand.report_shutter_level("21", 50, state=10, info=bad_inf)
     assert (
-        str(OWNAutomationCommand.report_shutter_level("31", 40, state=10, priority="00001"))
-        == "*#2*31*10*10*40*1*0##"
+        str(OWNAutomationCommand.report_shutter_level("31", 40, state=10, priority=" 001 "))
+        == "*#2*31*10*10*40*001*0##"
     )
 
     # 3. WHO 4 encode_temperature, report_temperature, write_temperature
