@@ -265,6 +265,151 @@ def test_malformed_gateway_clock_is_rejected(frame: str) -> None:
         OWNMessage.parse(frame)
 
 
+def test_gateway_timezone_100_is_gmt_plus_zero() -> None:
+    """``T`` ``100`` (sign digit 1, offset 00) is GMT-0, read as ``+00:00`` like ``000``.
+
+    Encyclopedia who-13-integration-gateway/dimensions.md "DIMENSION 0 - Time"
+    (report 21 G7). Out-of-table time zones keep raising (OWNd#144).
+    """
+    for suffix in ("000", "100"):
+        message = OWNMessage.parse(f"*#13**0*12*30*00*{suffix}##")
+        assert isinstance(message, OWNGatewayEvent)
+        assert message.timezone == "+00:00"
+        assert message.raw_timezone == suffix
+        assert message.time == datetime.time(12, 30, tzinfo=datetime.timezone.utc)
+    assert OWNGatewayEvent("*#13**0*12*30*00*001##").timezone == "+01:00"
+    assert OWNGatewayEvent("*#13**0*12*30*00*102##").timezone == "-02:00"
+    with pytest.raises(ValueError, match="Invalid gateway timezone: '0530'"):
+        OWNMessage.parse("*#13**0*12*30*00*0530##")
+
+
+def test_gateway_date_year_must_be_four_digits_and_weekday_00_to_06() -> None:
+    """A two-digit ``Y`` is not year 0026; ``W`` outside 00..06 reads ``None``.
+
+    Encyclopedia dimensions.md "DIMENSION 1 - Date" (report 21 G4, G10). The
+    two-digit-year frame was a valid message on master and stays one: raw
+    values kept, ``date`` ``None``, no raise. Out-of-range day / month values
+    keep raising as before (OWNd#144).
+    """
+    short_year = OWNMessage.parse("*#13**1*04*15*10*26##")
+    assert isinstance(short_year, OWNGatewayEvent)
+    assert short_year.is_valid
+    assert short_year.date is None
+    assert short_year.weekday == 4
+    assert short_year.dimension_value == ["04", "15", "10", "26"]
+    assert short_year.human_readable_log == "*#13**1*04*15*10*26##"
+
+    short_year_22 = OWNMessage.parse("*#13**22*16*37*03*001*05*25*09*26##")
+    assert isinstance(short_year_22, OWNGatewayEvent)
+    assert short_year_22.datetime is None and short_year_22.date is None
+    assert short_year_22.time is None
+    assert short_year_22.timezone == "+01:00"
+    assert short_year_22.weekday == 5
+
+    weekday_7 = OWNMessage.parse("*#13**1*07*15*10*2026##")
+    assert isinstance(weekday_7, OWNGatewayEvent)
+    assert weekday_7.date == datetime.date(2026, 10, 15)
+    assert weekday_7.weekday is None
+
+    sunday = OWNMessage.parse("*#13**1*00*25*10*2026##")
+    assert isinstance(sunday, OWNGatewayEvent)
+    assert sunday.weekday == 0
+    assert sunday.date == datetime.date(2026, 10, 25)
+
+    combined = OWNMessage.parse("*#13**22*16*37*03*001*05*25*09*2026##")
+    assert isinstance(combined, OWNGatewayEvent)
+    assert combined.weekday == 5
+    assert OWNMessage.parse("*#13**22*16*37*03*001*9*25*09*2026##").weekday is None
+    assert OWNMessage.parse("*#13**22*12*14*58*001**15*04*2026##").weekday is None
+    assert OWNMessage.parse("*#13**0*12*30*00##").weekday is None
+
+    written = OWNMessage.parse("*#13**#1*03*07*10*2026##")
+    assert isinstance(written, OWNGatewayCommand)
+    assert written.weekday == 3
+    written_short = OWNGatewayCommand("*#13**#1*03*07*10*26##")
+    assert written_short.date is None and written_short.weekday == 3
+    written_short_22 = OWNGatewayCommand("*#13**#22*17*33*54*002*05*11*09*26##")
+    assert written_short_22.datetime is None and written_short_22.weekday == 5
+
+    with pytest.raises(ValueError, match="month must be in 1..12"):
+        OWNMessage.parse("*#13**1*00*32*13*2024##")
+    with pytest.raises(ValueError, match="year must be between 2000 and 2099"):
+        OWNGatewayCommand.set_date(datetime.date(26, 10, 15))
+
+
+def test_gateway_write_frame_logs_setting_not_broadcasting() -> None:
+    """``*#13**#0*...##`` / ``#1`` / ``#22`` are client writes (dimensions.md "Write form", G6)."""
+    assert (
+        OWNMessage.parse("*#13**#0*11*30*00*002##").human_readable_log
+        == "Setting gateway time to: 11:30:00+02:00."
+    )
+    assert (
+        OWNMessage.parse("*#13**#1*03*07*10*2026##").human_readable_log
+        == "Setting gateway date to: 2026-10-07."
+    )
+    assert (
+        OWNMessage.parse("*#13**#22*17*33*54*002*05*11*09*2026##").human_readable_log
+        == "Setting gateway time to: 2026-09-11 17:33:54+02:00."
+    )
+    assert (
+        OWNMessage.parse("*#13**#0*13*12*11**##").human_readable_log
+        == "Setting gateway time to: 13:12:11."
+    )
+    # The reply form built by report_* keeps reporting the clock.
+    assert (
+        OWNGatewayCommand("*#13**0*20*54*00*002##").human_readable_log
+        == "Gateway broadcasting internal time: 20:54:00+02:00."
+    )
+    assert (
+        OWNGatewayCommand("*#13**1*04*15*10*2026##").human_readable_log
+        == "Gateway broadcasting internal date: 2026-10-15."
+    )
+    assert (
+        OWNGatewayCommand("*#13**22*16*37*03*001*05*25*09*2026##").human_readable_log
+        == "Gateway broadcasting internal datetime: 2026-09-25 16:37:03+01:00."
+    )
+    assert (
+        OWNGatewayCommand.set_time(datetime.time(11, 30, tzinfo=datetime.timezone.utc)).human_readable_log
+        == "Setting gateway time to: 11:30:00+00:00."
+    )
+
+
+def test_gateway_mac_address_octets_are_range_checked() -> None:
+    """Six decimal octets 0..255 (dimensions.md "DIMENSION 12 - MAC address", G2)."""
+    assert OWNGatewayEvent("*#13**12*0*3*80*0*4*97##").mac_address == "00:03:50:00:04:61"
+    assert OWNGatewayEvent("*#13**12*0*3*80*0*4*255##").mac_address == "00:03:50:00:04:ff"
+    too_big = OWNGatewayEvent("*#13**12*0*3*80*1*2*300##")
+    assert too_big.mac_address is None
+    assert too_big.dimension_value == ["0", "3", "80", "1", "2", "300"]
+    assert too_big.human_readable_log == "*#13**12*0*3*80*1*2*300##"
+    assert OWNGatewayEvent("*#13**12*0*3*80*1*2##").mac_address is None
+    assert OWNGatewayEvent("*#13**12*0*3*80*1*2*3*4##").mac_address is None
+
+
+def test_gateway_dimension_12_with_eight_values_is_not_a_mac() -> None:
+    """Eight values are the ZigBee interface IEEE address (zigbee-network-management.md, G3)."""
+    message = OWNMessage.parse("*#13**12*0*3*80*1*2*3*4*5##")
+    assert isinstance(message, OWNGatewayEvent)
+    assert message.mac_address is None
+    assert message.dimension_value == ["0", "3", "80", "1", "2", "3", "4", "5"]
+    assert message.human_readable_log == (
+        "Gateway reported an eight-value dimension 12 "
+        "(ZigBee interface IEEE address, not a MAC address): 0*3*80*1*2*3*4*5."
+    )
+
+
+def test_gateway_addressed_dimension_16_is_a_product_firmware() -> None:
+    """``*#13*PRODUCT00#9*16*V*R*B##`` is the product's firmware, not the gateway's (G8)."""
+    message = OWNMessage.parse("*#13*123400#9*16*1*2*3##")
+    assert isinstance(message, OWNGatewayEvent)
+    assert message.where == "123400"
+    assert message.firmware_version == "1.2.3"
+    assert message.human_readable_log == "Product 123400#9's firmware version is: 1.2.3."
+    gateway = OWNMessage.parse("*#13**16*2*0*11##")
+    assert isinstance(gateway, OWNGatewayEvent)
+    assert gateway.human_readable_log == "Gateway's firmware version is: 2.0.11."
+
+
 def test_gateway_time_command_has_no_empty_trailing_value() -> None:
     message = OWNGatewayCommand.set_time_to_now("UTC")
 

@@ -23,20 +23,58 @@ def _validate_gateway_clock_values(
 
 
 def _gateway_timezone(values: list[str]) -> str:
-    """Decode an optional OWN timezone, preserving unspecified local time."""
+    """Decode an optional OWN timezone, preserving unspecified local time.
+
+    ``T`` is sign + two-digit hour offset (Encyclopedia
+    who-13-integration-gateway/dimensions.md "DIMENSION 0 - Time": ``001`` is
+    GMT+1, ``102`` GMT-2); ``100`` is GMT-0 and reads ``+00:00`` like ``000``.
+    """
     value = values[3] if len(values) > 3 else ""
     if not value or value == "999":
         return ""
     if re.fullmatch(r"[01]\d{2}", value) is None:
         raise ValueError(f"Invalid gateway timezone: {value!r}")
+    if value[1:] == "00":
+        return "+00:00"
     sign = "+" if value[0] == "0" else "-"
     return f"{sign}{value[1:]}:00"
+
+
+def _gateway_weekday(value: str) -> int | None:
+    """``W`` as 0..6 (``00`` Sunday .. ``06`` Saturday), ``None`` outside the table.
+
+    Not checked against the calendar date: the touchscreen client writes a
+    fixed ``00`` (dimensions.md "Historical touchscreen platform properties").
+    """
+    if value.isdigit() and 0 <= int(value) <= 6:
+        return int(value)
+    return None
+
+
+def _gateway_date(year: str, month: str, day: str) -> _dt.date | None:
+    """Decode ``D*M*Y``; ``None`` when ``Y`` is not four digits (dimensions.md "DIMENSION 1 - Date").
+
+    A two-digit year (``*#13**1*04*15*10*26##``) is not year 0026; the frame
+    stays valid with the raw values and ``date`` ``None``. Out-of-range day
+    and month values keep raising ``ValueError`` as before (OWNd#144).
+    """
+    if re.fullmatch(r"\d{4}", year) is None:
+        return None
+    return _dt.date(year=int(year), month=int(month), day=int(day))
 
 
 # WHO 13 Dimension 15: Functional gateway model/device type (*#13**15*<TYPE>##).
 # Grounded in published BTicino protocol tables, physical plant captures,
 # and firmware reverse engineering (bt_device dispatch table at VA 0x02003194,
-# selector r4 == 0).
+# selector r4 == 0). The published table (Encyclopedia
+# who-13-integration-gateway/dimensions.md "DIMENSION 15 - Device type") has
+# 2, 4, 6, 7, 11 and 13 and says it is not exhaustive; the other codes come
+# from firmware reverse engineering and plant captures. A code that is not in
+# this table stays an unknown code (``device_type`` reads ``Unknown (N)``,
+# ``device_type_code`` keeps ``N``), and a non-unique code (``200``) is not a
+# product identity: ``device_type`` lists the gateways known to share it and
+# WHO 1013 Dimension 1 tells them apart (capabilities.md
+# "Product identification").
 WHO13_DEVICE_TYPES: dict[str, str] = {
     "2": "MHServer",
     "4": "MH200",
@@ -114,6 +152,7 @@ class OWNGatewayEvent(OWNEvent):
         self._second = None
         self._timezone = None
         self._raw_timezone = None
+        self._weekday: int | None = None
 
         self._time = None
         self._date = None
@@ -152,15 +191,15 @@ class OWNGatewayEvent(OWNEvent):
             )
 
         elif self._dimension == 1:
+            self._weekday = _gateway_weekday(self._dimension_value[0])
             self._year = self._dimension_value[3]
             self._month = self._dimension_value[2]
             self._day = self._dimension_value[1]
-            self._date = _dt.date(
-                year=int(self._year), month=int(self._month), day=int(self._day)
-            )
-            self._human_readable_log = (
-                f"Gateway's internal date is: {self._date}."
-            )
+            self._date = _gateway_date(self._year, self._month, self._day)
+            if self._date is not None:
+                self._human_readable_log = (
+                    f"Gateway's internal date is: {self._date}."
+                )
         elif self._dimension == 10 and len(self._dimension_value) >= 4:
             self._ip_address = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}.{self._dimension_value[3]}"  # pylint: disable=line-too-long
             self._human_readable_log = f"Gateway's IP address is: {self._ip_address}."
@@ -169,12 +208,25 @@ class OWNGatewayEvent(OWNEvent):
             self._netmask = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}.{self._dimension_value[3]}"  # pylint: disable=line-too-long
             self._human_readable_log = f"Gateway's netmask is: {self._netmask}."
 
-        elif self._dimension == 12 and len(self._dimension_value) >= 6:
-            try:
-                self._mac_address = f"{int(self._dimension_value[0]):02x}:{int(self._dimension_value[1]):02x}:{int(self._dimension_value[2]):02x}:{int(self._dimension_value[3]):02x}:{int(self._dimension_value[4]):02x}:{int(self._dimension_value[5]):02x}"  # pylint: disable=line-too-long
+        elif self._dimension == 12:
+            # Six decimal octets, hexadecimal only at presentation (Encyclopedia
+            # dimensions.md "DIMENSION 12 - MAC address"). Eight values are the
+            # ZigBee interface IEEE address (zigbee-network-management.md
+            # "DIMENSION 12 - Interface IEEE address"), not a MAC: the values
+            # stay raw in ``dimension_value`` and ``mac_address`` is ``None``,
+            # as it is for an octet outside 0..255 or an empty field.
+            octets = self._dimension_value
+            if len(octets) == 6 and all(
+                o.isdigit() and int(o) <= 255 for o in octets
+            ):
+                self._mac_address = ":".join(f"{int(o):02x}" for o in octets)
                 self._human_readable_log = f"Gateway's MAC address is: {self._mac_address}."
-            except (IndexError, TypeError, ValueError):
-                pass
+            elif len(octets) == 8:
+                self._human_readable_log = (
+                    "Gateway reported an eight-value dimension 12 "
+                    "(ZigBee interface IEEE address, not a MAC address): "
+                    f"{'*'.join(octets)}."
+                )
 
         elif self._dimension == 15 and self._dimension_value:
             code = self._dimension_value[0]
@@ -183,9 +235,19 @@ class OWNGatewayEvent(OWNEvent):
 
         elif self._dimension == 16 and len(self._dimension_value) >= 3:
             self._firmware_version = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}"  # pylint: disable=line-too-long
-            self._human_readable_log = (
-                f"Gateway's firmware version is: {self._firmware_version}."
-            )
+            if self._where:
+                # ``*#13*PRODUCT00#9*16*V*R*B##`` is the firmware of the
+                # addressed ZigBee product, not of the gateway (Encyclopedia
+                # zigbee-network-management.md "DIMENSION 16 and 17 -
+                # Firmware and hardware versions"); ``where`` tells.
+                product = self._where + "".join(f"#{p}" for p in self._where_param)
+                self._human_readable_log = (
+                    f"Product {product}'s firmware version is: {self._firmware_version}."
+                )
+            else:
+                self._human_readable_log = (
+                    f"Gateway's firmware version is: {self._firmware_version}."
+                )
 
         elif (
             self._dimension == 19
@@ -213,9 +275,14 @@ class OWNGatewayEvent(OWNEvent):
                 else None
             )
             self._timezone = _gateway_timezone(self._dimension_value)
+            self._weekday = _gateway_weekday(self._dimension_value[4])
             self._day = self._dimension_value[5]
             self._month = self._dimension_value[6]
             self._year = self._dimension_value[7]
+            if _gateway_date(self._year, self._month, self._day) is None:
+                # Two-digit year: the frame stays valid, raw values kept,
+                # typed properties None (dimensions.md "DIMENSION 1 - Date").
+                return
             self._datetime = _dt.datetime.fromisoformat(
                 f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
             )
@@ -272,6 +339,16 @@ class OWNGatewayEvent(OWNEvent):
         return self._date
 
     @property
+    def weekday(self) -> int | None:
+        """Day of week of a Dimension 1 / 22 payload: ``0`` Sunday .. ``6`` Saturday.
+
+        ``None`` outside ``00..06`` (Encyclopedia dimensions.md "DIMENSION 1 -
+        Date"); not checked against the calendar date, since the touchscreen
+        client writes a fixed ``00``.
+        """
+        return self._weekday
+
+    @property
     def datetime(self) -> _dt.datetime | None:
         """Return the decoded gateway internal datetime."""
         return self._datetime
@@ -318,7 +395,15 @@ class OWNGatewayEvent(OWNEvent):
 
     @property
     def device_type(self) -> str | None:
-        """Return the decoded gateway device type string."""
+        """Return the decoded gateway device type string.
+
+        ``Unknown (N)`` for a Dimension 15 code outside ``WHO13_DEVICE_TYPES``
+        (the published table is not exhaustive and an unlisted code stays an
+        unknown code); the non-unique ``200`` reads as the slash-separated list
+        of the gateways known to share it, not as one product: identify them
+        through WHO 1013 Dimension 1 (``OWNGatewayDiagnosticEvent``).
+        ``device_type_code`` keeps the raw code either way.
+        """
         return self._device_type
 
     @property
@@ -356,6 +441,7 @@ class OWNGatewayCommand(OWNCommand):
         self._second = None
         self._timezone = None
         self._raw_timezone = None
+        self._weekday: int | None = None
 
         self._time = None
         self._date = None
@@ -381,19 +467,19 @@ class OWNGatewayCommand(OWNCommand):
                 f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
             )
             self._human_readable_log = (
-                f"Gateway broadcasting internal time: {self._time}."
+                f"{self._clock_log_verb} time{self._clock_log_to}: {self._time}."
             )
 
         elif self._dimension == 1:
+            self._weekday = _gateway_weekday(self._dimension_value[0])
             self._year = self._dimension_value[3]
             self._month = self._dimension_value[2]
             self._day = self._dimension_value[1]
-            self._date = _dt.date(
-                year=int(self._year), month=int(self._month), day=int(self._day)
-            )
-            self._human_readable_log = (
-                f"Gateway broadcasting internal date: {self._date}."
-            )
+            self._date = _gateway_date(self._year, self._month, self._day)
+            if self._date is not None:
+                self._human_readable_log = (
+                    f"{self._clock_log_verb} date{self._clock_log_to}: {self._date}."
+                )
 
         elif self._dimension == 22:
             self._hour = self._dimension_value[0]
@@ -405,9 +491,14 @@ class OWNGatewayCommand(OWNCommand):
                 else None
             )
             self._timezone = _gateway_timezone(self._dimension_value)
+            self._weekday = _gateway_weekday(self._dimension_value[4])
             self._day = self._dimension_value[5]
             self._month = self._dimension_value[6]
             self._year = self._dimension_value[7]
+            if _gateway_date(self._year, self._month, self._day) is None:
+                # Two-digit year: the frame stays valid, raw values kept,
+                # typed properties None (dimensions.md "DIMENSION 1 - Date").
+                return
             self._datetime = _dt.datetime.fromisoformat(
                 f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
             )
@@ -418,7 +509,8 @@ class OWNGatewayCommand(OWNCommand):
                 else self._datetime.time()
             )
             self._human_readable_log = (
-                f"Gateway broadcasting internal datetime: {self._datetime}."
+                f"{self._clock_log_verb} {'time' if self.is_dimension_writing else 'datetime'}"
+                f"{self._clock_log_to}: {self._datetime}."
             )
 
     @property
@@ -430,6 +522,16 @@ class OWNGatewayCommand(OWNCommand):
     def date(self) -> _dt.date | None:
         """Return the decoded gateway internal date."""
         return self._date
+
+    @property
+    def weekday(self) -> int | None:
+        """Day of week of a Dimension 1 / 22 payload: ``0`` Sunday .. ``6`` Saturday.
+
+        ``None`` outside ``00..06`` (Encyclopedia dimensions.md "DIMENSION 1 -
+        Date"); not checked against the calendar date, since the touchscreen
+        client writes a fixed ``00``.
+        """
+        return self._weekday
 
     @property
     def datetime(self) -> _dt.datetime | None:
@@ -450,6 +552,18 @@ class OWNGatewayCommand(OWNCommand):
     def is_timezone_unconfigured(self) -> bool:
         """Return True if the gateway reported an unconfigured timezone (sentinel 999)."""
         return self._raw_timezone == "999"
+
+    @property
+    def _clock_log_verb(self) -> str:
+        # ``*#13**#0*...##`` / ``#1`` / ``#22`` are client -> gateway writes
+        # (Encyclopedia dimensions.md "Write form"; the touchscreen clock
+        # writes of "Historical touchscreen platform properties"); the reply
+        # form ``*#13**0*...##`` built by ``report_*`` reports the clock.
+        return "Setting gateway" if self.is_dimension_writing else "Gateway broadcasting internal"
+
+    @property
+    def _clock_log_to(self) -> str:
+        return " to" if self.is_dimension_writing else ""
 
     @property
     def is_clock_query(self) -> bool:
