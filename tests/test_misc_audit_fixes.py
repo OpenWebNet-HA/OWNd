@@ -94,26 +94,30 @@ def test_t1_status_request_round_trips_through_the_command_parser() -> None:
 
 
 @pytest.mark.parametrize(
-    ("frame", "is_on", "detection", "state_reply", "log"),
+    ("frame", "is_on", "has_parameter", "detection", "state_reply", "log"),
     [
-        ("*25*31#1*339##", True, True, False, "Sensor 39 detected ON."),
-        ("*25*32#1*339##", False, True, False, "Sensor 39 detected OFF."),
-        ("*25*31#0*339##", True, False, True, "Sensor 39 reported ON."),
-        ("*25*32#0*33##", False, False, True, "Sensor 3 reported OFF."),
+        ("*25*31#1*339##", True, True, True, False, "Sensor 39 detected ON."),
+        ("*25*32#1*339##", False, True, True, False, "Sensor 39 detected OFF."),
+        ("*25*31#0*339##", True, True, False, True, "Sensor 39 reported ON."),
+        ("*25*32#0*33##", False, True, False, True, "Sensor 3 reported OFF."),
         (
+            # is_detection keeps the historical True for the missing parameter
+            # (MyHOME pins it); has_detection_parameter tells it apart.
             "*25*31*33##",
             True,
             False,
+            True,
             False,
             "Sensor 3 sent ON without the WHAT parameter (not a published WHO 25 form: dry-contact-ir.md#what).",
         ),
     ],
 )
 def test_t4_dry_contact_parameter_is_required_for_a_detection(
-    frame: str, is_on: bool, detection: bool, state_reply: bool, log: str
+    frame: str, is_on: bool, has_parameter: bool, detection: bool, state_reply: bool, log: str
 ) -> None:
     event = OWNDryContactEvent(frame)
     assert event.is_on is is_on
+    assert event.has_detection_parameter is has_parameter
     assert event.is_detection is detection
     assert event.is_state_reply is state_reply
     assert event.human_readable_log == log
@@ -155,7 +159,9 @@ def test_t4_cen_plus_object_forms_still_decode(frame: str, obj: str) -> None:
 )
 def test_t2_pushbutton_outside_0_31_is_none(frame: str, button: int | None) -> None:
     event = OWNCENPlusEvent(frame)
-    assert event.push_button == button
+    assert event.valid_push_button == button
+    # push_button keeps the historical 0 fallback (MyHOME pins it).
+    assert event.push_button == (0 if button is None else button)
     if button is None:
         assert "outside the published 0..31" in event.human_readable_log
     else:

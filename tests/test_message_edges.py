@@ -1390,11 +1390,13 @@ class TestProtocolFixesAudit:
 
         # Malformed CEN+ without _what_param does not crash with IndexError
         evt_cp_empty_param = OWNCENPlusEvent("*25*21*21##")
-        assert evt_cp_empty_param.push_button is None  # report 21 T2
+        assert evt_cp_empty_param.push_button == 0  # historical value, MyHOME pins it
+        assert evt_cp_empty_param.valid_push_button is None  # report 21 T2
 
         # Dry contact without _what_param does not crash
         evt_dc_empty_param = OWNDryContactEvent("*25*31*21##")
-        assert evt_dc_empty_param.is_detection is False  # report 21 T4: parameter required
+        assert evt_dc_empty_param.is_detection is True  # historical value, MyHOME pins it
+        assert evt_dc_empty_param.has_detection_parameter is False  # report 21 T4
         assert evt_dc_empty_param.is_state_reply is False
 
         # Status request for WHO=25
@@ -1627,7 +1629,7 @@ class TestMessageAuditExhaustiveCoverage:
         with patch.object(OWNMessage, "__init__", fake_init):
             evt = OWNDryContactEvent("*25*31*21##")
             assert evt._detection is None
-            assert evt.is_detection is False
+            assert evt.has_detection_parameter is False
 
     def test_cenplus_event_param_exception_and_empty_where(self):
         class BadInt:
@@ -1644,7 +1646,8 @@ class TestMessageAuditExhaustiveCoverage:
 
         with patch.object(OWNMessage, "__init__", fake_init):
             evt = OWNCENPlusEvent("*25*21#1*21##")
-            assert evt.push_button is None
+            assert evt.push_button == 0
+            assert evt.valid_push_button is None
             assert evt.object == ""
 
     def test_cenplus_event_unmapped_state(self):

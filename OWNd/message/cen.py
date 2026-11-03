@@ -71,8 +71,10 @@ class OWNDryContactEvent(OWNEvent):
     of sensor ``5`` are the same frame on the wire.
 
     A frame without the ``P`` parameter (``*25*31*33##``) is not a published
-    form: ``is_detection`` and ``is_state_reply`` are both ``False`` and the log
-    says so.
+    form: ``has_detection_parameter`` is ``False``, ``is_state_reply`` is
+    ``False`` and the log says so; ``is_detection`` keeps reading ``True`` for
+    it, the historical value MyHOME pins (``tests/test_message_edges.py``
+    ``test_who25_routing_and_bounds_safety``).
     """
 
     def __init__(self, data: str) -> None:
@@ -115,8 +117,17 @@ class OWNDryContactEvent(OWNEvent):
 
     @property
     def is_detection(self) -> bool:
-        """True for an event (``#1``); False for a state reply or a missing parameter."""
-        return self._detection == 1
+        """True for an event (``#1``) or a frame without the parameter; False for a state reply (``#0``).
+
+        The missing-parameter case keeps the historical ``True`` (MyHOME pins
+        it); ``has_detection_parameter`` tells the two apart.
+        """
+        return self._detection != 0
+
+    @property
+    def has_detection_parameter(self) -> bool:
+        """True when the frame carries the ``#0`` / ``#1`` parameter dry-contact-ir.md#what requires."""
+        return self._detection is not None
 
     @property
     def is_state_reply(self) -> bool:
@@ -135,23 +146,27 @@ class OWNCENPlusEvent(OWNEvent):
     Encyclopedia ``functional/who-25-transversal/cen-plus.md``: #pushbutton-parameter
     gives the pushbutton range ``0..31`` (``0`` is a real button), #where---virtual-object
     the WHERE as the prefix ``2`` followed by an Object ``0..2047``. A pushbutton
-    outside the range, or a missing one, leaves ``push_button`` ``None`` instead of
-    pretending button 0 was pressed; a bare WHERE ``2`` carries no Object and
-    leaves ``object`` ``None``. Both are logged.
+    outside the range, or a missing one, leaves ``valid_push_button`` ``None``
+    and is logged; ``push_button`` keeps the historical ``0`` for that case
+    (MyHOME pins it: ``tests/test_message_edges.py``
+    ``test_who25_routing_and_bounds_safety``). A bare WHERE ``2`` carries no
+    Object and leaves ``object`` ``None`` (logged).
     """
 
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._state = self._what
-        self.push_button: int | None
         try:
             push_button = int(self._what_param[0]) if self._what_param else None
         except (IndexError, TypeError, ValueError):
             push_button = None
-        self.push_button = (
+        # valid_push_button: the parameter when it is in 0..31, else None.
+        # push_button keeps the historical 0 fallback MyHOME pins.
+        self.valid_push_button: int | None = (
             push_button if push_button is not None and 0 <= push_button <= 31 else None
         )
+        self.push_button: int = 0 if self.valid_push_button is None else self.valid_push_button
         where = self._where or ""
         self.object: str | None
         if len(where) > 1 and where.startswith("2"):
@@ -161,7 +176,7 @@ class OWNCENPlusEvent(OWNEvent):
         else:
             self.object = where
 
-        if self.push_button is None:
+        if self.valid_push_button is None:
             self._human_readable_log = (
                 f"CEN+ object {self.object} sent WHAT {self._state} with pushbutton "
                 f"{self._what_param[0] if self._what_param else 'missing'} "
