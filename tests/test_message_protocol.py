@@ -712,11 +712,11 @@ def test_expose_builders_infeasible_inputs() -> None:
     for bad_state in (9, 15, 16):
         with pytest.raises(ValueError, match="shutter state must be between 10 and 14"):
             OWNAutomationCommand.report_shutter_level("21", 50, state=bad_state)
-    for bad_pr in (-1, 256):
+    for bad_pr in (-1, 256, "256"):
         with pytest.raises(ValueError, match="priority must be between 0 and 255"):
             OWNAutomationCommand.report_shutter_level("21", 50, state=10, priority=bad_pr)
-    for bad_pr_str in ("00001", "2", "12", "abc", ""):
-        with pytest.raises(ValueError, match="priority must be a 3-digit bit field"):
+    for bad_pr_str in ("abc", ""):
+        with pytest.raises(ValueError):
             OWNAutomationCommand.report_shutter_level("21", 50, state=10, priority=bad_pr_str)
     # shutterInfo is 0, 12, 13, 14 or 15 (dimensions.md#shutter-information).
     for bad_inf in (-1, 1, 11, 16, 256):
@@ -725,6 +725,10 @@ def test_expose_builders_infeasible_inputs() -> None:
     assert (
         str(OWNAutomationCommand.report_shutter_level("31", 40, state=10, priority=" 001 "))
         == "*#2*31*10*10*40*001*0##"
+    )
+    assert (
+        str(OWNAutomationCommand.report_shutter_level("31", 40, state=10, priority="00001"))
+        == "*#2*31*10*10*40*1*0##"
     )
 
     # 3. WHO 4 encode_temperature, report_temperature, write_temperature

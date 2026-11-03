@@ -405,6 +405,10 @@ def test_a8_report_shutter_level_states_priority_and_unknown_position() -> None:
     assert str(OWNAutomationCommand.report_shutter_level("31", 40, priority=255)) == "*#2*31*10*10*40*255*0##"
     assert str(OWNAutomationCommand.report_shutter_level("31", 40, priority="100", info=14)) == "*#2*31*10*10*40*100*14##"
     assert str(OWNAutomationCommand.report_shutter_level("21", 40, state=12)) == "*#2*21*10*12*40*0*0##"  # MyHOME expose
+    assert str(OWNAutomationCommand.report_shutter_level("31", 40, priority="00001")) == "*#2*31*10*10*40*1*0##"  # MyHOME expose
+    for bad in (-1, 256, "256", "abc"):
+        with pytest.raises(ValueError):
+            OWNAutomationCommand.report_shutter_level("31", 40, priority=bad)
     unknown = OWNAutomationCommand.report_shutter_level("31", 255)
     assert str(unknown) == "*#2*31*10*10*255*0*0##"
     assert unknown.human_readable_log == "Reporting shutter 31 at an unknown position (state 10)."

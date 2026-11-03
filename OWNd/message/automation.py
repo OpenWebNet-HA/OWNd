@@ -571,10 +571,10 @@ class OWNAutomationCommand(OWNCommand):
 
         ``*#2*WHERE*10*STATE*LEVEL*PRIORITY*INFO##`` (``dimensions.md#dimension-10---shutter-status``):
         ``state`` 10..14, ``level`` 0..100 or 255 (unknown position),
-        ``priority`` as the 3-digit ``p1p2p3`` bit field given as a string of
-        three ``0``/``1`` digits (``"001"``), or as an int 0..255 emitted as
-        its decimal text (``0`` -> ``*0*``, the pre-existing form MyHOME's
-        expose replies pin), ``info`` 0, 12, 13, 14 or 15.
+        ``priority`` as the 3-digit ``p1p2p3`` bit field given as a string
+        (``"001"``, sent as given), or as an int 0..255 emitted as its decimal
+        text (``0`` -> ``*0*``, the pre-existing form MyHOME's expose replies
+        pin), ``info`` 0, 12, 13, 14 or 15.
         """
         target = _require_non_empty_where(where)
         numbers = [level, state, info] + ([] if isinstance(priority, str) else [priority])
@@ -606,20 +606,18 @@ class OWNAutomationCommand(OWNCommand):
 
     @staticmethod
     def _priority_field(priority: int | str) -> str:
-        """A 3-digit ``p1p2p3`` bit string as given, or an int 0..255 as its decimal text.
+        """The priority field as before: a string of up to three digits is sent
+        as given (``"001"`` is the ``p1p2p3`` bit field), anything else is an
+        int 0..255 sent as its decimal text (``0`` -> ``*0*``).
 
-        The int form is the pre-existing encoding (``0`` -> ``*0*``) and is kept
-        unchanged for MyHOME, whose expose replies pin ``*#2*21*10*12*40*0*0##``.
+        Kept unchanged for MyHOME, whose expose replies pin
+        ``*#2*21*10*12*40*0*0##`` and ``priority="00001"`` -> ``*1*``.
         """
-        if isinstance(priority, str):
-            text = priority.strip()
-            if not _PRIORITY_BITFIELD.match(text) or len(text) != 3:
-                raise ValueError("priority must be a 3-digit bit field of 0 and 1 (p1p2p3)")
-            return text
-        value = int(priority)
+        text = priority.strip() if isinstance(priority, str) else str(int(priority))
+        value = int(text)
         if not 0 <= value <= 255:
             raise ValueError("priority must be between 0 and 255")
-        return str(value)
+        return text if text.isdigit() and len(text) <= 3 else str(value)
 
 
 register_event_parser(2, OWNAutomationEvent)
