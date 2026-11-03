@@ -880,14 +880,14 @@ class TestEnergyEdgeCases:
 
 class TestLightingEdgeCases:
     def test_brightness_dim4(self):
-        """Dimension 4 carries the same LEVEL100 level, but its trailing value
-        is status_speed, not the Dimension 1 transition (report 21 L4)."""
+        """Dimension 4 carries the same LEVEL100 level; its trailing value is
+        status_speed and stays on transition as before (report 21 L4)."""
         msg = OWNEvent.parse("*#1*21*4*150*5##")
         assert isinstance(msg, OWNLightingEvent)
         assert msg.brightness == 50
         assert msg.status_level == 50
         assert msg.status_speed == 5
-        assert msg.transition is None
+        assert msg.transition == 5
 
     def test_timer_dimension(self):
         """Dimension 2 = time value."""

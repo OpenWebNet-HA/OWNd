@@ -184,11 +184,12 @@ def test_dimension_4_has_its_own_properties_and_no_transition() -> None:
     # Same published LEVEL100 field in both.
     assert dim1.brightness == dim4.brightness == 30
     assert dim1.is_on is True and dim4.is_on is True
-    # Secondary values stay apart.
+    # Secondary values stay apart: status_speed is DIMENSION 4 only, while
+    # transition keeps the DIMENSION 4 trailing value too (MyHOME reads it there).
     assert dim1.transition == 5
     assert dim1.status_level is None
     assert dim1.status_speed is None
-    assert dim4.transition is None
+    assert dim4.transition == 2
     assert dim4.status_level == 30
     assert dim4.status_speed == 2
     assert dim4.human_readable_log == "Light 32 is switched on at 30%."
@@ -223,6 +224,7 @@ def test_coarse_dimmer_is_learned_from_dimension_1_only() -> None:
     assert isinstance(dim4, OWNLightingEvent)
     assert dim4.is_coarse_dimmer is False
     assert dim4.status_speed == 240
+    assert dim4.transition == 240  # exposed, but not learned from
     assert is_coarse_dimmer_where("12") is False
 
     dim1 = OWNMessage.parse("*#1*61*1*130*240##")

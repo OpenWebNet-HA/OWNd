@@ -445,9 +445,12 @@ class OWNLightingEvent(OWNEvent):
             elif self._dimension == 4:  # 100-level status with ON/OFF speed
                 # dimensions.md "DIMENSION 4 - 100-level status": a distinct
                 # state surface whose trailing value differs from DIMENSION 1
-                # at the same LEVEL100 (F418U2 through an MH202), so it is kept
-                # in its own field (status_speed) and never read as the
-                # DIMENSION 1 transition speed nor as the F414 coarse sentinel.
+                # at the same LEVEL100 (F418U2 through an MH202), so it gets
+                # its own field (status_speed) and is never read as the F414
+                # coarse sentinel (learned from the DIMENSION 1 speed slot
+                # only). It is also kept on ``transition``, as before, so a
+                # consumer that read the trailing value there keeps working
+                # (MyHOME asserts ``transition`` on DIMENSION 4 replies).
                 # The LEVEL100 field is the published level: an F454 answers a
                 # DIMENSION 1 request while OFF with this frame (golden
                 # light.dim.reply.level_transition.13, MyHOME#466), so it still
@@ -456,6 +459,7 @@ class OWNLightingEvent(OWNEvent):
                 if self._brightness is not None:
                     self._status_level = self._brightness
                     self._status_speed = _int_field(values, 1)
+                    self._transition = self._status_speed
             elif self._dimension == 2:  # Time value
                 # dimensions.md "DIMENSION 2 - temporization":
                 # *#1*WHERE*2*HOURS*MINUTES*SECONDS## (three fields).
@@ -600,10 +604,12 @@ class OWNLightingEvent(OWNEvent):
 
     @property
     def transition(self) -> int | None:
-        """Transition speed of a DIMENSION 1 report (``*#1*W*1*LEVEL100*SPEED##``)
-        or of a parameterized WHAT (``0#SPEED``, ``1#SPEED``, ``30#LEVELS#SPEED``,
-        ``31#LEVELS#SPEED``); ``None`` otherwise. A DIMENSION 4 trailing value is
-        :attr:`status_speed`, never this field (dimensions.md "DIMENSION 4")."""
+        """Trailing speed value of a DIMENSION 1 report (``*#1*W*1*LEVEL100*SPEED##``),
+        of a DIMENSION 4 report (``*#1*W*4*LEVEL100*SPEED##``, also exposed as
+        :attr:`status_speed`) or of a parameterized WHAT (``0#SPEED``, ``1#SPEED``,
+        ``30#LEVELS#SPEED``, ``31#LEVELS#SPEED``); ``None`` otherwise. Use
+        :attr:`status_speed` to tell the DIMENSION 4 value apart (dimensions.md
+        "DIMENSION 4"); the F414 coarse sentinel is only learned from DIMENSION 1."""
         return self._transition
 
     @property
@@ -624,10 +630,12 @@ class OWNLightingEvent(OWNEvent):
     def status_speed(self) -> int | None:
         """Trailing ``ON/OFF speed`` value of a DIMENSION 4 report, else ``None``.
 
-        Kept apart from :attr:`transition`: an F418U2 reports ``5`` in
-        DIMENSION 1 and ``2`` in DIMENSION 4 at the same level, and the
-        Encyclopedia asks not to collapse the two secondary values
-        (who-1-lighting/dimensions.md "DIMENSION 4 - 100-level status").
+        Set only by DIMENSION 4: an F418U2 reports ``5`` in DIMENSION 1 and
+        ``2`` in DIMENSION 4 at the same level, and the Encyclopedia asks not to
+        collapse the two secondary values (who-1-lighting/dimensions.md
+        "DIMENSION 4 - 100-level status"). The same value is also on
+        :attr:`transition` for backward compatibility; it never feeds the
+        coarse-dimmer learning.
         """
         return self._status_speed
 
