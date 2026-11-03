@@ -95,15 +95,20 @@ def test_status_requests_can_omit_where() -> None:
 
 
 def test_alarm_command_helpers_and_dispatch() -> None:
-    assert str(OWNAlarmCommand.disarm()) == "*5*2*0##"
-    assert str(OWNAlarmCommand.disengage()) == "*5*9*0##"
-    assert str(OWNAlarmCommand.disengage("1")) == "*5*9*1##"
-    assert str(OWNAlarmCommand.arm_away()) == "*5*1*0##"
-    assert str(OWNAlarmCommand.engage()) == "*5*8*0##"
-    assert str(OWNAlarmCommand.engage("1")) == "*5*8*1##"
-    assert str(OWNAlarmCommand.arm_home()) == "*5*1*0##"
-    assert str(OWNAlarmCommand.trigger()) == "*5*17*0##"
-    assert str(OWNAlarmCommand.panic()) == "*5*17*0##"
+    # Report 21 A1: WHAT 1/2/8/9/17 are states, not controls (who-5 what.md,
+    # protocol.md#write-support); the builders raise, see test_misc_audit_fixes.
+    for builder in (
+        OWNAlarmCommand.disarm,
+        OWNAlarmCommand.disengage,
+        OWNAlarmCommand.arm_away,
+        OWNAlarmCommand.engage,
+        OWNAlarmCommand.arm_home,
+        OWNAlarmCommand.trigger,
+        OWNAlarmCommand.panic,
+    ):
+        with pytest.raises(NotImplementedError):
+            builder()
+    assert str(OWNAlarmCommand.arm("12345")) == "*5*36#12345*0##"
     assert str(OWNAlarmCommand.status()) == "*#5*0##"
     assert str(OWNAlarmCommand.status("1")) == "*#5*#1##"
     assert str(OWNAlarmCommand.status("#2")) == "*#5*#2##"
@@ -210,7 +215,7 @@ def test_alarm_zone_telemetry_does_not_pollute_system_arm_state() -> None:
     z_act = OWNMessage.parse("*5*11*#1##")
     assert isinstance(z_act, OWNAlarmEvent)
     assert z_act.general is False
-    assert z_act.zone == "1"
+    assert z_act.zone == 1  # int for the #Z selector (report 21 A2)
     assert z_act.is_zone_active is True
     assert z_act.is_armed_home is False
     assert z_act.is_armed_away is False
@@ -218,7 +223,7 @@ def test_alarm_zone_telemetry_does_not_pollute_system_arm_state() -> None:
     z_byp = OWNMessage.parse("*5*18*#7##")
     assert isinstance(z_byp, OWNAlarmEvent)
     assert z_byp.general is False
-    assert z_byp.zone == "7"
+    assert z_byp.zone == 7
     assert z_byp.is_zone_inactive is True
     assert z_byp.is_zone_active is False
     assert z_byp.is_disarmed is False

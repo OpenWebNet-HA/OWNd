@@ -2,12 +2,34 @@
 
 from __future__ import annotations
 
-import re
+from collections.abc import Iterable
 
-from .base import OWNCommand, OWNEvent, register_command_parser, register_event_parser
+from .base import (
+    OWNCommand,
+    OWNEvent,
+    register_command_parser,
+    register_event_parser,
+    require_non_empty_where,
+)
 
 
 class OWNAlarmEvent(OWNEvent):
+    """WHO 5 burglar alarm frames.
+
+    WHERE grammar (Encyclopedia ``functional/who-5-alarm/addressing.md``
+    #published-where-values): ``#0..#8`` central zone, ``#9`` auxiliary 9, the
+    anti-panic source (``#1..#9`` are auxiliaries in the published table and
+    the TS10 filter accepts anti-panic only at ``#9``,
+    #historical-event-validation), ``#12`` zone C / AUX C, ``#15`` zone F /
+    AUX F, ``ZS`` a sensor ``S`` of zone ``Z`` (``01..0n`` input-zone devices).
+    ``zone`` is an ``int`` for both the ``#Z`` selector and the ``ZS`` sensor
+    form (``"c"`` / ``"f"`` for ``#12`` / ``#15``).
+
+    WHAT semantics (``what.md``): ``0`` Maintenance and ``1`` Activation are
+    central-unit states, ``11`` Active zone / ``18`` Non-active zone are zone
+    states, ``8`` / ``9`` Engage / Disengage the armed state.
+    """
+
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
@@ -18,18 +40,30 @@ class OWNAlarmEvent(OWNEvent):
         # Zone may be a letter ("c", "f"), a number, or None (system-wide).
         self._zone: str | int | None = None
         self._sensor: int | None = None
+        self._auxiliary = False
 
         where = self._where or ""
         if where in ("*", ""):
             self._system = True
             self._human_readable_log = "System is reporting: "
         elif where.startswith("#"):
-            self._zone = where[1:]
-            if self._zone == "12":
+            selector = where[1:]
+            if selector == "12":
                 self._zone = "c"
-            elif self._zone == "15":
+                self._human_readable_log = "Zone c is reporting: "
+            elif selector == "15":
                 self._zone = "f"
-            self._human_readable_log = f"Zone {self._zone} is reporting: "
+                self._human_readable_log = "Zone f is reporting: "
+            elif selector == "9":
+                # addressing.md: #9 is auxiliary 9, the anti-panic source, not
+                # a central zone (central zones are #0..#8).
+                self._zone = 9
+                self._auxiliary = True
+                self._human_readable_log = "Auxiliary 9 (anti-panic) is reporting: "
+            else:
+                # The frame grammar only lets digits follow the '#'.
+                self._zone = int(selector)
+                self._human_readable_log = f"Zone {self._zone} is reporting: "
         elif len(where) > 1:
             self._zone = int(where[0])
             self._sensor = int(where[1:])
@@ -113,9 +147,23 @@ class OWNAlarmEvent(OWNEvent):
         return self._sensor
 
     @property
+    def is_auxiliary(self) -> bool:
+        """True for the ``#9`` auxiliary (anti-panic) source (addressing.md)."""
+        return self._auxiliary
+
+    @property
     def is_active(self) -> bool:
-        """System-wide activation only: zone/sensor frames never move the panel."""
-        return self._state_code in (1, 11) and self._system
+        """WHAT 1 "Activation" on the central unit (what.md: central-unit state).
+
+        WHAT 11 is a zone state ("Active zone"), never a central-unit one: see
+        ``is_zone_active``. Zone/sensor frames never move the panel.
+        """
+        return self._state_code == 1 and self._system
+
+    @property
+    def is_maintenance(self) -> bool:
+        """WHAT 0 "Maintenance" on the central unit (what.md: central-unit state, not a disarm)."""
+        return self._state_code == 0 and self._system
 
     @property
     def is_engaged(self) -> bool:
@@ -123,7 +171,11 @@ class OWNAlarmEvent(OWNEvent):
 
     @property
     def is_disarmed(self) -> bool:
-        return self._state_code in (0, 2, 9) and self._system
+        """WHAT 2 "Disactivation" or WHAT 9 "Disengage" on the central unit.
+
+        WHAT 0 (maintenance) is a separate central-unit state (``is_maintenance``).
+        """
+        return self._state_code in (2, 9) and self._system
 
     @property
     def is_armed_away(self) -> bool:
@@ -208,25 +260,103 @@ class OWNAlarmEvent(OWNEvent):
 
 
 
+_NO_CONTROL_FRAME = (
+    "WHO 5 WHAT {what} is a {role} (Encyclopedia functional/who-5-alarm/what.md), "
+    "not a control: protocol.md#write-support says report-only values must not be "
+    "transmitted as commands, and *5*{what}*0## is refused on 9 of the 12 emulated "
+    "gateways while F453, MH200 and MH200N turn it into a central-unit poll "
+    "(ORACLE_CONFIRM.md row A1). The documented controls are "
+    "OWNAlarmCommand.arm(password) (*5*36#PASSWORD*0##) and "
+    "OWNAlarmCommand.set_zones(password, mask) (*5*50#PASSWORD#MASK*0##), "
+    "protocol.md#historical-password-controls; most plants arm through "
+    "installer-programmed WHO 9 AUX frames instead (MyHOME#564)."
+)
+
+
 class OWNAlarmCommand(OWNCommand):
     """WHO 5 frames sent to the burglar alarm central unit.
 
-    Only ``status()`` is safe to rely on. Field reports say current central-unit
-    firmware rejects arm/disarm sent as WHO 5 frames over SCS (MyHOME#564,
-    comment 5913248544: the owner of an MHS1 + H4890/MH202 plant, quoting
-    BTicino support), whichever gateway sends them. No TX capture shows any
-    ``*5*...`` command being accepted.
+    The documented frames (Encyclopedia ``functional/who-5-alarm/protocol.md``):
 
-    The working route on that plant is a WHO 9 auxiliary command, e.g.
-    ``*9*1*7##`` (AUX channel 7 ON), with an automation programmed on the
-    central unit that arms the chosen zones when that AUX command arrives.
-    Which AUX channels and WHATs arm or disarm depends on the installer's
-    programming, so OWNd has no fixed frame for it. Consumers should treat the
-    alarm as read-only and send installer-configured AUX frames to arm or
-    disarm.
+    - ``status()``: ``*#5##`` / ``*#5*0##`` central-unit state
+      (#central-unit-status-request, #historical-password-controls) and
+      ``*#5*#N##`` zone state (#zone-status-request).
+    - ``arm(password)``: ``*5*36#PASSWORD*0##`` toggles the armed / disarmed
+      state (#historical-password-controls, TS10 exact assertions A0080..A0084,
+      ENCY_CONFIRM.md EA-A1). The frame goes out on H4684 and MH202 as three
+      password telegrams (ORACLE_CONFIRM.md row A1).
+    - ``set_zones(password, mask)``: ``*5*50#PASSWORD#MASK*0##`` zone
+      partialization, eight textual bits for zones 1..8, ``1`` = partialized.
 
-    The arm/disarm/trigger builders below are kept for API compatibility.
+    WHAT 1, 2, 8, 9 and 17 are states and events (``what.md``); the page says
+    their presence in the vocabulary "must not be interpreted as permission to
+    transmit them as control operations" (#write-support), and the old
+    ``disarm`` / ``arm_away`` / ``arm_home`` / ``trigger`` / ``panic`` /
+    ``engage`` / ``disengage`` builders that emitted ``*5*2*0##``,
+    ``*5*1*0##``, ``*5*17*0##``, ``*5*8*0##`` and ``*5*9*0##`` now raise
+    ``NotImplementedError``: on the emulated gateways those frames are refused
+    on 9 of 12 and turned into one identical central-unit poll on F453, MH200
+    and MH200N (ORACLE_CONFIRM.md row A1), i.e. the WHAT is never sent to the
+    panel. Field reports (MyHOME#564, quoting BTicino support) say current
+    central units reject WHO 5 arming over SCS anyway; the working route is an
+    installer-programmed WHO 9 AUX frame (``*9*1*7##``), which OWNd cannot fix.
+
+    The password is never written to ``human_readable_log`` (protocol.md: "do
+    not log password-bearing frames unredacted"); the raw frame still carries it.
     """
+
+    @staticmethod
+    def _password(password: str | int) -> str:
+        pwd = str(password).strip()
+        if not pwd or any(ch in pwd for ch in "*#"):
+            raise ValueError("alarm password must be a non-empty string without '*' or '#'")
+        return pwd
+
+    @classmethod
+    def arm(cls, password: str | int, where: str | int = "0") -> OWNAlarmCommand:
+        """Toggle the armed / disarmed state with the panel password: ``*5*36#PASSWORD*0##``.
+
+        protocol.md#historical-password-controls: the central target ``0`` is
+        the touchscreen library's form; the password's format and acceptance
+        rules are not established and no ACK proves acceptance. The result is
+        read back from the WHAT 8 / 9 reports (``is_engaged`` / ``is_disarmed``).
+        """
+        pwd = cls._password(password)
+        target = require_non_empty_where(where)
+        message = cls(f"*5*36#{pwd}*{target}##")
+        message._human_readable_log = (
+            f"Toggling burglar alarm armed state on {target} (password redacted)."
+        )
+        return message
+
+    @classmethod
+    def set_zones(
+        cls, password: str | int, mask: str | Iterable[int], where: str | int = "0"
+    ) -> OWNAlarmCommand:
+        """Set the zone partialization: ``*5*50#PASSWORD#MASK*0##``.
+
+        ``mask`` is either the eight textual bits of protocol.md
+        (``"11000001"``: zones 1, 2 and 8 partialized, left to right for zones
+        1..8) or the zone numbers to partialize (``{1, 2, 8}``). The page's
+        touchscreen sends ``50``, waits, then ``36`` to arm with the new
+        selection; those delays are application choices.
+        """
+        pwd = cls._password(password)
+        if isinstance(mask, str):
+            bits = mask.strip()
+            if len(bits) != 8 or any(ch not in "01" for ch in bits):
+                raise ValueError("alarm zone mask must be eight '0'/'1' characters for zones 1..8")
+        else:
+            zones = {int(z) for z in mask}
+            if any(z < 1 or z > 8 for z in zones):
+                raise ValueError("alarm zones must be between 1 and 8")
+            bits = "".join("1" if z in zones else "0" for z in range(1, 9))
+        target = require_non_empty_where(where)
+        message = cls(f"*5*50#{pwd}#{bits}*{target}##")
+        message._human_readable_log = (
+            f"Setting burglar alarm zone partialization {bits} on {target} (password redacted)."
+        )
+        return message
 
     @classmethod
     def status(cls, where: str | int | None = "0") -> OWNAlarmCommand:
@@ -250,71 +380,44 @@ class OWNAlarmCommand(OWNCommand):
 
     @classmethod
     def disarm(cls, where: str | int = "0") -> OWNAlarmCommand:
-        """Unverified: current central-unit firmware rejects SCS disarm (see class docstring)."""
-        message = cls(f"*5*2*{where}##")
-        message._human_readable_log = f"Disarming burglar alarm for zone {where}."
-        return message
+        """Raises: WHAT 2 "Disactivation" is a state/event, not a control (what.md). Use ``arm(password)``."""
+        del where
+        raise NotImplementedError(_NO_CONTROL_FRAME.format(what=2, role="state/event"))
 
     @classmethod
     def arm_away(cls, where: str | int = "0") -> OWNAlarmCommand:
-        """Unverified: current central-unit firmware rejects SCS arming (see class docstring).
-
-        On the bus WHAT 1 is "activation" (system operational), not armed: the
-        F454 trace (MyHOME#311) shows it on every disarm. Same frame as arm_home().
-        """
-        message = cls(f"*5*1*{where}##")
-        message._human_readable_log = (
-            f"Arming burglar alarm (away) for zone {where}."
-        )
-        return message
+        """Raises: WHAT 1 "Activation" is a central-unit state, not a control (what.md). Use ``arm(password)``."""
+        del where
+        raise NotImplementedError(_NO_CONTROL_FRAME.format(what=1, role="central-unit state"))
 
     @classmethod
     def arm_home(cls, where: str | int = "0") -> OWNAlarmCommand:
-        """Unverified: same frame as arm_away(); see arm_away() and the class docstring."""
-        message = cls(f"*5*1*{where}##")
-        message._human_readable_log = (
-            f"Arming burglar alarm (home) for zone {where}."
-        )
-        return message
+        """Raises: no home / away distinction exists on the page; WHAT 1 is a state. Use ``set_zones`` + ``arm``."""
+        del where
+        raise NotImplementedError(_NO_CONTROL_FRAME.format(what=1, role="central-unit state"))
 
     @classmethod
     def trigger(cls, where: str | int = "0") -> OWNAlarmCommand:
-        """Unverified: no TX capture of a panic command being accepted."""
-        message = cls(f"*5*17*{where}##")
-        message._human_readable_log = (
-            f"Triggering panic burglar alarm for zone {where}."
-        )
-        return message
+        """Raises: WHAT 17 "Anti-panic alarm" is an alarm event, not a control (what.md)."""
+        del where
+        raise NotImplementedError(_NO_CONTROL_FRAME.format(what=17, role="alarm event"))
 
     @classmethod
     def panic(cls, where: str | int = "0") -> OWNAlarmCommand:
+        """Raises: see ``trigger``."""
         return cls.trigger(where=where)
 
     @classmethod
     def engage(cls, where: str | int = "0") -> OWNAlarmCommand:
-        """Experimental: engage burglar alarm for zone (default "0" = central).
-
-        No TX capture of this command exists, and current central-unit firmware
-        is reported to reject SCS arming (see class docstring).
-        """
-        message = cls(f"*5*8*{where}##")
-        message._human_readable_log = (
-            f"Engaging burglar alarm for zone {where}."
-        )
-        return message
+        """Raises: WHAT 8 "Engage" is a system state (what.md: "System state/control context"). Use ``arm(password)``."""
+        del where
+        raise NotImplementedError(_NO_CONTROL_FRAME.format(what=8, role="system state"))
 
     @classmethod
     def disengage(cls, where: str | int = "0") -> OWNAlarmCommand:
-        """Experimental: disengage burglar alarm for zone (default "0" = central).
-
-        No TX capture of this command exists, and current central-unit firmware
-        is reported to reject SCS disarming (see class docstring).
-        """
-        message = cls(f"*5*9*{where}##")
-        message._human_readable_log = (
-            f"Disengaging burglar alarm for zone {where}."
-        )
-        return message
+        """Raises: WHAT 9 "Disengage" is a system state (what.md). Use ``arm(password)``."""
+        del where
+        raise NotImplementedError(_NO_CONTROL_FRAME.format(what=9, role="system state"))
 
 
 register_event_parser(5, OWNAlarmEvent)

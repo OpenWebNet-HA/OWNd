@@ -417,11 +417,14 @@ class TestAlarmEdgeCases:
         assert msg.is_zone_active is True
 
     def test_alarm_system_active_is_active(self):
-        assert OWNEvent.parse("*5*11**##").is_active is True
+        # WHAT 11 is a zone state (who-5 what.md), never a central-unit
+        # activation (report 21 A4); WHAT 1 is.
+        assert OWNEvent.parse("*5*11**##").is_active is False
         assert OWNEvent.parse("*5*1*0##").is_active is True
         # No capture shows a system-level WHAT 11, so it never means "home".
         assert OWNEvent.parse("*5*11*0##").is_armed_home is False
-        assert OWNEvent.parse("*5*11*0##").is_active is True
+        assert OWNEvent.parse("*5*11*0##").is_active is False
+        assert OWNEvent.parse("*5*11*0##").is_zone_active is False
         assert OWNEvent.parse("*5*8*#3##").is_engaged is False
         assert OWNEvent.parse("*5*8*0##").is_engaged is True
 
@@ -1419,11 +1422,16 @@ class TestProtocolFixesAudit:
         assert str(req_9_1) == "*#9*1##"
 
     def test_alarm_commands_alignment(self):
-        assert str(OWNAlarmCommand.disarm("0")) == "*5*2*0##"
-        assert str(OWNAlarmCommand.arm_away("0")) == "*5*1*0##"
-        assert str(OWNAlarmCommand.arm_home("0")) == "*5*1*0##"
-        assert str(OWNAlarmCommand.trigger("0")) == "*5*17*0##"
-        assert str(OWNAlarmCommand.panic("0")) == "*5*17*0##"
+        # Report 21 A1: state WHATs are no longer built as controls.
+        for builder in (
+            OWNAlarmCommand.disarm,
+            OWNAlarmCommand.arm_away,
+            OWNAlarmCommand.arm_home,
+            OWNAlarmCommand.trigger,
+            OWNAlarmCommand.panic,
+        ):
+            with pytest.raises(NotImplementedError):
+                builder("0")
         assert str(OWNAlarmCommand.status("0")) == "*#5*0##"
         assert str(OWNAlarmCommand.status("1")) == "*#5*#1##"
         assert str(OWNAlarmCommand.status("#2")) == "*#5*#2##"

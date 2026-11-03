@@ -6,7 +6,7 @@
   where: "2"
   source: openwebnet4j
   mcp_valid: true
-  mcp_notes: "Burglar Alarm: Status request for zone 2"
+  mcp_notes: "Burglar Alarm: openwebnet4j spelling of a zone 2 status request. The published zone request is *#5*#2## (Encyclopedia functional/who-5-alarm/protocol.md#zone-status-request, zone selector #N) and this prefix-less form is not on the page; OWNd accepts it and keeps WHERE 2 as given"
   roundtrip: true
 
 - id: alarm.req.status.zone_cu_2
@@ -20,7 +20,7 @@
   mcp_notes: "Burglar Alarm: Status request for central unit zone #2"
   roundtrip: true
 
-- id: alarm.event.silent.zone0
+- id: alarm.event.disactivation.central
   frame: "*5*2*0##"
   direction: event
   who: 5
@@ -28,7 +28,7 @@
   where: "0"
   source: openwebnet4j
   mcp_valid: true
-  mcp_notes: "Burglar Alarm: Silent alarm event for zone 0"
+  mcp_notes: "Burglar Alarm: WHAT 2 is Disactivation (Encyclopedia functional/who-5-alarm/what.md); the silent alarm is WHAT 31. WHERE 0 is the central unit. The earlier label 'Silent alarm event for zone 0' was the judge catalog wording, not the published meaning. OWNd: state_name 'deactivation', is_disarmed True, is_silent False"
   roundtrip: true
 
 - id: alarm.event.zone_cu_2
@@ -50,7 +50,7 @@
   where: "0"
   source: community-plant-capture
   mcp_valid: true
-  mcp_notes: "Burglar Alarm: Arm system total/away captured on MH202 (MyHOME#564 comment 5917195080)"
+  mcp_notes: "Burglar Alarm: WHAT 1 Activation (central-unit state, Encyclopedia functional/who-5-alarm/what.md), captured on MH202 (MyHOME#564 comment 5917195080). Not an arm: the F454 trace (MyHOME#311) sends it on every disarm and only WHAT 8 means armed; OWNd is_active True, is_armed_away False"
   roundtrip: true
 
 - id: alarm.event.disarm.mh202
