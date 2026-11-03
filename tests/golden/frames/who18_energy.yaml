@@ -1,3 +1,11 @@
+# The four `*#18*1*...##` records below are grammar-only fixtures. They were
+# labelled `legrand-spec` with active-power / kWh-totalizer meanings, but WHO_18.pdf
+# (Encyclopedia who-18 dimensions.md "Identifier table") defines no DIMENSION 1 and
+# no DIMENSION 11: active power is 113, the totalizer is 51, and 11 is the ZigBee
+# "Voltage" dimension of the separate variant (zigbee-variant.md "Dimension table").
+# WHERE `1` is not a published family either (`1N` needs N = 1..127, addressing.md).
+# Energy values on the SCS wire are Wh, never kWh. They stay as `conflict` records
+# pinning parser shape only; OWNd gives them no `message_type` (report 21 E12).
 - id: energy.req.active_power.meter1
   frame: "*#18*1*1##"
   direction: dimension_request
@@ -5,9 +13,9 @@
   what: null
   where: "1"
   dimension: 1
-  source: legrand-spec
+  source: conflict
   mcp_valid: true
-  mcp_notes: "Energy Management: Request instantaneous active power from meter 1"
+  mcp_notes: "Grammar-only: DIMENSION 1 is not defined for SCS WHO 18 (active power is DIMENSION 113) and WHERE 1 is outside the 1N / 5N / 7N#0 families; parsed with message_type None"
   roundtrip: true
 
 - id: energy.resp.active_power.meter1.1450
@@ -18,9 +26,9 @@
   where: "1"
   dimension: 1
   dimension_values: ["1450"]
-  source: legrand-spec
+  source: conflict
   mcp_valid: true
-  mcp_notes: "Energy Management: Meter 1 reports 1450 Watts instantaneous active power"
+  mcp_notes: "Grammar-only: DIMENSION 1 is not defined for SCS WHO 18, so 1450 carries no documented unit; parsed with message_type None"
   roundtrip: true
 
 - id: energy.req.lifetime.meter1
@@ -30,9 +38,9 @@
   what: null
   where: "1"
   dimension: 11
-  source: legrand-spec
+  source: conflict
   mcp_valid: true
-  mcp_notes: "Energy Management: Request cumulative energy totalizer for meter 1"
+  mcp_notes: "Grammar-only: DIMENSION 11 is the ZigBee variant's Voltage dimension, not an SCS totalizer (DIMENSION 51); parsed with message_type None"
   roundtrip: true
 
 - id: energy.resp.lifetime.meter1.45230
@@ -43,9 +51,9 @@
   where: "1"
   dimension: 11
   dimension_values: ["00452300"]
-  source: legrand-spec
+  source: conflict
   mcp_valid: true
-  mcp_notes: "Energy Management: Cumulative energy reports 45,230.0 kWh"
+  mcp_notes: "Grammar-only: DIMENSION 11 is the ZigBee variant's Voltage dimension; 00452300 is kept raw without a unit (SCS WHO 18 energy values are Wh); parsed with message_type None"
   roundtrip: true
 
 - id: energy.req.unit.meter51
