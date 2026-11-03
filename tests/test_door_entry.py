@@ -210,14 +210,20 @@ def test_who8_camera_auto_switch_cycling_and_ptz() -> None:
     assert ev_cam_nocaller.caller is None
     assert ev_cam_nocaller.human_readable_log == "Camera 20 switched ON."
 
+    # *8*6#LOCAL*ORIGINAL_CALLER##: WHERE is the original caller (who-8 README
+    # #historical-touchscreen-call-model; report 21 I2).
     ev_cycle = OWNLockEvent("*8*6#11*20##")
     assert ev_cycle.message_type == MESSAGE_TYPE_CAMERA
     assert ev_cycle.is_cycle is True
-    assert "cycling triggered by caller 11" in ev_cycle.human_readable_log
+    assert ev_cycle.caller == "11"
+    assert ev_cycle.original_caller == "20"
+    assert ev_cycle.camera is None
+    assert "cycling requested by 11 for the call from 20" in ev_cycle.human_readable_log
 
     ev_cycle_nocaller = OWNLockEvent("*8*6*20##")
     assert ev_cycle_nocaller.caller is None
-    assert "cycling triggered (target 20)" in ev_cycle_nocaller.human_readable_log
+    assert ev_cycle_nocaller.original_caller == "20"
+    assert "cycling requested for the call from 20" in ev_cycle_nocaller.human_readable_log
 
     ev_ptz_up = OWNLockEvent("*8*59#1*20##")
     assert ev_ptz_up.message_type == MESSAGE_TYPE_PTZ
@@ -339,10 +345,11 @@ def test_who8_intercom_calling_and_session() -> None:
     ev_notif_noparams = OWNLockEvent("*8*9*11##")
     assert ev_notif_noparams.session_action == "caller_notification"
 
-    # Session rearm: *8*40*11##
+    # Session rearm: *8*40*11## (no parameters) and *8*40#KIND#MMTYPE*CALLER##
     ev_rearm = OWNLockEvent("*8*40*11##")
     assert ev_rearm.session_action == "rearm"
     assert ev_rearm.caller == "11"
+    assert ev_rearm.call_kind is None
     assert ev_rearm.human_readable_log == "Session rearmed for 11."
 
     # Builders
@@ -366,11 +373,13 @@ def test_who8_intercom_calling_and_session() -> None:
     )
     assert str(cmd_ans) == "*8*2#6#2*11##"
 
+    # End call concatenates the literal 4 before the local address (who-8
+    # README #historical-touchscreen-call-model; report 21 I1).
     cmd_end = OWNLockCommand.end_call(
-        "411", kind=KIND_INTERNAL_INTERCOM, mm_type=MMTYPE_AUDIO
+        "11", kind=KIND_INTERNAL_INTERCOM, mm_type=MMTYPE_AUDIO
     )
     assert str(cmd_end) == "*8*3#6#2*411##"
-    assert str(OWNLockCommand.end_call()) == f"*8*3#6#2*{END_ALL_CALLS}##"
+    assert END_ALL_CALLS == "4"
 
     cmd_stop_vid = OWNLockCommand.stop_video("11", kind=KIND_PE1)
     assert str(cmd_stop_vid) == "*8*3#1#3*11##"

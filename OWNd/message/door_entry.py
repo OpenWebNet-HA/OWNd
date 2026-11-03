@@ -2,7 +2,13 @@
 
 from __future__ import annotations
 
-from .base import OWNCommand, OWNEvent, register_command_parser, register_event_parser
+from .base import (
+    OWNCommand,
+    OWNEvent,
+    register_command_parser,
+    register_event_parser,
+    require_non_empty_where,
+)
 
 # Call kinds
 KIND_PE1 = 1
@@ -15,14 +21,29 @@ KIND_EXTERNAL_INTERCOM = 7
 KIND_FLOOR = 13
 KIND_PAGER = 14
 
-# Multimedia types
+# Multimedia types (Encyclopedia functional/who-8-video-door-entry-telephony/README.md
+# #historical-touchscreen-call-model: "Tests establish MMTYPE = 2 for audio and 4 for
+# audio/video. The parser also treats end-call MMTYPE = 3 as a stop-video notification").
 MMTYPE_AUDIO = 2
-MMTYPE_VIDEO = 3
 MMTYPE_AUDIO_VIDEO = 4
+# Deprecated alias: the only video media type on the page is audio/video (4);
+# 3 is not a media type but the end-call stop-video marker (MMTYPE_STOP_VIDEO).
+MMTYPE_VIDEO = MMTYPE_AUDIO_VIDEO
+MMTYPE_STOP_VIDEO = 3
 
 # Special values
-END_ALL_CALLS = 4
+# End call is ``*8*3#KIND#MMTYPE*4LOCAL##``: "the end-call writer concatenates
+# literal 4 before the local address; it is not a #4 routing qualifier"
+# (who-8 README #historical-touchscreen-call-model). The same literal is the
+# pager broadcast WHERE of ``*8*1#14#2#LOCAL*4##``.
+END_CALL_PREFIX = "4"
 BROADCAST_WHERE = "4"
+# Deprecated: ``END_ALL_CALLS`` used to be the default WHERE of ``end_call`` and
+# produced ``*8*3#6#2*4##``, a misreading of the literal prefix as an
+# "end all calls" broadcast (no such form is on the page; the frame is
+# ``nack, silent`` on all 12 emulated gateways, ORACLE_CONFIRM.md row I1).
+# Kept as an importable name only; ``end_call`` takes the local address.
+END_ALL_CALLS = END_CALL_PREFIX
 
 # PTZ opcodes and actions
 PTZ_MOVE_UP = 59
@@ -69,6 +90,7 @@ class OWNDoorEntryEvent(OWNEvent):
         self._is_staircase_off = self._what == 11
         self._is_camera_on = self._what == 0
         self._is_camera_off = self._what == 9
+        self._is_camera_cycle = self._what == 18
 
         if self._is_broadcast_call:
             self._human_readable_log = "Incoming door entry broadcast call."
@@ -100,6 +122,10 @@ class OWNDoorEntryEvent(OWNEvent):
             )
         elif self._is_camera_off:
             self._human_readable_log = "Door entry camera switched OFF."
+        elif self._is_camera_cycle:
+            self._human_readable_log = (
+                f"Door entry camera cycling at entrance panel {self._where}."
+            )
         elif self._what is not None:
             self._human_readable_log = (
                 f"Door entry device {self._where} received event: {self._what}."
@@ -155,14 +181,34 @@ class OWNDoorEntryEvent(OWNEvent):
         """True if a camera OFF event (*6*9##) was received."""
         return self._is_camera_off
 
+    @property
+    def is_camera_cycle(self) -> bool:
+        """True if a camera cycling frame (*6*18*WHERE##) was received.
+
+        Encyclopedia ``functional/who-6-basic-video-door-entry/README.md``
+        #l4686sdk-reference: ``WHERE = 4000..4095``, the source requires a
+        preceding Camera ON, the riser form appends ``#2``.
+        """
+        return self._is_camera_cycle
+
 
 class OWNDoorEntryCommand(OWNCommand):
-    """WHO 6 commands for door locks, staircase lighting, and cameras."""
+    """WHO 6 commands for door locks, staircase lighting, and cameras.
+
+    Encyclopedia ``functional/who-6-basic-video-door-entry/README.md``
+    #l4686sdk-reference publishes ``WHERE = 4000..4095`` (riser form ``#2``)
+    for Camera ON, Open lock and Camera cycling; the page is product-scoped
+    (L4686SDK 1.0.0) and the historical simulator accepts a wider index range,
+    so the builders do not enforce the range. They do require an explicit,
+    non-empty WHERE: the old ``where=0`` default built ``*6*10*0##``, which is
+    ``nack, silent`` on all 12 emulated gateways while ``*6*10*4001##`` goes
+    out on F453, F453AV, H4684 and MH200 (ORACLE_CONFIRM.md row E1-door).
+    """
 
     @classmethod
-    def open_lock(cls, where: str | int = 0) -> OWNDoorEntryCommand:
-        """Open / release door lock at the specified entrance panel address."""
-        ep = str(where).strip()
+    def open_lock(cls, where: str | int) -> OWNDoorEntryCommand:
+        """Open / release door lock at the entrance panel address (``*6*10*WHERE##``)."""
+        ep = require_non_empty_where(where)
         message = cls(f"*6*10*{ep}##")
         message._human_readable_log = (
             f"Opening door lock at entrance panel {ep}."
@@ -170,9 +216,9 @@ class OWNDoorEntryCommand(OWNCommand):
         return message
 
     @classmethod
-    def staircase_light_on(cls, where: str | int = 0) -> OWNDoorEntryCommand:
-        """Switch ON the staircase light from the door entry system."""
-        ep = str(where).strip()
+    def staircase_light_on(cls, where: str | int) -> OWNDoorEntryCommand:
+        """Switch ON the staircase light from the door entry system (``*6*12*WHERE##``)."""
+        ep = require_non_empty_where(where)
         message = cls(f"*6*12*{ep}##")
         message._human_readable_log = (
             f"Switching ON staircase light from door entry at {ep}."
@@ -180,9 +226,9 @@ class OWNDoorEntryCommand(OWNCommand):
         return message
 
     @classmethod
-    def staircase_light_off(cls, where: str | int = 0) -> OWNDoorEntryCommand:
-        """Switch OFF the staircase light from the door entry system."""
-        ep = str(where).strip()
+    def staircase_light_off(cls, where: str | int) -> OWNDoorEntryCommand:
+        """Switch OFF the staircase light from the door entry system (``*6*11*WHERE##``)."""
+        ep = require_non_empty_where(where)
         message = cls(f"*6*11*{ep}##")
         message._human_readable_log = (
             f"Switching OFF staircase light from door entry at {ep}."
@@ -191,11 +237,29 @@ class OWNDoorEntryCommand(OWNCommand):
 
     @classmethod
     def camera_on(cls, where: str | int) -> OWNDoorEntryCommand:
-        """Switch ON video door entry camera at entrance panel."""
-        ep = str(where).strip()
+        """Switch ON video door entry camera at entrance panel (``*6*0*WHERE##``).
+
+        An empty WHERE raises ``ValueError`` instead of building the invalid
+        ``*6*0*##``.
+        """
+        ep = require_non_empty_where(where)
         message = cls(f"*6*0*{ep}##")
         message._human_readable_log = (
             f"Switching ON camera at entrance panel {ep}."
+        )
+        return message
+
+    @classmethod
+    def camera_cycle(cls, where: str | int) -> OWNDoorEntryCommand:
+        """Cycle the camera at entrance panel (``*6*18*WHERE##``).
+
+        who-6 README #l4686sdk-reference: the source requires a preceding
+        Camera ON; the riser form appends ``#2`` to WHERE.
+        """
+        ep = require_non_empty_where(where)
+        message = cls(f"*6*18*{ep}##")
+        message._human_readable_log = (
+            f"Cycling camera at entrance panel {ep}."
         )
         return message
 
@@ -247,8 +311,9 @@ class OWNIntercomEvent(OWNEvent):
         self._ptz_direction: str | None = None
         self._ptz_action: str | None = None
         self._session_action: str | None = None
-        self._teleloop_mode: int | None = None
+        self._teleloop_id: int | None = None
         self._vct_mode: int | None = None
+        self._original_caller: str | None = None
 
         if what is None:
             return
@@ -275,14 +340,19 @@ class OWNIntercomEvent(OWNEvent):
                 else f"Camera {self._camera} switched ON."
             )
         elif what == 6:
+            # ``*8*6#LOCAL*ORIGINAL_CALLER##`` (who-8 README
+            # #historical-touchscreen-call-model): the WHERE is the original
+            # caller of the call being cycled, not a camera address; "cycling
+            # continues to target the original caller".
             self._type = MESSAGE_TYPE_CAMERA
             self._is_cycle = True
             self._caller = params[0] if params else None
-            self._camera = self._where
+            self._original_caller = self._where or None
             self._human_readable_log = (
-                f"External camera cycling triggered by caller {self._caller} (target {self._camera})."
+                f"External unit cycling requested by {self._caller} "
+                f"for the call from {self._original_caller}."
                 if self._caller
-                else f"External camera cycling triggered (target {self._camera})."
+                else f"External unit cycling requested for the call from {self._original_caller}."
             )
         elif what in (59, 60, 61, 62):
             self._type = MESSAGE_TYPE_PTZ
@@ -359,18 +429,31 @@ class OWNIntercomEvent(OWNEvent):
                 f"VCT initialized on {self._where} (mode {self._vct_mode})."
             )
         elif what == 40:
+            # ``*8*40#KIND#MMTYPE*CALLER##`` re-arm session (who-8 README
+            # #historical-touchscreen-call-model): "updates the current
+            # address, media type and movable-camera flag".
             self._type = MESSAGE_TYPE_SESSION
             self._session_action = "rearm"
             self._caller = self._where
-            self._human_readable_log = f"Session rearmed for {self._caller}."
+            if len(params) >= 2:
+                self._call_kind = int(params[0]) if params[0].isdigit() else None
+                self._multimedia_type = int(params[1]) if params[1].isdigit() else None
+            self._human_readable_log = (
+                f"Session rearmed for {self._caller} "
+                f"(kind {self._call_kind}, mm {self._multimedia_type})."
+                if len(params) >= 2
+                else f"Session rearmed for {self._caller}."
+            )
         elif what in (76, 77, 78, 79):
             self._type = MESSAGE_TYPE_TELELOOP
             if what == 76:
                 self._session_action = "teleloop_start"
             elif what == 77:
+                # ``*8*77#ID*LOCAL##``: "received value identifies the
+                # association" (who-8 README #teleloop-and-local-multimedia-events).
                 self._session_action = "teleloop_association"
                 if params and params[0].isdigit():
-                    self._teleloop_mode = int(params[0])
+                    self._teleloop_id = int(params[0])
             elif what == 78:
                 self._session_action = "teleloop_timeout"
             else:
@@ -452,8 +535,17 @@ class OWNIntercomEvent(OWNEvent):
 
     @property
     def multimedia_type(self) -> int | None:
-        """Call multimedia type (MMTYPE_AUDIO, MMTYPE_VIDEO, MMTYPE_AUDIO_VIDEO)."""
+        """Call multimedia type: MMTYPE_AUDIO (2) or MMTYPE_AUDIO_VIDEO (4).
+
+        On an end-call frame the value MMTYPE_STOP_VIDEO (3) is the stop-video
+        marker, not a media type (``session_action`` is ``"stop_video"``).
+        """
         return self._multimedia_type
+
+    @property
+    def original_caller(self) -> str | None:
+        """Original caller of the call being cycled (WHERE of ``*8*6#LOCAL*ORIGINAL_CALLER##``)."""
+        return self._original_caller
 
     @property
     def caller(self) -> str | None:
@@ -472,7 +564,11 @@ class OWNIntercomEvent(OWNEvent):
 
     @property
     def camera(self) -> str | None:
-        """Target camera address."""
+        """Target camera address of an autoswitch (WHAT 4) or PTZ (WHAT 59..62) frame.
+
+        ``None`` on a cycling frame (WHAT 6): its WHERE is the original caller
+        (see ``original_caller``), not a camera.
+        """
         return self._camera
 
     @property
@@ -496,9 +592,14 @@ class OWNIntercomEvent(OWNEvent):
         return self._session_action
 
     @property
+    def teleloop_id(self) -> int | None:
+        """Teleloop association ID (``*8*77#ID*LOCAL##``, who-8 README #teleloop-and-local-multimedia-events)."""
+        return self._teleloop_id
+
+    @property
     def teleloop_mode(self) -> int | None:
-        """Teleloop mode parameter."""
-        return self._teleloop_mode
+        """Deprecated alias of ``teleloop_id``: the WHAT 77 parameter is an ID, not a mode."""
+        return self._teleloop_id
 
     @property
     def vct_mode(self) -> int | None:
@@ -585,7 +686,13 @@ class OWNIntercomCommand(OWNCommand):
     def cycle_camera(
         cls, caller: str | int, master_caller: str | int
     ) -> OWNIntercomCommand:
-        """Cycle to the next external unit / camera."""
+        """Cycle to the next external unit: ``*8*6#LOCAL*ORIGINAL_CALLER##``.
+
+        ``caller`` is the local address requesting the cycle, ``master_caller``
+        the original caller of the call (who-8 README
+        #historical-touchscreen-call-model: "cycling continues to target the
+        original caller").
+        """
         caller_str = str(caller).strip()
         master_str = str(master_caller).strip()
         message = cls(f"*8*6#{caller_str}*{master_str}##")
@@ -681,29 +788,53 @@ class OWNIntercomCommand(OWNCommand):
     @classmethod
     def end_call(
         cls,
-        where: str | int = END_ALL_CALLS,
+        where: str | int,
         kind: int = KIND_INTERNAL_INTERCOM,
         mm_type: int = MMTYPE_AUDIO,
     ) -> OWNIntercomCommand:
-        """Terminate call session."""
-        target = str(where).strip()
-        message = cls(f"*8*3#{kind}#{mm_type}*{target}##")
-        message._human_readable_log = f"Ending call session on {target}."
+        """Terminate the call session of local address ``where``: ``*8*3#KIND#MMTYPE*4LOCAL##``.
+
+        Encyclopedia ``functional/who-8-video-door-entry-telephony/README.md``
+        #historical-touchscreen-call-model: "The end-call writer concatenates
+        literal 4 before the local address; it is not a #4 routing qualifier"
+        (TS10 call tests, ENCY_CONFIRM.md SD-I1). ``end_call("11")`` ->
+        ``*8*3#6#2*411##``. ``where`` is the local address without the prefix.
+        The three spellings ``*8*3#6#2*11##``, ``*8*3#6#2*4##`` and
+        ``*8*3#6#2*411##`` are all ``nack, silent`` on the 12 emulated
+        gateways (ORACLE_CONFIRM.md row I1, UNDECIDED), so the page is the only
+        authority on the form.
+        """
+        local = require_non_empty_where(where)
+        message = cls(f"*8*3#{kind}#{mm_type}*{END_CALL_PREFIX}{local}##")
+        message._human_readable_log = f"Ending call session of {local}."
         return message
 
     @classmethod
     def stop_video(
         cls, where: str | int, kind: int = KIND_INTERNAL_INTERCOM
     ) -> OWNIntercomCommand:
-        """Stop video stream for active call."""
+        """Stop-video notification ``*8*3#KIND#3*WHERE##`` (``MMTYPE_STOP_VIDEO``).
+
+        The page only records the touchscreen *parsing* end-call ``MMTYPE = 3``
+        as a stop-video notification in SCS mode (who-8 README
+        #historical-touchscreen-call-model); no writer of it is documented, and
+        the WHERE form is this builder's choice (sent as given, no ``4`` prefix).
+        """
         target = str(where).strip()
-        message = cls(f"*8*3#{kind}#3*{target}##")
+        message = cls(f"*8*3#{kind}#{MMTYPE_STOP_VIDEO}*{target}##")
         message._human_readable_log = f"Stopping video feed on {target}."
         return message
 
     @classmethod
     def mute_amplifier(cls, where: str | int) -> OWNIntercomCommand:
-        """Silence multimedia amplifier."""
+        """Silence multimedia amplifier: ``*8*63*WHERE##``. Undocumented as a command.
+
+        The page lists WHAT 63 / 64 as "received events" of the local
+        multimedia amplifier (who-8 README #teleloop-and-local-multimedia-events);
+        no writer of them is documented. ``*8*63*11##`` is ``nack, silent`` on
+        all 12 emulated gateways (ORACLE_CONFIRM.md row I3). Kept for callers
+        that already send it.
+        """
         target = str(where).strip()
         message = cls(f"*8*63*{target}##")
         message._human_readable_log = (
@@ -713,7 +844,12 @@ class OWNIntercomCommand(OWNCommand):
 
     @classmethod
     def unmute_amplifier(cls, where: str | int) -> OWNIntercomCommand:
-        """Restore multimedia amplifier audio."""
+        """Restore multimedia amplifier audio: ``*8*64*WHERE##``. Undocumented as a command.
+
+        Same evidence as ``mute_amplifier``: WHAT 64 is a received event on the
+        page and ``*8*64*11##`` is ``nack, silent`` on all 12 emulated gateways
+        (ORACLE_CONFIRM.md row I3).
+        """
         target = str(where).strip()
         message = cls(f"*8*64*{target}##")
         message._human_readable_log = (
@@ -723,7 +859,12 @@ class OWNIntercomCommand(OWNCommand):
 
     @classmethod
     def status(cls, where: str | int) -> OWNIntercomCommand:
-        """Request device/intercom status."""
+        """Status request ``*#8*WHERE##``. Not on the page.
+
+        The who-8 README (#evidence-boundary) has no WHO 8 status request in
+        any source; ``*#8*11##`` is ``nack, silent`` on all 12 emulated gateways
+        (ORACLE_CONFIRM.md row I3). Kept for callers that already send it.
+        """
         target = str(where).strip()
         message = cls(f"*#8*{target}##")
         message._human_readable_log = f"Requesting intercom status for {target}."
