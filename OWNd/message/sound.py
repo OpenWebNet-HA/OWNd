@@ -1,4 +1,12 @@
-"""WHO 16: Sound diffusion and audio/video door entry events and commands."""
+"""WHO 16 Sound System and WHO 22 Sound Diffusion events and commands, plus the WHO 7 video stream commands.
+
+WHO 16 is the earlier Sound System dialect (Encyclopedia
+``who-16-sound-system``: amplifiers ``01..99``, sources ``101..109``, all
+sources ``100``); WHO 22 is the later Sound Diffusion / Multimedia dialect
+(``who-22-sound-diffusion``: tagged targets ``2#S``, ``3#A#P``, ``4#A``,
+``5#...``, ``6``). They are separate dialects and are not translated by
+numeric coincidence. ``OWNAVCommand`` opens and closes a WHO 7 video stream.
+"""
 
 from __future__ import annotations
 
@@ -39,9 +47,14 @@ class OWNSoundEvent(OWNEvent):
 
         self._state = self._what
         self._zone = self._where or ""
-        self._is_source_event = bool(re.fullmatch(r"10[1-9]", self._zone))
+        # WHERE 101..109 is source 1..9 and 100 every source (Encyclopedia
+        # who-16-sound-system#where); `100` has no source number.
+        self._is_all_sources = self._zone == "100"
+        self._is_source_event = bool(re.fullmatch(r"10[0-9]", self._zone))
         self._source_id = (
-            str(int(self._zone) - 100) if self._is_source_event else None
+            str(int(self._zone) - 100)
+            if self._is_source_event and not self._is_all_sources
+            else None
         )
         # `1ES` routes the amplifiers of environment E to matrix source S.
         # Environment 0 would be `10S`, the source itself, so E starts at 1.
@@ -64,8 +77,17 @@ class OWNSoundEvent(OWNEvent):
         self._frequency_step_backward: int | None = None
         self._is_seek_up: bool = False
         self._is_seek_down: bool = False
+        self._is_source_cycle: bool = False
+        self._is_sleep: bool = False
+        self._is_sleep_off: bool = False
+        self._is_follow_me: bool = False
+        self._is_rds_start: bool = False
+        self._is_rds_stop: bool = False
+        self._high_tone_step_delta: int | None = None
 
-        if self._is_source_event:
+        if self._is_all_sources:
+            subject = "All audio sources"
+        elif self._is_source_event:
             subject = f"Audio Source {self._source_id}"
         elif self._is_routing_event:
             subject = (
@@ -120,13 +142,54 @@ class OWNSoundEvent(OWNEvent):
             self._human_readable_log = (
                 f"{subject} decrease frequency by {self._frequency_step_backward} step(s)."
             )
+        # WHATs of the who-16-sound-system#what-values table that carry no
+        # magnitude: 20 / 23 source cycle, 30 / 33 sleep, 40 sleep off,
+        # 50 / 53 Follow Me, 101 / 102 RDS start / stop (base band / stereo
+        # channel as ``is_stereo_channel``). `*16*20*100##` / `*16*23*100##`
+        # cycle the sources on the plant of reverse-engineering
+        # sound-matrix-routing.md (ENCY_CONFIRM SD-S4).
+        elif self._state in (20, 23):
+            self._is_source_cycle = True
+            self._human_readable_log = f"{subject} cycles to the next source."
+        elif self._state in (30, 33):
+            self._is_sleep = True
+            self._human_readable_log = f"{subject} sleep is ON."
+        elif self._state == 40:
+            self._is_sleep_off = True
+            self._human_readable_log = f"{subject} sleep is OFF."
+        elif self._state in (50, 53):
+            self._is_follow_me = True
+            self._human_readable_log = f"{subject} is switched ON with Follow Me."
+        elif self._state == 101:
+            self._is_rds_start = True
+            self._human_readable_log = f"{subject} starts RDS transmission."
+        elif self._state == 102:
+            self._is_rds_stop = True
+            self._human_readable_log = f"{subject} stops RDS transmission."
+        elif self._state is not None and 2001 <= self._state <= 2015:
+            self._high_tone_step_delta = self._state - 2000
+            self._human_readable_log = (
+                f"{subject} increase high tones by {self._high_tone_step_delta} step(s)."
+            )
+        elif self._state is not None and 2101 <= self._state <= 2115:
+            self._high_tone_step_delta = -(self._state - 2100)
+            self._human_readable_log = (
+                f"{subject} decrease high tones by {abs(self._high_tone_step_delta)} step(s)."
+            )
         elif self._state is not None:
             self._human_readable_log = f"{subject} received command: {self._state}."
         elif self._dimension == 1 and self._dimension_value:
+            # Volume is 0..31 (who-16-sound-system#dimension-values); the
+            # firmware oracle NACKs a write of 50 on 12/12 gateways and
+            # forwards 31 (ORACLE_CONFIRM S1), so a report outside 0..31 is
+            # not a volume.
             try:
-                self._volume = int(self._dimension_value[0])
+                level = int(self._dimension_value[0])
             except ValueError:
                 return
+            if not 0 <= level <= 31:
+                return
+            self._volume = level
             self._human_readable_log = (
                 f"Audio zone {self._zone} volume is set to {self._volume}."
             )
@@ -182,11 +245,61 @@ class OWNSoundEvent(OWNEvent):
 
     @property
     def is_source_event(self) -> bool:
+        """True for a source address: ``101..109`` (source 1..9) or ``100`` (all sources)."""
         return self._is_source_event
+
+    @property
+    def is_all_sources(self) -> bool:
+        """True for WHERE ``100``, every source (who-16-sound-system#where); ``source_id`` is ``None``."""
+        return self._is_all_sources
 
     @property
     def source_id(self) -> str | None:
         return self._source_id
+
+    @property
+    def is_stereo_channel(self) -> bool | None:
+        """``True`` for the stereo-channel WHATs 3 / 13 / 23 / 33 / 53, ``False`` for the base-band 0 / 10 / 20 / 30 / 50, else ``None``."""
+        if self._state in (3, 13, 23, 33, 53):
+            return True
+        if self._state in (0, 10, 20, 30, 50):
+            return False
+        return None
+
+    @property
+    def is_source_cycle(self) -> bool:
+        """True for WHAT 20 / 23, cycle to the next source (``*16*23*100##``)."""
+        return self._is_source_cycle
+
+    @property
+    def is_sleep(self) -> bool:
+        """True for WHAT 30 / 33, sleep on the base band / stereo channel."""
+        return self._is_sleep
+
+    @property
+    def is_sleep_off(self) -> bool:
+        """True for WHAT 40, sleep OFF."""
+        return self._is_sleep_off
+
+    @property
+    def is_follow_me(self) -> bool:
+        """True for WHAT 50 / 53, Follow Me on the base band / stereo channel."""
+        return self._is_follow_me
+
+    @property
+    def is_rds_start(self) -> bool:
+        """True for WHAT 101, start RDS transmission."""
+        return self._is_rds_start
+
+    @property
+    def is_rds_stop(self) -> bool:
+        """True for WHAT 102, stop RDS transmission."""
+        return self._is_rds_stop
+
+    @property
+    def high_tone_step_delta(self) -> int | None:
+        """Signed high-tone step (+1..+15 for WHAT 2001..2015, -1..-15 for WHAT 2101..2115)."""
+        return self._high_tone_step_delta
 
     @property
     def is_routing_event(self) -> bool:
@@ -321,11 +434,14 @@ class OWNSoundCommand(OWNCommand):
         """Build the frames routing an amplifier zone to a source.
 
         `where` is the two-digit amplifier address `EA`, where `E` (1–9) is
-        the environment and `A` (1–9) the amplifier within it. Single-digit,
-        environment 0, amplifier 0, and non-numeric addresses cannot be routed
-        to a matrix source and raise ValueError. Only routing rejects
-        amplifier 0: the other builders pass any `WHERE` from the published
-        `01`-`99` range through.
+        the environment and `A` (0–9) the amplifier within it: the published
+        amplifier range is `01..99` (who-16-sound-system#where,
+        #amplifier-address-structure) and routing uses the environment digit
+        only (#matrix-source-routing). Single-digit, environment 0 and
+        non-numeric addresses cannot be routed to a matrix source and raise
+        ValueError: environment 0 would spell `10S`, the source address itself.
+        `*16*3*20##` is accepted by the six WHO 16-forwarding emulated
+        gateways (ORACLE_CONFIRM S2), so amplifier `20` routes like `21..29`.
 
         Two frames are returned:
 
@@ -341,9 +457,9 @@ class OWNSoundCommand(OWNCommand):
         zone = str(where).strip()
         if not zone:
             raise ValueError("where must identify an audio zone")
-        if not re.fullmatch(r"[1-9]{2}", zone):
+        if not re.fullmatch(r"[1-9][0-9]", zone, re.ASCII):
             raise ValueError(
-                f"where must be a two-digit amplifier address with environment and amplifier 1-9, got '{where}'"
+                f"where must be a two-digit amplifier address with environment 1-9 and amplifier 0-9, got '{where}'"
             )
 
         source_address = 100 + source
@@ -380,10 +496,18 @@ class OWNSoundCommand(OWNCommand):
 
     @classmethod
     def set_volume(cls, where: str | int, volume: int | str) -> OWNSoundCommand:
+        """Write the amplifier volume: ``*#16*WHERE*#1*VOLUME##``, VOLUME 0..31.
+
+        Dimension 1 is ``0..31`` (who-16-sound-system#dimension-values,
+        #volume). The firmware oracle refuses ``*#16*21*#1*50##`` on 12/12
+        emulated gateways and forwards ``*#16*21*#1*31##`` on the six WHO 16
+        gateways (ORACLE_CONFIRM S1); BtExperience writes ``P * 31 / 100``
+        (ENCY_CONFIRM SD-S1).
+        """
         target = _require_non_empty_where(where)
         level = int(volume)
-        if not 0 <= level <= 100:
-            raise ValueError("volume must be between 0 and 100")
+        if not 0 <= level <= 31:
+            raise ValueError("volume must be between 0 and 31")
         message = cls(f"*#16*{target}*#1*{level}##")
         message._human_readable_log = (
             f"Setting audio zone {target} volume to {level}."
