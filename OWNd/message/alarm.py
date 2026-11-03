@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Iterable
 
 from .base import (
@@ -307,16 +308,18 @@ class OWNAlarmCommand(OWNCommand):
 
     WHAT 1, 2, 8, 9 and 17 are states and events (``what.md``); the page says
     their presence in the vocabulary "must not be interpreted as permission to
-    transmit them as control operations" (#write-support), and the old
-    ``disarm`` / ``arm_away`` / ``arm_home`` / ``trigger`` / ``panic`` /
-    ``engage`` / ``disengage`` builders that emitted ``*5*2*0##``,
-    ``*5*1*0##``, ``*5*17*0##``, ``*5*8*0##`` and ``*5*9*0##`` now raise
-    ``NotImplementedError``: on the emulated gateways those frames are refused
-    on 9 of 12 and turned into one identical central-unit poll on F453, MH200
-    and MH200N (ORACLE_CONFIRM.md row A1), i.e. the WHAT is never sent to the
-    panel. Field reports (MyHOME#564, quoting BTicino support) say current
-    central units reject WHO 5 arming over SCS anyway; the working route is an
-    installer-programmed WHO 9 AUX frame (``*9*1*7##``), which OWNd cannot fix.
+    transmit them as control operations" (#write-support). The old ``disarm``
+    / ``arm_away`` / ``arm_home`` / ``trigger`` / ``panic`` / ``engage`` /
+    ``disengage`` builders that emit ``*5*2*0##``, ``*5*1*0##``,
+    ``*5*17*0##``, ``*5*8*0##`` and ``*5*9*0##`` are deprecated: they still
+    build those frames (MyHOME's suite pins them, and MyHOME#842 never calls
+    them) but issue a ``DeprecationWarning`` saying why. On the emulated
+    gateways those frames are refused on 9 of 12 and turned into one identical
+    central-unit poll on F453, MH200 and MH200N (ORACLE_CONFIRM.md row A1),
+    i.e. the WHAT is never sent to the panel. Field reports (MyHOME#564,
+    quoting BTicino support) say current central units reject WHO 5 arming
+    over SCS anyway; the working route is an installer-programmed WHO 9 AUX
+    frame (``*9*1*7##``), which OWNd cannot fix.
 
     The password is never written to ``human_readable_log`` (protocol.md: "do
     not log password-bearing frames unredacted"); the raw frame still carries it.
@@ -396,45 +399,62 @@ class OWNAlarmCommand(OWNCommand):
         return message
 
     @classmethod
+    def _deprecated_state_frame(
+        cls, what: int, role: str, where: str | int, log: str
+    ) -> OWNAlarmCommand:
+        warnings.warn(_NO_CONTROL_FRAME.format(what=what, role=role), DeprecationWarning, stacklevel=3)
+        message = cls(f"*5*{what}*{where}##")
+        message._human_readable_log = log
+        return message
+
+    @classmethod
     def disarm(cls, where: str | int = "0") -> OWNAlarmCommand:
-        """Raises: WHAT 2 "Disactivation" is a state/event, not a control (what.md). Use ``arm(password)``."""
-        del where
-        raise NotImplementedError(_NO_CONTROL_FRAME.format(what=2, role="state/event"))
+        """Deprecated: WHAT 2 "Disactivation" is a state/event, not a control (what.md). Use ``arm(password)``."""
+        return cls._deprecated_state_frame(
+            2, "state/event", where, f"Disarming burglar alarm for zone {where}."
+        )
 
     @classmethod
     def arm_away(cls, where: str | int = "0") -> OWNAlarmCommand:
-        """Raises: WHAT 1 "Activation" is a central-unit state, not a control (what.md). Use ``arm(password)``."""
-        del where
-        raise NotImplementedError(_NO_CONTROL_FRAME.format(what=1, role="central-unit state"))
+        """Deprecated: WHAT 1 "Activation" is a central-unit state, not a control (what.md). Use ``arm(password)``."""
+        return cls._deprecated_state_frame(
+            1, "central-unit state", where, f"Arming burglar alarm (away) for zone {where}."
+        )
 
     @classmethod
     def arm_home(cls, where: str | int = "0") -> OWNAlarmCommand:
-        """Raises: no home / away distinction exists on the page; WHAT 1 is a state. Use ``set_zones`` + ``arm``."""
-        del where
-        raise NotImplementedError(_NO_CONTROL_FRAME.format(what=1, role="central-unit state"))
+        """Deprecated: no home / away distinction exists on the page; WHAT 1 is a state. Use ``set_zones`` + ``arm``."""
+        return cls._deprecated_state_frame(
+            1, "central-unit state", where, f"Arming burglar alarm (home) for zone {where}."
+        )
 
     @classmethod
     def trigger(cls, where: str | int = "0") -> OWNAlarmCommand:
-        """Raises: WHAT 17 "Anti-panic alarm" is an alarm event, not a control (what.md)."""
-        del where
-        raise NotImplementedError(_NO_CONTROL_FRAME.format(what=17, role="alarm event"))
+        """Deprecated: WHAT 17 "Anti-panic alarm" is an alarm event, not a control (what.md)."""
+        return cls._deprecated_state_frame(
+            17, "alarm event", where, f"Triggering panic burglar alarm for zone {where}."
+        )
 
     @classmethod
     def panic(cls, where: str | int = "0") -> OWNAlarmCommand:
-        """Raises: see ``trigger``."""
-        return cls.trigger(where=where)
+        """Deprecated: see ``trigger``."""
+        return cls._deprecated_state_frame(
+            17, "alarm event", where, f"Triggering panic burglar alarm for zone {where}."
+        )
 
     @classmethod
     def engage(cls, where: str | int = "0") -> OWNAlarmCommand:
-        """Raises: WHAT 8 "Engage" is a system state (what.md: "System state/control context"). Use ``arm(password)``."""
-        del where
-        raise NotImplementedError(_NO_CONTROL_FRAME.format(what=8, role="system state"))
+        """Deprecated: WHAT 8 "Engage" is a system state (what.md: "System state/control context"). Use ``arm(password)``."""
+        return cls._deprecated_state_frame(
+            8, "system state", where, f"Engaging burglar alarm for zone {where}."
+        )
 
     @classmethod
     def disengage(cls, where: str | int = "0") -> OWNAlarmCommand:
-        """Raises: WHAT 9 "Disengage" is a system state (what.md). Use ``arm(password)``."""
-        del where
-        raise NotImplementedError(_NO_CONTROL_FRAME.format(what=9, role="system state"))
+        """Deprecated: WHAT 9 "Disengage" is a system state (what.md). Use ``arm(password)``."""
+        return cls._deprecated_state_frame(
+            9, "system state", where, f"Disengaging burglar alarm for zone {where}."
+        )
 
 
 register_event_parser(5, OWNAlarmEvent)

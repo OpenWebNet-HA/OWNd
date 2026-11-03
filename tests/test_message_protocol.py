@@ -99,18 +99,19 @@ def test_status_requests_can_omit_where() -> None:
 
 def test_alarm_command_helpers_and_dispatch() -> None:
     # Report 21 A1: WHAT 1/2/8/9/17 are states, not controls (who-5 what.md,
-    # protocol.md#write-support); the builders raise, see test_misc_audit_fixes.
-    for builder in (
-        OWNAlarmCommand.disarm,
-        OWNAlarmCommand.disengage,
-        OWNAlarmCommand.arm_away,
-        OWNAlarmCommand.engage,
-        OWNAlarmCommand.arm_home,
-        OWNAlarmCommand.trigger,
-        OWNAlarmCommand.panic,
+    # protocol.md#write-support); the builders are deprecated but keep their
+    # frames (MyHOME pins them), see test_misc_audit_fixes.
+    for builder, frame in (
+        (OWNAlarmCommand.disarm, "*5*2*0##"),
+        (OWNAlarmCommand.disengage, "*5*9*0##"),
+        (OWNAlarmCommand.arm_away, "*5*1*0##"),
+        (OWNAlarmCommand.engage, "*5*8*0##"),
+        (OWNAlarmCommand.arm_home, "*5*1*0##"),
+        (OWNAlarmCommand.trigger, "*5*17*0##"),
+        (OWNAlarmCommand.panic, "*5*17*0##"),
     ):
-        with pytest.raises(NotImplementedError):
-            builder()
+        with pytest.warns(DeprecationWarning):
+            assert str(builder()) == frame
     assert str(OWNAlarmCommand.arm("12345")) == "*5*36#12345*0##"
     assert str(OWNAlarmCommand.status()) == "*#5*0##"
     assert str(OWNAlarmCommand.status("1")) == "*#5*#1##"

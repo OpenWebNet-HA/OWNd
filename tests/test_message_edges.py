@@ -1424,16 +1424,14 @@ class TestProtocolFixesAudit:
         assert str(req_9_1) == "*#9*1##"
 
     def test_alarm_commands_alignment(self):
-        # Report 21 A1: state WHATs are no longer built as controls.
-        for builder in (
-            OWNAlarmCommand.disarm,
-            OWNAlarmCommand.arm_away,
-            OWNAlarmCommand.arm_home,
-            OWNAlarmCommand.trigger,
-            OWNAlarmCommand.panic,
-        ):
-            with pytest.raises(NotImplementedError):
-                builder("0")
+        # Report 21 A1: state WHATs are deprecated as controls but keep their
+        # frames (MyHOME pins them).
+        with pytest.warns(DeprecationWarning):
+            assert str(OWNAlarmCommand.disarm("0")) == "*5*2*0##"
+            assert str(OWNAlarmCommand.arm_away("0")) == "*5*1*0##"
+            assert str(OWNAlarmCommand.arm_home("0")) == "*5*1*0##"
+            assert str(OWNAlarmCommand.trigger("0")) == "*5*17*0##"
+            assert str(OWNAlarmCommand.panic("0")) == "*5*17*0##"
         assert str(OWNAlarmCommand.status("0")) == "*#5*0##"
         assert str(OWNAlarmCommand.status("1")) == "*#5*#1##"
         assert str(OWNAlarmCommand.status("#2")) == "*#5*#2##"
@@ -1628,8 +1626,8 @@ class TestMessageAuditExhaustiveCoverage:
 
         with patch.object(OWNMessage, "__init__", fake_init):
             evt = OWNDryContactEvent("*25*31*21##")
-            assert evt._detection is None
-            assert evt.has_detection_parameter is False
+            assert evt._detection == 1  # historical fallback, MyHOME pins it
+            assert evt.is_detection is True
 
     def test_cenplus_event_param_exception_and_empty_where(self):
         class BadInt:

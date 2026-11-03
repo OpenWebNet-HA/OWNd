@@ -85,7 +85,9 @@ class OWNDryContactEvent(OWNEvent):
         try:
             self._detection = int(self._what_param[0]) if self._what_param else None
         except (IndexError, TypeError, ValueError):
-            self._detection = None
+            # Historical fallback for an unparseable parameter (MyHOME pins
+            # ``_detection == 1``); only a missing parameter is ``None``.
+            self._detection = 1
         where = self._where or ""
         self._sensor = (
             where[1:] if len(where) > 1 and where.startswith("3") else where

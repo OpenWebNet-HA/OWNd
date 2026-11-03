@@ -102,7 +102,8 @@ def test_t1_status_request_round_trips_through_the_command_parser() -> None:
         ("*25*32#0*33##", False, True, False, True, "Sensor 3 reported OFF."),
         (
             # is_detection keeps the historical True for the missing parameter
-            # (MyHOME pins it); has_detection_parameter tells it apart.
+            # (MyHOME pins it, as it pins _detection == 1 for an unparseable
+            # one); has_detection_parameter tells the missing case apart.
             "*25*31*33##",
             True,
             False,
@@ -346,29 +347,32 @@ def test_a1_where_is_validated() -> None:
 
 
 @pytest.mark.parametrize(
-    ("method", "what", "role"),
+    ("method", "what", "role", "log"),
     [
-        ("disarm", 2, "state/event"),
-        ("arm_away", 1, "central-unit state"),
-        ("arm_home", 1, "central-unit state"),
-        ("trigger", 17, "alarm event"),
-        ("panic", 17, "alarm event"),
-        ("engage", 8, "system state"),
-        ("disengage", 9, "system state"),
+        ("disarm", 2, "state/event", "Disarming burglar alarm for zone 0."),
+        ("arm_away", 1, "central-unit state", "Arming burglar alarm (away) for zone 0."),
+        ("arm_home", 1, "central-unit state", "Arming burglar alarm (home) for zone 0."),
+        ("trigger", 17, "alarm event", "Triggering panic burglar alarm for zone 0."),
+        ("panic", 17, "alarm event", "Triggering panic burglar alarm for zone 0."),
+        ("engage", 8, "system state", "Engaging burglar alarm for zone 0."),
+        ("disengage", 9, "system state", "Disengaging burglar alarm for zone 0."),
     ],
 )
-def test_a1_state_whats_are_not_built_as_controls(method: str, what: int, role: str) -> None:
+def test_a1_state_whats_are_deprecated_as_controls(method: str, what: int, role: str, log: str) -> None:
+    """The builders keep their frames (MyHOME's suite pins them) and warn with the evidence."""
     builder = getattr(OWNAlarmCommand, method)
-    with pytest.raises(NotImplementedError) as info:
-        builder()
-    text = str(info.value)
+    with pytest.warns(DeprecationWarning) as record:
+        command = builder()
+    assert str(command) == f"*5*{what}*0##"
+    assert command.human_readable_log == log
+    text = str(record[0].message)
     assert f"WHO 5 WHAT {what} is a {role}" in text
     assert "functional/who-5-alarm/what.md" in text
     assert "protocol.md#write-support" in text
     assert f"*5*{what}*0## is refused on 9 of the 12 emulated gateways" in text
     assert "OWNAlarmCommand.arm(password)" in text
-    with pytest.raises(NotImplementedError):
-        builder("1")
+    with pytest.warns(DeprecationWarning):
+        assert str(builder("1")) == f"*5*{what}*1##"
 
 
 # ── A2 / A3: zone_number is an int for both forms, #9 is the auxiliary ───────
