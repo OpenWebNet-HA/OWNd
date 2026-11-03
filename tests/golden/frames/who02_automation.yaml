@@ -589,7 +589,7 @@
 
 - id: cover.evt.level.50.virtual.25.f461
   frame: "*#2*25*#11#001#1*50##"
-  direction: event
+  direction: dimension_write
   who: 2
   what: null
   where: "25"

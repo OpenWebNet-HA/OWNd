@@ -105,13 +105,6 @@ class OWNMessage:
     # (review-session ORACLE_CONFIRM.md row L1: *#3*0## refused 12/12, *#3##
     # out on 8, *#3*## out on F454 / F459).
     _LOAD_GENERAL_STATUS = re.compile(r"^\*#(?P<who>3)\*##$")  #  *#3*##
-    # WHO 2 only: the Dimension 11 go-to-level write and its event-session
-    # echo (*#2*25*#11#001#1*50##, F461 2.0.11) are event traffic
-    # (Encyclopedia who-2-automation/dimensions.md#resulting-state-traffic),
-    # so OWNMessage.parse hands them to the WHO 2 event decoder.
-    _AUTOMATION_GO_TO_LEVEL = re.compile(
-        r"^\*#2\*#?\d+(?:#\d+)*\*#11(?:#\d+)*(?:\*\d*)+##$"
-    )  #  *#2*WHERE*#11#PRIORITY[#SELECTOR]*LEVEL##
     _DIMENSION_WRITING = re.compile(
         r"^\*#(?P<who>\d+)\*(?P<where>#?\d+)?(?P<where_param>(?:#\d+)*)?\*#(?P<dimension>\d+)(?P<dimension_param>(?:#\d+)*)?(?P<dimension_value>(?:\*\d*)+)##$"  # pylint: disable=line-too-long
     )  #  *#WHO*WHERE*#DIMENSION*VAL1*VALn##
@@ -291,8 +284,6 @@ class OWNMessage:
             or cls._DIMENSION_REQUEST_REPLY.match(data)
             or cls._match_hash_value_reply(data)
         ):
-            return OWNEvent.parse(data, gateway=gateway)
-        if cls._AUTOMATION_GO_TO_LEVEL.match(data):
             return OWNEvent.parse(data, gateway=gateway)
         if (
             cls._STATUS_REQUEST.match(data)

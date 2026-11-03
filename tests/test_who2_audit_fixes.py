@@ -232,19 +232,22 @@ def test_a4_a5_golden_corpus_has_no_dimension_10_write_and_no_tilt() -> None:
     assert not any(f["frame"] == "*#2*93*#10*75##" for f in records)
     assert not any("tilt" in (f.get("mcp_notes") or "").lower() for f in records)
     echo = next(f for f in records if f["id"] == "cover.evt.level.50.virtual.25.f461")
-    assert echo["direction"] == "event"
+    assert echo["direction"] == "dimension_write"  # stays a command (gate, D56)
     for path in ("README.md", "docs/protocol_conformance_matrix.md", "tests/golden/README.md"):
         text = (Path(__file__).parent.parent / path).read_text().lower()
         assert "tilt" not in text, path
 
 
-# ── A6: Dimension 11 operations are event traffic ───────────────────────────
+# ── A6: Dimension 11 operations stay commands, decoded ───────────────────────
 
 
-def test_a6_f461_echo_routes_to_the_event_decoder_with_target_level() -> None:
+def test_a6_f461_echo_stays_a_command_and_decodes_target_level() -> None:
     # dimensions.md#resulting-state-traffic; golden cover.evt.level.50.virtual.25.f461.
+    # Precedent gate (D56: Dimension 11 is write-only for WHO 2; MyHOME
+    # test_gateway.py pins OWNAutomationCommand for the scope echoes): the
+    # echo is not routed to the event decoder, the command object decodes it.
     echo = OWNMessage.parse("*#2*25*#11#001#1*50##")
-    assert isinstance(echo, OWNAutomationEvent)
+    assert isinstance(echo, OWNAutomationCommand)
     assert echo.is_go_to_level is True
     assert echo.target_level == 50
     assert echo.priority == 1
@@ -253,44 +256,80 @@ def test_a6_f461_echo_routes_to_the_event_decoder_with_target_level() -> None:
     assert echo.dimension == 11
     assert echo.dimension_param == ["001", "1"]
     assert echo.dimension_value == ["50"]
-    assert echo.state is None
-    assert echo.current_position is None
-    assert echo.is_opening is None and echo.is_closing is None and echo.is_closed is None
+    assert echo.is_dimension_writing is True
     assert echo.human_readable_log == "Cover 25 go to level 50% (priority 001, set)."
     assert str(echo) == "*#2*25*#11#001#1*50##"
 
 
-def test_a6_write_form_routes_to_the_event_decoder_too() -> None:
+def test_a6_write_form_decodes_on_the_command_too() -> None:
     write = OWNMessage.parse("*#2*25*#11#001*50##")
-    assert isinstance(write, OWNAutomationEvent)
+    assert isinstance(write, OWNAutomationCommand)
     assert write.target_level == 50
     assert write.selector is None
     assert write.human_readable_log == "Cover 25 go to level 50% (priority 001)."
-    assert write.is_dimension_writing is True
-    # The builder and OWNCommand.parse still give the command class.
     assert isinstance(OWNCommand.parse("*#2*25*#11#001*50##"), OWNAutomationCommand)
-    assert isinstance(OWNAutomationCommand.set_shutter_level("25", 50), OWNAutomationCommand)
+    built = OWNAutomationCommand.set_shutter_level("25", 50)
+    assert built.is_go_to_level is True and built.target_level == 50
+    assert built.priority_bitfield == "001"
+    # The builder keeps its own log.
+    assert built.human_readable_log == "Setting shutter 25 position to 50%."
+
+
+@pytest.mark.parametrize("frame", ["*#2*0*#11#001*50##", "*#2*#5*#11#001#1*50##", "*#2*3*#11#001#1*50##"])
+def test_a6_scope_go_to_level_echo_is_not_a_motion_event(frame: str) -> None:
+    """A general / area / group go-to-level echo must not become a stop in
+    MyHOME's gateway_events (D56, MyHOME #834 routing): it is a command
+    object, not an OWNAutomationEvent, and it states no movement."""
+    msg = OWNMessage.parse(frame)
+    assert isinstance(msg, OWNAutomationCommand)
+    assert not isinstance(msg, OWNAutomationEvent)
+    assert msg.target_level == 50
+    assert not hasattr(msg, "is_opening") and not hasattr(msg, "is_closing")
 
 
 def test_a6_go_to_level_edge_values() -> None:
-    no_priority = OWNEvent.parse("*#2*93*#11*30##")
-    assert isinstance(no_priority, OWNAutomationEvent)
+    no_priority = OWNMessage.parse("*#2*93*#11*30##")
+    assert isinstance(no_priority, OWNAutomationCommand)
     assert no_priority.target_level == 30 and no_priority.priority is None
     assert no_priority.human_readable_log == "Cover 93 go to level 30%."
     # dimensions.md#target-level: 255 is not a target position.
-    unknown = OWNEvent.parse("*#2*93*#11#001*255##")
-    assert isinstance(unknown, OWNAutomationEvent)
+    unknown = OWNMessage.parse("*#2*93*#11#001*255##")
+    assert isinstance(unknown, OWNAutomationCommand)
     assert unknown.target_level is None
     assert unknown.human_readable_log == "Cover 93 go to an invalid level (priority 001)."
-    empty = OWNEvent.parse("*#2*93*#11#001#5*##")
-    assert isinstance(empty, OWNAutomationEvent)
+    empty = OWNMessage.parse("*#2*93*#11#001#5*##")
+    assert isinstance(empty, OWNAutomationCommand)
     assert empty.target_level is None and empty.selector is None
-    # Not a WHO 2 go-to-level: still a command on the message parser.
-    assert isinstance(OWNMessage.parse("*#2*93*#10*75##"), OWNAutomationCommand)
+    clear = OWNMessage.parse("*#2*93*#11#001#0*20##")
+    assert isinstance(clear, OWNAutomationCommand)
+    assert clear.selector == 0 and clear.human_readable_log == "Cover 93 go to level 20% (priority 001, clear)."
+    # Not a go-to-level: no fields, default log.
+    other = OWNMessage.parse("*#2*93*#10*75##")
+    assert isinstance(other, OWNAutomationCommand)
+    assert other.is_go_to_level is False and other.target_level is None and other.priority is None
     assert isinstance(OWNMessage.parse("*#4*1*#11*2##"), OWNCommand)
     assert OWNMessage.parse("*#2**#11#001*50##").__class__ is OWNAutomationCommand
     plain = OWNAutomationEvent("*#2*25*11##")
     assert plain.is_go_to_level is False and plain.target_level is None
+
+
+def test_a6_event_decoder_still_reads_a_go_to_level_frame_when_asked_directly() -> None:
+    # OWNEvent.parse on the echo (never what OWNMessage.parse does) decodes the
+    # same fields and claims no movement, so a direct caller sees one shape.
+    echo = OWNEvent.parse("*#2*25*#11#001#1*50##")
+    assert isinstance(echo, OWNAutomationEvent)
+    assert echo.is_go_to_level is True and echo.target_level == 50
+    assert echo.priority_bitfield == "001" and echo.selector == 1
+    assert echo.state is None and echo.current_position is None
+    assert echo.is_opening is None and echo.is_closing is None and echo.is_closed is None
+    assert echo.human_readable_log == "Cover 25 go to level 50% (priority 001, set)."
+    unknown = OWNEvent.parse("*#2*93*#11#001*255##")
+    assert isinstance(unknown, OWNAutomationEvent)
+    assert unknown.target_level is None
+    assert unknown.human_readable_log == "Cover 93 go to an invalid level (priority 001)."
+    no_priority = OWNEvent.parse("*#2*93*#11*30##")
+    assert isinstance(no_priority, OWNAutomationEvent)
+    assert no_priority.human_readable_log == "Cover 93 go to level 30%."
 
 
 # ── A7: priority and info on Dimension 10 replies ───────────────────────────
@@ -354,16 +393,20 @@ def test_helpers_fail_closed() -> None:
 
 
 def test_a8_report_shutter_level_states_priority_and_unknown_position() -> None:
+    # Precedent gate: the int priority keeps its pre-existing decimal form
+    # (MyHOME expose pins `*#2*21*10*12*40*0*0##`); the p1p2p3 bit field is
+    # the string form.
     for state in range(10, 15):
-        assert str(OWNAutomationCommand.report_shutter_level("31", 40, state=state)) == f"*#2*31*10*{state}*40*000*0##"
+        assert str(OWNAutomationCommand.report_shutter_level("31", 40, state=state)) == f"*#2*31*10*{state}*40*0*0##"
     with pytest.raises(ValueError, match="between 10 and 14"):
         OWNAutomationCommand.report_shutter_level("31", 40, state=15)
     assert str(OWNAutomationCommand.report_shutter_level("31", 40, priority="001")) == "*#2*31*10*10*40*001*0##"
-    assert str(OWNAutomationCommand.report_shutter_level("31", 40, priority=1)) == "*#2*31*10*10*40*001*0##"
-    assert str(OWNAutomationCommand.report_shutter_level("31", 40, priority=7)) == "*#2*31*10*10*40*111*0##"
+    assert str(OWNAutomationCommand.report_shutter_level("31", 40, priority=1)) == "*#2*31*10*10*40*1*0##"
+    assert str(OWNAutomationCommand.report_shutter_level("31", 40, priority=255)) == "*#2*31*10*10*40*255*0##"
     assert str(OWNAutomationCommand.report_shutter_level("31", 40, priority="100", info=14)) == "*#2*31*10*10*40*100*14##"
+    assert str(OWNAutomationCommand.report_shutter_level("21", 40, state=12)) == "*#2*21*10*12*40*0*0##"  # MyHOME expose
     unknown = OWNAutomationCommand.report_shutter_level("31", 255)
-    assert str(unknown) == "*#2*31*10*10*255*000*0##"
+    assert str(unknown) == "*#2*31*10*10*255*0*0##"
     assert unknown.human_readable_log == "Reporting shutter 31 at an unknown position (state 10)."
     assert "255%" not in unknown.human_readable_log
     known = OWNAutomationCommand.report_shutter_level("31", 40, state=12)

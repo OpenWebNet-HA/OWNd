@@ -27,7 +27,10 @@ Evidence (OpenWebNet Encyclopedia, ``encyclopedia_functional/who-2-automation/``
   DIMENSION 10 write); ``#resulting-state-traffic``: "Event traffic can
   therefore include the DIMENSION 11 operation" (captured as
   ``*#2*25*#11#001#1*50##`` on an F461 2.0.11, golden fixture
-  ``cover.evt.level.50.virtual.25.f461``).
+  ``cover.evt.level.50.virtual.25.f461``). Both the write and its echo keep
+  parsing as ``OWNAutomationCommand`` (DIMENSION 11 is write-only for WHO 2
+  and MyHOME pins the class for scope echoes); the command object decodes
+  ``target_level``, ``priority`` and ``selector``, and claims no movement.
 - ``addressing.md#where-forms``: WHERE is ``0``, ``A``, ``APL``, ``#GR`` or
   ``APL#4#INTERFACE``; an empty WHERE or ``*`` is not a WHO 2 address.
 """
@@ -92,8 +95,39 @@ def _int_or_none(value: str | None) -> int | None:
         return None
 
 
+def _decode_go_to_level_fields(
+    dimension_param: list[str], dimension_value: list[str]
+) -> tuple[int | None, str | None, int | None, int | None]:
+    """``#PRIORITY[#SEL]`` and ``*LEVEL`` of a DIMENSION 11 frame.
+
+    Returns ``(priority, priority_bitfield, selector, target_level)``;
+    ``dimensions.md#dimension-11---go-to-level`` / ``#target-level``: the level
+    is 0..100, ``255`` is not a target position.
+    """
+    priority = dimension_param[0] if dimension_param else None
+    selector = _int_or_none(dimension_param[1]) if len(dimension_param) > 1 else None
+    if selector not in (None, 0, 1):
+        selector = None
+    level = _int_or_none(dimension_value[0]) if dimension_value else None
+    target = level if level is not None and 0 <= level <= 100 else None
+    return _int_or_none(priority), _priority_bitfield(priority), selector, target
+
+
+def _priority_log_suffix(priority: int | None, bitfield: str | None, selector: int | None) -> str:
+    parts: list[str] = []
+    if bitfield is not None:
+        parts.append(f"priority {bitfield}")
+    elif priority is not None:
+        parts.append(f"priority {priority}")
+    if selector == 1:
+        parts.append("set")
+    elif selector == 0:
+        parts.append("clear")
+    return f" ({', '.join(parts)})" if parts else ""
+
+
 class OWNAutomationEvent(OWNEvent):
-    """A WHO 2 movement event, advanced command echo, status reply or go-to-level echo.
+    """A WHO 2 movement event, advanced command echo or status reply.
 
     ``state`` is the movement state only: WHAT ``0`` / ``1`` / ``2`` of a base
     command frame, or the DIMENSION 10 ``shutterStatus`` ``10..14`` of a
@@ -231,16 +265,7 @@ class OWNAutomationEvent(OWNEvent):
 
     @property
     def _advanced_log_suffix(self) -> str:
-        parts: list[str] = []
-        if self._priority_bitfield is not None:
-            parts.append(f"priority {self._priority_bitfield}")
-        elif self._priority is not None:
-            parts.append(f"priority {self._priority}")
-        if self._selector == 1:
-            parts.append("set")
-        elif self._selector == 0:
-            parts.append("clear")
-        return f" ({', '.join(parts)})" if parts else ""
+        return _priority_log_suffix(self._priority, self._priority_bitfield, self._selector)
 
     def _decode_shutter_status(self) -> None:
         """``*#2*WHERE*10*STATUS*LEVEL*PRIORITY*INFO##`` (``dimensions.md#dimension-10---shutter-status``)."""
@@ -260,17 +285,18 @@ class OWNAutomationEvent(OWNEvent):
         self._info = _int_or_none(values[3]) if len(values) > 3 else None
 
     def _decode_go_to_level(self) -> None:
-        """``*#2*WHERE*#11#PRIORITY[#SEL]*LEVEL##`` (``dimensions.md#dimension-11---go-to-level``)."""
-        params = self._dimension_param
-        priority = params[0] if params else None
-        self._priority = _int_or_none(priority)
-        self._priority_bitfield = _priority_bitfield(priority)
-        self._selector = _int_or_none(params[1]) if len(params) > 1 else None
-        if self._selector not in (None, 0, 1):
-            self._selector = None
-        level = _int_or_none(self._dimension_value[0]) if self._dimension_value else None
-        # Target level 0..100; 255 is not a target position (#target-level).
-        self._target_level = level if level is not None and 0 <= level <= 100 else None
+        """``*#2*WHERE*#11#PRIORITY[#SEL]*LEVEL##`` handed directly to ``OWNEvent.parse``.
+
+        ``OWNMessage.parse`` never routes a DIMENSION 11 frame here (it stays an
+        ``OWNAutomationCommand``, which decodes the same fields); this keeps the
+        event class consistent when a caller parses the echo as an event.
+        """
+        (
+            self._priority,
+            self._priority_bitfield,
+            self._selector,
+            self._target_level,
+        ) = _decode_go_to_level_fields(self._dimension_param, self._dimension_value)
         target = (
             f"go to level {self._target_level}%"
             if self._target_level is not None
@@ -387,12 +413,12 @@ class OWNAutomationEvent(OWNEvent):
 
     @property
     def target_level(self) -> int | None:
-        """Dimension 11 target position 0..100 of a go-to-level write or its event echo."""
+        """Dimension 11 target position 0..100 when the frame was parsed as an event directly."""
         return self._target_level
 
     @property
     def is_go_to_level(self) -> bool:
-        """True for ``*#2*WHERE*#11#PRIORITY[#SELECTOR]*LEVEL##`` seen on either session."""
+        """True for ``*#2*WHERE*#11#PRIORITY[#SELECTOR]*LEVEL##`` parsed as an event directly."""
         return self._dimension == 11 and self._message_type == "DIMENSION_WRITING"
 
     @property
@@ -405,7 +431,60 @@ class OWNAutomationCommand(OWNCommand):
     """WHO 2 builders. Every WHERE goes through ``_require_non_empty_where``:
     ``addressing.md#where-forms`` defines ``0``, ``A``, ``APL``, ``#GR`` and
     ``APL#4#INTERFACE`` only, so ``''`` and ``'*'`` raise ``ValueError``.
+
+    A parsed DIMENSION 11 go-to-level frame (the write
+    ``*#2*WHERE*#11#PRIORITY*LEVEL##`` or its event-session echo
+    ``*#2*25*#11#001#1*50##``, ``dimensions.md#dimension-11---go-to-level``)
+    stays a command object: it exposes ``target_level``, ``priority``,
+    ``priority_bitfield``, ``selector`` and ``is_go_to_level`` and never
+    claims a movement, so a general / area / group echo is not a stop.
     """
+
+    def __init__(self, data: str) -> None:
+        super().__init__(data)
+        self._priority: int | None = None
+        self._priority_bitfield: str | None = None
+        self._selector: int | None = None
+        self._target_level: int | None = None
+        if self.is_go_to_level:
+            (
+                self._priority,
+                self._priority_bitfield,
+                self._selector,
+                self._target_level,
+            ) = _decode_go_to_level_fields(self._dimension_param, self._dimension_value)
+            target = (
+                f"go to level {self._target_level}%"
+                if self._target_level is not None
+                else "go to an invalid level"
+            )
+            suffix = _priority_log_suffix(self._priority, self._priority_bitfield, self._selector)
+            self._human_readable_log = f"Cover {self._where}{self._interface_log_text} {target}{suffix}."
+
+    @property
+    def is_go_to_level(self) -> bool:
+        """True for ``*#2*WHERE*#11#PRIORITY[#SELECTOR]*LEVEL##`` (write or event-session echo)."""
+        return self._dimension == 11 and self._message_type == "DIMENSION_WRITING"
+
+    @property
+    def target_level(self) -> int | None:
+        """Dimension 11 target position 0..100 (``255`` is not a target), else ``None``."""
+        return self._target_level
+
+    @property
+    def priority(self) -> int | None:
+        """Priority field of a go-to-level frame as an integer (``001`` -> 1), else ``None``."""
+        return self._priority
+
+    @property
+    def priority_bitfield(self) -> str | None:
+        """Priority as the 3-digit ``p1p2p3`` bit field, ``None`` when absent or not one."""
+        return self._priority_bitfield
+
+    @property
+    def selector(self) -> int | None:
+        """Event-session set/clear selector of a go-to-level echo (1 set, 0 clear), else ``None``."""
+        return self._selector
 
     @classmethod
     def status(cls, where: str | int) -> OWNAutomationCommand:
@@ -492,9 +571,10 @@ class OWNAutomationCommand(OWNCommand):
 
         ``*#2*WHERE*10*STATE*LEVEL*PRIORITY*INFO##`` (``dimensions.md#dimension-10---shutter-status``):
         ``state`` 10..14, ``level`` 0..100 or 255 (unknown position),
-        ``priority`` as the 3-digit ``p1p2p3`` bit field (a string of three
-        ``0``/``1`` digits, or an int 0..7 that is converted to it), ``info``
-        0, 12, 13, 14 or 15.
+        ``priority`` as the 3-digit ``p1p2p3`` bit field given as a string of
+        three ``0``/``1`` digits (``"001"``), or as an int 0..255 emitted as
+        its decimal text (``0`` -> ``*0*``, the pre-existing form MyHOME's
+        expose replies pin), ``info`` 0, 12, 13, 14 or 15.
         """
         target = _require_non_empty_where(where)
         numbers = [level, state, info] + ([] if isinstance(priority, str) else [priority])
@@ -526,16 +606,20 @@ class OWNAutomationCommand(OWNCommand):
 
     @staticmethod
     def _priority_field(priority: int | str) -> str:
-        """``p1p2p3`` from a 3-digit bit string or an int 0..7 (bit 2 = Safety, 1 = High, 0 = Medium)."""
+        """A 3-digit ``p1p2p3`` bit string as given, or an int 0..255 as its decimal text.
+
+        The int form is the pre-existing encoding (``0`` -> ``*0*``) and is kept
+        unchanged for MyHOME, whose expose replies pin ``*#2*21*10*12*40*0*0##``.
+        """
         if isinstance(priority, str):
             text = priority.strip()
             if not _PRIORITY_BITFIELD.match(text) or len(text) != 3:
                 raise ValueError("priority must be a 3-digit bit field of 0 and 1 (p1p2p3)")
             return text
         value = int(priority)
-        if not 0 <= value <= 7:
-            raise ValueError("priority must be a 3-digit bit field of 0 and 1 (p1p2p3)")
-        return format(value, "03b")
+        if not 0 <= value <= 255:
+            raise ValueError("priority must be between 0 and 255")
+        return str(value)
 
 
 register_event_parser(2, OWNAutomationEvent)
