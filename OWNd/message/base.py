@@ -99,6 +99,12 @@ class OWNMessage:
     _STATUS_REQUEST = re.compile(
         r"^\*#(?P<who>\d+)(?:\*(?P<where>#?\d+)(?P<where_param>(?:#\d+)*))?##$"
     )  #  *#WHO*WHERE## or *#WHO##
+    # WHO 3 only: the general load status spelling the bt_energia firmware
+    # accepts next to *#3## (an empty WHERE after the star). *#3*0##, the
+    # documented general request, is refused by every emulated gateway
+    # (review-session ORACLE_CONFIRM.md row L1: *#3*0## refused 12/12, *#3##
+    # out on 8, *#3*## out on F454 / F459).
+    _LOAD_GENERAL_STATUS = re.compile(r"^\*#(?P<who>3)\*##$")  #  *#3*##
     # WHO 2 only: the Dimension 11 go-to-level write and its event-session
     # echo (*#2*25*#11#001#1*50##, F461 2.0.11) are event traffic
     # (Encyclopedia who-2-automation/dimensions.md#resulting-state-traffic),
@@ -198,14 +204,20 @@ class OWNMessage:
             self._what = int(match.group("what"))
             self._where = ""
 
-        elif match := self._STATUS_REQUEST.match(self._raw):
+        elif match := (
+            self._STATUS_REQUEST.match(self._raw)
+            or self._LOAD_GENERAL_STATUS.match(self._raw)
+        ):
             self._is_valid_message = True
             self._match = match
             self._family = "REQUEST"
             self._message_type = "STATUS_REQUEST"
             self._who = int(match.group("who"))
-            self._where = match.group("where")
-            self._where_param = (match.group("where_param") or "").split("#")[1:]
+            groups = match.groupdict()
+            # *#3*## carries an empty WHERE after the star: kept as "" so the
+            # two general spellings stay distinguishable (*#3## has no WHERE).
+            self._where = groups["where"] if "where" in groups else ""
+            self._where_param = (groups.get("where_param") or "").split("#")[1:]
 
         elif match := self._DIMENSION_REQUEST.match(self._raw):
             self._is_valid_message = True
@@ -284,6 +296,7 @@ class OWNMessage:
             return OWNEvent.parse(data, gateway=gateway)
         if (
             cls._STATUS_REQUEST.match(data)
+            or cls._LOAD_GENERAL_STATUS.match(data)
             or cls._DIMENSION_REQUEST.match(data)
             or cls._DIMENSION_WRITING.match(data)
         ):
@@ -527,7 +540,9 @@ class OWNCommand(OWNMessage):
 
     @classmethod
     def parse(cls, data: str, *, gateway: Any = None) -> OWNCommand | None:
-        _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.+)?##$", data)
+        # ``.*`` (not ``.+``): the WHO 3 general status ``*#3*##`` has nothing
+        # between its last star and the terminator.
+        _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.*)?##$", data)
 
         if _match:
             _who = int(_match.group("who"))

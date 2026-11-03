@@ -18,6 +18,7 @@ from OWNd.message import (
     OWNAutomationEvent,
     OWNCommand,
     OWNEvent,
+    OWNLoadCommand,
     OWNMessage,
 )
 from OWNd.message.automation import _int_or_none, _priority_bitfield
@@ -406,3 +407,36 @@ def test_a9_builders_accept_every_documented_where_form() -> None:
     for frame in ("*#2*0##", "*#2*#3*10##", "*2*1*31##", "*2*2*21#4#01##", "*2*0*100##"):
         assert OWNAutomationCommand(frame).is_valid is True
     assert OWNAutomationCommand.lower_shutter("21#4#01").human_readable_log == "Lowering shutter 21 on interface 01."
+
+
+# ── L1: *#3*## parses; general_status() builds *#3## ────────────────────────
+
+
+def test_l1_both_firmware_general_status_spellings_parse() -> None:
+    # ORACLE_CONFIRM.md row L1: *#3*0## refused 12/12, *#3## out on 8, *#3*## on F454 / F459.
+    star = OWNMessage.parse("*#3*##")
+    bare = OWNMessage.parse("*#3##")
+    assert isinstance(star, OWNLoadCommand) and isinstance(bare, OWNLoadCommand)
+    assert star.is_valid is True and bare.is_valid is True
+    assert star.is_status_request is True and bare.is_status_request is True
+    assert star.where == "" and bare.where is None
+    assert star.where_param == [] and star.priority is None if hasattr(star, "priority") else True
+    assert star.human_readable_log == "Requesting general load status."
+    assert bare.human_readable_log == "Requesting general load status."
+    assert str(star) == "*#3*##"
+    assert isinstance(OWNCommand.parse("*#3*##"), OWNLoadCommand)
+    # The empty-WHERE spelling is WHO 3 only.
+    assert OWNMessage.parse("*#1*##") is None
+    assert OWNMessage.parse("*#2*##") is None
+    # The documented *#3*0## keeps its raw log (no builder, refused by the firmware).
+    documented = OWNMessage.parse("*#3*0##")
+    assert isinstance(documented, OWNLoadCommand)
+    assert documented.human_readable_log == "*#3*0##"
+
+
+def test_l1_general_status_builder() -> None:
+    command = OWNLoadCommand.general_status()
+    assert str(command) == "*#3##"
+    assert command.is_valid is True
+    assert command.human_readable_log == "Requesting general load status."
+    assert str(OWNLoadCommand.status(1)) == "*#3*#1##"
