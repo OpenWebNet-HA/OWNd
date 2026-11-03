@@ -283,6 +283,42 @@ def test_gateway_timezone_100_is_gmt_plus_zero() -> None:
         OWNMessage.parse("*#13**0*12*30*00*0530##")
 
 
+@pytest.mark.parametrize(
+    "frame",
+    [
+        "*#13**1*04*99*32*26##",  # month 99 and day 32, two-digit year
+        "*#13**1*04*32*10*26##",  # day 32, two-digit year
+        "*#13**1*04*15*13*26##",  # month 13, two-digit year
+        "*#13**1*04*30*02*26##",  # 30 February, two-digit year
+        "*#13**1*04*32*10*2026##",  # day 32, four-digit year (master)
+        "*#13**22*17*33*54*002*05*32*13*26##",  # dimension 22, day 32 / month 13, two-digit year
+        "*#13**22*17*33*54*002*05*31*04*2026##",  # dimension 22, 31 April, four-digit year
+    ],
+)
+def test_gateway_day_and_month_are_validated_before_the_year(frame: str) -> None:
+    """Out-of-range D / M raise as on master whatever the year looks like (review follow-up, OWNd#144)."""
+    with pytest.raises(ValueError):
+        OWNGatewayEvent(frame)
+    with pytest.raises(ValueError):
+        OWNGatewayCommand(frame.replace("*#13**", "*#13**#", 1))
+    with pytest.raises(ValueError):
+        OWNMessage.parse(frame)
+
+
+@pytest.mark.parametrize(
+    ("frame", "command"),
+    [
+        ("*#13**1*04*29*02*26##", "*#13**#1*04*29*02*26##"),  # 29 February is a valid D / M pair
+        ("*#13**22*17*33*54*002*05*11*09*26##", "*#13**#22*17*33*54*002*05*11*09*26##"),
+    ],
+)
+def test_gateway_well_formed_date_with_short_year_reads_none(frame: str, command: str) -> None:
+    event = OWNGatewayEvent(frame)
+    assert event.is_valid is True and event.date is None and event.datetime is None
+    cmd = OWNGatewayCommand(command)
+    assert cmd.is_valid is True and cmd.date is None and cmd.datetime is None
+
+
 def test_gateway_date_year_must_be_four_digits_and_weekday_00_to_06() -> None:
     """A two-digit ``Y`` is not year 0026; ``W`` outside 00..06 reads ``None``.
 

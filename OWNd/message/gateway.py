@@ -54,11 +54,17 @@ def _gateway_weekday(value: str) -> int | None:
 def _gateway_date(year: str, month: str, day: str) -> _dt.date | None:
     """Decode ``D*M*Y``; ``None`` when ``Y`` is not four digits (dimensions.md "DIMENSION 1 - Date").
 
-    A two-digit year (``*#13**1*04*15*10*26##``) is not year 0026; the frame
-    stays valid with the raw values and ``date`` ``None``. Out-of-range day
-    and month values keep raising ``ValueError`` as before (OWNd#144).
+    Day and month are validated first, exactly as on master: an out-of-range
+    value (``*#13**1*04*99*32*26##``, month ``13``, day ``32``) raises
+    ``ValueError`` whatever the year looks like (OWNd#144, caught by the
+    sessions). Only a well-formed date whose ``Y`` is not four digits
+    (``*#13**1*04*15*10*26##``: not year 0026) gives ``None``; the frame stays
+    valid with the raw values.
     """
     if re.fullmatch(r"[0-9]{4}", year) is None:
+        # Validate D and M against a leap year so 29 February still passes;
+        # 30 February, month 13 or day 32 raise as on master.
+        _dt.date(year=2000, month=int(month), day=int(day))
         return None
     return _dt.date(year=int(year), month=int(month), day=int(day))
 
