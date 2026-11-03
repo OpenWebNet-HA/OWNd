@@ -129,6 +129,16 @@ def test_zone_under_a_four_zone_central_unit_keeps_its_zone() -> None:
     assert _event("*4*311*#2##").unique_id == "4-2"
 
 
+def test_zone_forms_share_the_master_probe_unique_id() -> None:
+    # ``#Z`` and ``#Z#C`` keep the ``4-Z`` of the master probe ``Z`` (MyHOME
+    # routes a zone on it); the probe / actuator / central classes are distinct.
+    assert _event("*4*311*#1##").unique_id == _event("*4*311*1##").unique_id == "4-1"
+    assert _event("*4*311*#1#2##").unique_id == "4-1"
+    assert _event("*#4*#1#4#01*14*0205*1##").unique_id == _event("*#4*1#4#01*14*0205*1##").unique_id == "4-1#4#01"
+    distinct = {_event(f).unique_id for f in ("*4*311*1##", "*#4*001*0*0215##", "*4*303*0##", "*4*303*#0##", "*4*303*#0#1##", "*#4*1#1*20*1##")}
+    assert distinct == {"4-1", "4-001", "4-0", "4-#0", "4-#0#1", "4-1#1"}
+
+
 # ---------------------------------------------------------------- H2 / H3: address classes
 
 
@@ -165,6 +175,30 @@ def test_h3_standalone_general_address_is_not_rewritten_to_the_central_unit() ->
     assert str(standalone) == "*4*303*0##"
     assert standalone.human_readable_log == "Setting general mode to 'off'."
     assert str(OWNHeatingCommand.turn_off("#0", standalone=True)) == "*4*303*#0##"
+
+
+@pytest.mark.parametrize("where", ["0#1", "0#3", "0#9"])
+def test_builders_refuse_the_actuator_form_of_zone_zero(where: str) -> None:
+    # ``0#N`` is actuator N of zone 0 (SCOPE_ACTUATOR), not the 4-zone central
+    # unit ``#0#N``: refused, not retargeted. ``#0#N`` itself still builds.
+    for build in (
+        lambda w: OWNHeatingCommand.set_temperature(w, 20.0, CLIMATE_MODE_HEAT),
+        OWNHeatingCommand.turn_off,
+        lambda w: OWNHeatingCommand.set_mode(w, CLIMATE_MODE_HEAT),
+        lambda w: OWNHeatingCommand.set_timed_manual(w, 20.0),
+    ):
+        with pytest.raises(ValueError, match="actuator N of zone 0"):
+            build(where)
+    assert str(OWNHeatingCommand.set_temperature(f"#{where}", 20.0, CLIMATE_MODE_HEAT)) == f"*#4*#{where}*#14*0200*1##"
+
+
+def test_central_unit_setpoint_target_is_the_one_set_central_temperature_builds() -> None:
+    # ``#0`` / ``#0#C`` / legacy ``0`` were accepted before (D5): same frame as set_central_temperature.
+    for where in ("#0", 0, "0"):
+        assert str(OWNHeatingCommand.set_temperature(where, 20.0, CLIMATE_MODE_HEAT)) == str(
+            OWNHeatingCommand.set_central_temperature("#0", 20.0, CLIMATE_MODE_HEAT)
+        )
+    assert str(OWNHeatingCommand.set_temperature("#0#1", 20.0, CLIMATE_MODE_HEAT)) == "*#4*#0#1*#14*0200*1##"
 
 
 @pytest.mark.parametrize("where", ["001", "105", "#105", "#001", "899", "0105"])

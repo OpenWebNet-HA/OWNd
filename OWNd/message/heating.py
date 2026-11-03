@@ -436,10 +436,11 @@ class _Who4Address:
 
     @property
     def unique_id(self) -> str:
-        """``4-<WHERE>`` with the address class kept (``4-001`` is not ``4-1``, ``4-0`` is not ``4-#0``).
+        """``4-<WHERE>`` (``4-001`` is not ``4-1``, ``4-0`` is not ``4-#0``), one id per zone.
 
-        ``#Z`` and ``#Z#C`` keep the legacy ``4-Z`` of the zone they control
-        (the Encyclopedia calls ``#N`` "zone N through the central unit").
+        ``#Z`` and ``#Z#C`` share the ``4-Z`` of the master probe ``Z`` (the
+        Encyclopedia calls ``#N`` "zone N through the central unit"; MyHOME
+        routes a zone on that id), with any ``#4#NN`` interface appended.
         """
         subject = str(self.zone_number) if self.scope == SCOPE_ZONE_VIA_CENTRAL else self.base
         if self.interface is not None:
@@ -486,6 +487,15 @@ def _builder_zone_parts(where: str | int) -> tuple[str, int, int | None]:
         )
     zone = int(match.group("zone"))
     unit = int(match.group("unit")) if match.group("unit") is not None else None
+    if zone == 0 and unit is not None and not where_str.startswith("#"):
+        # ``0#N`` is actuator N of zone 0 in the Dimension 20 actuator
+        # grammar (Encyclopedia addressing.md "Actuator forms"; the event
+        # classifier labels it SCOPE_ACTUATOR), not a spelling of the
+        # 4-zone central unit ``#0#N``: refuse it instead of retargeting.
+        raise ValueError(
+            f"Invalid zone address: {where!r} ('0#N' is actuator N of zone 0, "
+            "not the 4-zone central unit; pass '#0#N' for the central unit)"
+        )
     clean = where_str[1:] if where_str.startswith("#") else where_str
     return clean, zone, unit
 
@@ -532,7 +542,9 @@ def _zone_address_and_name(
     every probe, ``#0`` the central unit; the firmware oracle NACKs
     ``*4*303*0##`` on all twelve gateways, ORACLE_CONFIRM H3, so a caller
     who wants the central unit passes ``#0``). Three-digit probe-class
-    addresses (``001``, ``105``, ``#105``) raise ``ValueError``.
+    addresses (``001``, ``105``, ``#105``) and the actuator form ``0#N``
+    (actuator N of zone 0, not the central unit ``#0#N``) raise
+    ``ValueError``.
     """
     clean, zone_number, unit = _builder_zone_parts(where)
     if unit is not None:
@@ -563,9 +575,13 @@ class OWNHeatingEvent(OWNEvent):
     ``#Z#C``, ``probe_number`` the probe ``P`` of ``PZZ`` / ``P00``,
     ``actuator`` the ``N`` of ``Z#N`` / ``3#Z#N``, ``interface`` a trailing
     ``#4#NN`` bus-interface qualifier and ``address`` the whole WHERE.
-    ``unique_id`` carries the address class: ``4-1`` (master probe), ``4-001``
-    (all probes of zone 1), ``4-0`` (all probes), ``4-#0`` / ``4-#0#2``
-    (central units), ``4-2#1`` (actuator), ``4-105`` (slave probe).
+    ``unique_id`` tells the probe-, actuator- and central-unit classes apart
+    (``4-1`` master probe, ``4-001`` all probes of zone 1, ``4-0`` all
+    probes, ``4-#0`` / ``4-#0#2`` central units, ``4-2#1`` actuator,
+    ``4-3#2#1`` split unit, ``4-105`` slave probe) but keeps one id per
+    zone for the zone forms MyHOME routes on: ``#Z`` and ``#Z#C`` share
+    ``4-Z`` with the master probe ``Z`` (``4-1#4#01`` likewise for ``1#4#01``
+    and ``#1#4#01``).
 
     A WHAT sets ``mode`` (coarse: heat / cool / auto / off / protection /
     holiday, see ``CLIMATE_MODE_*``), ``season`` and ``operating_mode``
@@ -1223,14 +1239,17 @@ class OWNHeatingEvent(OWNEvent):
 
     @property
     def unique_id(self) -> str:
-        """``4-<WHERE>`` with the address class kept.
+        """``4-<WHERE>``, distinct per probe / actuator / central-unit class, shared per zone.
 
-        ``4-1`` (master probe of zone 1) is not ``4-001`` (all probes of
-        zone 1), ``4-0`` (all probes) is not ``4-#0`` (the central unit),
-        ``4-#0#1`` / ``4-#0#2`` are the 4-zone central units 1 and 2,
-        ``4-2#1`` / ``4-2#2`` the actuators of zone 2, ``4-105`` probe 1 of
-        zone 5; a bus interface is appended (``4-2#4#01``). ``#Z`` and
-        ``#Z#C`` keep the legacy ``4-Z`` of the zone they control.
+        Distinct: ``4-1`` (master probe of zone 1) is not ``4-001`` (all
+        probes of zone 1), ``4-0`` (all probes) is not ``4-#0`` (the
+        central unit), ``4-#0#1`` / ``4-#0#2`` are the 4-zone central units
+        1 and 2, ``4-2#1`` / ``4-2#2`` the actuators of zone 2, ``4-3#2#1``
+        a split unit, ``4-105`` probe 1 of zone 5; a bus interface is
+        appended (``4-2#4#01``). Shared: ``#Z`` and ``#Z#C`` give the ``4-Z``
+        of the master probe ``Z`` (``*4*311*#1##`` and ``*4*311*1##`` are
+        both ``4-1``, ``#1#4#01`` and ``1#4#01`` both ``4-1#4#01``), the
+        legacy id MyHOME routes a zone on.
         """
         return self._address.unique_id
 
@@ -1672,11 +1691,15 @@ class OWNHeatingCommand(OWNCommand):
         """Manual setpoint ``*#4*#WHERE*#14*TTTT*M##`` (Encyclopedia what.md "Zone setup commands").
 
         ``where`` is a zone (``1``..``99``, sent as ``#Z``, or the plain
-        ``Z`` with ``standalone``), ``#Z#C`` / ``Z#C`` under a 4-zone central
-        unit, or the central unit ``#0`` / ``#0#C``; a three-digit
-        probe-class address (``001`` all probes of zone 1, ``105`` probe 1 of
-        zone 5, ``#105``) raises ``ValueError`` instead of being rewritten
-        to ``#1`` / ``#105`` (ORACLE_CONFIRM H2, H19). The temperature is
+        ``Z`` with ``standalone``) or ``#Z#C`` / ``Z#C`` under a 4-zone
+        central unit (what.md "Zone setup commands" defines the write for
+        ``#1..#99``). ``#0`` / ``#0#C`` (and the legacy ``0``, sent as
+        ``#0``) are accepted as before and build the central-unit setpoint
+        ``*#4*#0*#14*TTTT*M##`` that ``set_central_temperature`` builds; a
+        three-digit probe-class address (``001`` all probes of zone 1,
+        ``105`` probe 1 of zone 5, ``#105``) or the actuator form ``0#N``
+        raises ``ValueError`` instead of being rewritten to ``#1`` /
+        ``#105`` / ``#0#N`` (ORACLE_CONFIRM H2, H19). The temperature is
         clamped to ``5.0..40.0`` (``T`` is ``0050..0400``; MyHOME relies on
         the clamp) and rounded to 0.5 °C; only a non-finite value raises.
         """
