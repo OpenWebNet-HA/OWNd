@@ -16,6 +16,7 @@ from OWNd.message import (
     CLIMATE_MODE_COOL,
     CLIMATE_MODE_HEAT,
     CLIMATE_MODE_OFF,
+    CLIMATE_MODE_PROTECTION,
     MESSAGE_TYPE_MODE,
     MESSAGE_TYPE_MODE_TARGET,
     MESSAGE_TYPE_SEASON,
@@ -32,7 +33,7 @@ from OWNd.message import (
         ("*4*1*23##", SEASON_HEATING, 23),
         ("*4*0*23##", SEASON_CONDITIONING, 23),
         ("*4*1*#0##", SEASON_HEATING, 0),
-        ("*4*0*#0#1##", SEASON_CONDITIONING, 1),
+        ("*4*0*#0#1##", SEASON_CONDITIONING, 0),  # the 4-zone central unit 1, not zone 1
     ],
 )
 def test_bare_what_0_and_1_are_season_frames(frame: str, season: str, zone: int) -> None:
@@ -42,7 +43,8 @@ def test_bare_what_0_and_1_are_season_frames(frame: str, season: str, zone: int)
     assert event.season == season
     assert event.mode is None
     assert event.zone == zone
-    assert event.human_readable_log == f"Zone {zone}'s season is {season}."
+    subject = f"Central unit {event.address}" if event.scope == "central" else f"Zone {zone}"
+    assert event.human_readable_log == f"{subject}'s season is {season}."
 
 
 @pytest.mark.parametrize(
@@ -52,8 +54,8 @@ def test_bare_what_0_and_1_are_season_frames(frame: str, season: str, zone: int)
         ("*4*111*#1##", CLIMATE_MODE_HEAT, SEASON_HEATING, MESSAGE_TYPE_MODE),
         ("*4*210*#1##", CLIMATE_MODE_COOL, SEASON_CONDITIONING, MESSAGE_TYPE_MODE),
         ("*4*110#0215*#0##", CLIMATE_MODE_HEAT, SEASON_HEATING, MESSAGE_TYPE_MODE_TARGET),
-        ("*4*102*1##", CLIMATE_MODE_OFF, SEASON_HEATING, MESSAGE_TYPE_MODE),
-        ("*4*202*1##", CLIMATE_MODE_OFF, SEASON_CONDITIONING, MESSAGE_TYPE_MODE),
+        ("*4*102*1##", CLIMATE_MODE_PROTECTION, SEASON_HEATING, MESSAGE_TYPE_MODE),
+        ("*4*202*1##", CLIMATE_MODE_PROTECTION, SEASON_CONDITIONING, MESSAGE_TYPE_MODE),
         ("*4*103*1##", CLIMATE_MODE_OFF, SEASON_HEATING, MESSAGE_TYPE_MODE),
         ("*4*1102*#0##", CLIMATE_MODE_HEAT, SEASON_HEATING, MESSAGE_TYPE_MODE),
         ("*4*2201*#0##", CLIMATE_MODE_COOL, SEASON_CONDITIONING, MESSAGE_TYPE_MODE),

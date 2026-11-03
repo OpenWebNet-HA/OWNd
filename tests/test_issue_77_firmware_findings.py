@@ -31,6 +31,8 @@ from OWNd.message import (
     CLIMATE_MODE_COOL,
     CLIMATE_MODE_HEAT,
     CLIMATE_MODE_OFF,
+    CLIMATE_MODE_HOLIDAY,
+    CLIMATE_MODE_PROTECTION,
     MESSAGE_TYPE_SEASON,
     OWNCenPlusCommand,
     OWNCENPlusEvent,
@@ -61,8 +63,8 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
         (CLIMATE_MODE_HEAT, 1, None),
         (CLIMATE_MODE_COOL, 0, None),
         (CLIMATE_MODE_AUTO, 311, CLIMATE_MODE_AUTO),
-        ("antifreeze", 102, CLIMATE_MODE_OFF),
-        ("protection", 302, CLIMATE_MODE_OFF),
+        ("antifreeze", 102, CLIMATE_MODE_PROTECTION),
+        ("protection", 302, CLIMATE_MODE_PROTECTION),
     ],
 )
 def test_fix1_central_mode_uses_the_who4_what_table(
@@ -85,7 +87,7 @@ def test_fix1_central_mode_uses_the_who4_what_table(
     Not verified: how a physical central unit reacts to them.
 
     OWNd's own parser must read each frame back as the mode that was asked for
-    (antifreeze and protection are shown as off). WHAT 1 / 0 are the season
+    (antifreeze and protection are the ``protection`` mode, report 21 H5). WHAT 1 / 0 are the season
     frames: they come back as ``season`` heating / conditioning with no
     operating mode (Legrand WHO 4 v2.0.0 p. 5, 13, 63).
     """
@@ -271,7 +273,8 @@ def test_fix4_actuator_status_without_actuator_falls_back_to_actuator_1(
     event = OWNEvent.parse(frame)
 
     assert isinstance(event, OWNHeatingEvent)
-    assert event._actuator == "1"
+    # A reply without ``#N`` names no actuator (report 21 H13).
+    assert event.actuator is None
     assert event.is_active() is False
 
 
@@ -279,7 +282,7 @@ def test_fix4_captured_actuator_status_keeps_its_actuator() -> None:
     """Capture: ``*#4*1#1*20*1##`` (MyHOME#466 MH200N sweep and others) names actuator 1."""
     event = OWNHeatingEvent("*#4*1#1*20*1##")
 
-    assert event._actuator == "1"
+    assert event.actuator == 1
     assert event.is_active() is True
 
 
@@ -671,5 +674,5 @@ def test_libqtdevices_thermal_device_event_and_write_parsing() -> None:
     assert OWNHeatingEvent("*4*312*#0##").mode == CLIMATE_MODE_AUTO
     assert OWNHeatingEvent("*4*3113*#0##").mode == CLIMATE_MODE_AUTO
     assert OWNHeatingEvent("*4*3212*#0##").mode == CLIMATE_MODE_AUTO
-    assert OWNHeatingEvent("*4*33002*#0##").mode == CLIMATE_MODE_AUTO
+    assert OWNHeatingEvent("*4*33002*#0##").mode == CLIMATE_MODE_HOLIDAY
 

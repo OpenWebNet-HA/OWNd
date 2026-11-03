@@ -137,23 +137,26 @@ def test_where_zero_actuator_is_a_pump_not_a_zone() -> None:
     assert pump.zone == 0
     assert pump.is_active()
     assert pump.human_readable_log == "Zone 0's actuator 2 is on."
-    assert pump.unique_id == "4-#0"
+    assert pump.unique_id == "4-0#2"
+    assert pump.actuator == 2
     assert call.zone == 0
     assert zone_actuator.zone == 1
-    assert central_zone.zone == 1
-    assert central_zone.unique_id == "4-1"
+    # ``#0#1`` is the 4-zone central unit 1, not zone 1 (report 21 H1).
+    assert central_zone.zone == 0
+    assert central_zone.central_unit == 1
+    assert central_zone.unique_id == "4-#0#1"
 
 
 def test_where_zero_with_parameter_stays_zone_zero() -> None:
     """No unhashed ``0#<p>`` parameter becomes the zone; ``#0`` is the central unit."""
-    for frame in (
-        "*#4*0#0*20*0##",  # all actuators
-        "*#4*0#4#01*20*1##",  # 0#4 was read as zone 4 (F422 form in MyHOME#432)
-        "*4*1*#0##",  # central unit
+    for frame, unique_id in (
+        ("*#4*0#0*20*0##", "4-0#0"),  # all actuators
+        ("*#4*0#4#01*20*1##", "4-0#4#01"),  # 0#4 was read as zone 4 (F422 form in MyHOME#432)
+        ("*4*1*#0##", "4-#0"),  # central unit
     ):
         event = OWNHeatingEvent(frame)
         assert event.zone == 0, frame
-        assert event.unique_id == "4-#0", frame
+        assert event.unique_id == unique_id, frame
 
 
 # DIMENSION 7 zone state (OWNd#58). Real plant capture frames from MyHOME#429
@@ -438,7 +441,9 @@ def test_invalid_temperature_width_and_sign_return_none(invalid_raw: str) -> Non
 
     probe_event = OWNHeatingEvent(f"*#4*1*15*01*{invalid_raw}*3##")
     assert probe_event.message_type == MESSAGE_TYPE_SECONDARY_TEMPERATURE
-    assert probe_event.probe_temperature is None
+    # DIMENSION 15 also reads the three-digit value of the documented test
+    # report ``*#4*11*15*1*123*1111##`` (report 21 H16).
+    assert probe_event.probe_temperature == (21.5 if invalid_raw == "215" else None)
 
     target_event = OWNHeatingEvent(f"*#4*1*14*{invalid_raw}*1##")
     assert target_event.message_type == MESSAGE_TYPE_TARGET_TEMPERATURE

@@ -38,6 +38,7 @@ import pytest
 
 from OWNd.message import (
     CLIMATE_MODE_OFF,
+    CLIMATE_MODE_PROTECTION,
     MESSAGE_TYPE_SEASON,
     SEASON_CONDITIONING,
     SEASON_HEATING,
@@ -117,8 +118,10 @@ def _check_operation(frame: str, event: OWNHeatingEvent, op: int, a1: int, a2: i
         assert event.set_temperature is None, "vacation carries no temperature"
         assert event.holiday_days == a1, "vacation days"
         assert event.program == a2 + 1, "vacation return program"
-    elif kind in (0x6, 0x7):
-        assert event.mode == CLIMATE_MODE_OFF, "off / protection"
+    elif kind == 0x6:
+        assert event.mode == CLIMATE_MODE_OFF, "off"
+    elif kind == 0x7:
+        assert event.mode == CLIMATE_MODE_PROTECTION, "protection"
     elif kind == 0x9:
         assert event.set_temperature == a1 / 2, "timed manual setpoint"
     else:
@@ -142,13 +145,22 @@ def check(fact: dict[str, Any]) -> None:
     if cls in NOT_DECODED:
         return
     if cls == "C1":
+        # Central-unit telegram. Sent to the central unit (#0, #0#C) addr is
+        # the 4-zone selector (02 for #0#2, 00 for #0) and OWNd's zone is 0
+        # (report 21 H1); sent to a plain zone (the season frames *4*1*Z##)
+        # addr is that zone.
         if not _waived(frame, "zone"):
-            assert event.zone == int(addr, 16), "zone"
+            if event.scope == "central":
+                assert event.zone == 0, "zone"
+                assert (event.central_unit or 0) == int(addr, 16), "central unit"
+            else:
+                assert event.zone == int(addr, 16), "zone"
         _check_operation(frame, event, int(b1, 16), int(b2, 16), int(b3, 16))
     elif cls == "C2":
-        # Zone b1; zone N of a 4-zone central (#0#N) goes out as zone 0, addr N.
-        zone = int(addr, 16) if b1 == "00" and "#0#" in frame else int(b1, 16)
-        assert event.zone == zone, "zone"
+        # Zone b1, central-unit selector addr: #0#N goes out as zone 0 of the
+        # 4-zone central unit N (addr N), #23#1 as zone 23 of central unit 1.
+        assert event.zone == int(b1, 16), "zone"
+        assert (event.central_unit or 0) == int(addr, 16), "central unit"
         _check_operation(frame, event, int(b2, 16), int(b3, 16), 0)
     elif cls == "0B":
         # Written through the central (*#4*#Z*#11*S##) the telegram goes to the

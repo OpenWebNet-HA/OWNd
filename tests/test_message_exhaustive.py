@@ -187,12 +187,13 @@ class TestMessageExhaustiveCoverage:
         cmd_auto = OWNHeatingCommand.set_mode("1", mode=CLIMATE_MODE_AUTO)
         assert cmd_auto is not None
 
-        # set_temperature edge clamping (<5.0 and >40.0 and zone 0)
-        cmd_low = OWNHeatingCommand.set_temperature("1", 2.0, mode=CLIMATE_MODE_HEAT)
-        assert "0050" in str(cmd_low)
-
-        cmd_high = OWNHeatingCommand.set_temperature("1", 45.0, mode=CLIMATE_MODE_HEAT)
-        assert "0400" in str(cmd_high)
+        # set_temperature refuses <5.0 and >40.0 instead of clamping (report 21 H19)
+        with pytest.raises(ValueError, match="Invalid temperature"):
+            OWNHeatingCommand.set_temperature("1", 2.0, mode=CLIMATE_MODE_HEAT)
+        with pytest.raises(ValueError, match="Invalid temperature"):
+            OWNHeatingCommand.set_temperature("1", 45.0, mode=CLIMATE_MODE_HEAT)
+        assert "0050" in str(OWNHeatingCommand.set_temperature("1", 5.0, mode=CLIMATE_MODE_HEAT))
+        assert "0400" in str(OWNHeatingCommand.set_temperature("1", 40.0, mode=CLIMATE_MODE_HEAT))
 
         cmd_zone0 = OWNHeatingCommand.set_temperature("0", 21.0, mode=CLIMATE_MODE_HEAT)
         assert "*#4*#0*" in str(cmd_zone0)
@@ -511,7 +512,7 @@ class TestMessageExhaustiveCoverage:
         ev_act_fan1 = OWNHeatingEvent("*#4*1#1*20*6##")
         assert ev_act_fan1.fan_on is True
         ev_act_fan_auto = OWNHeatingEvent("*#4*1#1*20*9##")
-        assert "Auto" in ev_act_fan_auto.human_readable_log
+        assert "fan-coil is on" in ev_act_fan_auto.human_readable_log  # value 9 = fan-coil ON, no speed
 
         # Secondary temperature
         ev_sec = OWNHeatingEvent("*#4*101*0*0220##")
