@@ -541,3 +541,120 @@ def test_a5_golden_alarm_labels_follow_the_page() -> None:
     assert parsed.state_name == "deactivation"
     assert parsed.is_silent is False
     assert OWNAlarmEvent("*5*31*0##").is_silent is True
+
+
+# ── Lab 2026-11-03 L-C1: the WHAT-less *#25*WHERE## form carries no state ────
+
+
+@pytest.mark.parametrize(
+    ("frame", "sensor"),
+    [
+        ("*#25*21##", "21"),  # status request echoed on a monitor session;
+        # *#25*31## / *#25*311## were not answered by a live F461 2.0.11
+        ("*#25*339##", "39"),  # bus form of sensor 39
+        ("*#25*21*0*1##", "21"),  # dimension-shaped, still no WHAT
+    ],
+)
+def test_lc1_what_less_dry_contact_frame_has_no_state(frame: str, sensor: str) -> None:
+    event = OWNEvent.parse(frame)
+    assert isinstance(event, OWNDryContactEvent)
+    assert event.is_on is None  # was False
+    assert event.sensor == sensor
+    assert event.has_detection_parameter is False
+    assert event.is_state_reply is False
+    assert event.is_detection is True  # historical fallback, unchanged
+    assert event.human_readable_log == (
+        f"Sensor {sensor} sent no state: the frame carries no WHAT "
+        "(the *#25*WHERE## status request form, not a published WHO 25 event: "
+        "dry-contact-ir.md#what)."
+    )
+
+
+def test_lc1_non_integer_what_has_no_state_and_published_whats_keep_theirs() -> None:
+    assert OWNDryContactEvent("*25*bad*21##").is_on is None
+    assert OWNDryContactEvent("*25*31#0*21##").is_on is True
+    assert OWNDryContactEvent("*25*32#1*21##").is_on is False
+    # Parameter-less but with a WHAT: the state is still there (report 21 T4).
+    assert OWNDryContactEvent("*25*31*33##").is_on is True
+
+
+# ── Lab 2026-11-03 L-C2: CEN+ builders bound the Object 0..2047 ─────────────
+
+
+def _cen_plus_builders():
+    from OWNd.message import OWNCenPlusCommand
+
+    return (
+        (OWNCenPlusCommand.press, 21),
+        (OWNCenPlusCommand.start_long_press, 22),
+        (OWNCenPlusCommand.still_held, 23),
+        (OWNCenPlusCommand.release, 24),
+    )
+
+
+@pytest.mark.parametrize(
+    ("where", "button"),
+    [
+        ("20", 0),  # Object 0, button 0 is a real button
+        ("21", 1),
+        ("2101", 31),
+        ("22047", 2),  # live F461 2.0.11: ACK, echoed; oracle: on the bus
+        (22047, "2"),
+        ("2001", 1),  # leading zeros are sent as given (not canonicalised)
+    ],
+)
+def test_lc2_cen_plus_builders_accept_objects_0_to_2047(where: str | int, button: int | str) -> None:
+    for builder, what in _cen_plus_builders():
+        assert str(builder(where, button)) == f"*25*{what}#{int(button)}*{where}##"
+
+
+@pytest.mark.parametrize(
+    "bad_where",
+    [
+        "22048",  # live F461 2.0.11: NACK; oracle: nack, silent
+        "29999",
+        "2",  # bare prefix, no Object
+        "12",  # no CEN+ prefix
+        "#21",
+        "21#4#01",  # no interface form on the page
+        "2a",
+        " 22048 ",
+    ],
+)
+def test_lc2_cen_plus_builders_refuse_objects_above_2047(bad_where: str) -> None:
+    for builder, _what in _cen_plus_builders():
+        with pytest.raises(ValueError, match="CEN\\+ where must be the prefix 2 followed by an object between 0 and 2047"):
+            builder(bad_where, 1)
+
+
+@pytest.mark.parametrize("bad_button", [True, False, 1.5, -1, 32, "32"])
+def test_lc2_cen_plus_builders_refuse_non_integral_or_out_of_range_buttons(bad_button) -> None:
+    for builder, _what in _cen_plus_builders():
+        with pytest.raises(ValueError, match="CEN\\+ button must be between 0 and 31"):
+            builder("21", bad_button)
+
+
+def test_lc2_cen_plus_builders_still_need_a_where() -> None:
+    from OWNd.message import OWNCenPlusCommand
+
+    with pytest.raises(ValueError, match="where must be a non-empty address without '\\*'"):
+        OWNCenPlusCommand.press("", 1)
+
+
+def test_lc2_cen_plus_event_parse_stays_permissive_above_2047() -> None:
+    event = OWNEvent.parse("*25*21#1*22048##")
+    assert isinstance(event, OWNCENPlusEvent)
+    assert event.object == "2048"
+    assert event.push_button == 1
+    assert event.is_short_pressed is True
+    assert event.human_readable_log == (
+        "Button 1 of CEN+ object 2048 sent WHAT 21: the Object is outside the "
+        "published 0..2047 (cen-plus.md#where---virtual-object)."
+    )
+    in_range = OWNEvent.parse("*25*21#1*22047##")
+    assert isinstance(in_range, OWNCENPlusEvent)
+    assert in_range.human_readable_log == "Button 1 of CEN+ object 2047 has been pressed"
+    # A WHERE that is not 2 + digits keeps the historical log.
+    odd = OWNCENPlusEvent("*25*21#1*#5##")
+    assert odd.object == "#5"
+    assert odd.human_readable_log == "Button 1 of CEN+ object #5 has been pressed"

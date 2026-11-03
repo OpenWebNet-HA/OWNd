@@ -75,12 +75,28 @@ class OWNDryContactEvent(OWNEvent):
     ``False`` and the log says so; ``is_detection`` keeps reading ``True`` for
     it, the historical value MyHOME pins (``tests/test_message_edges.py``
     ``test_who25_routing_and_bounds_safety``).
+
+    A frame without a WHAT at all (the status request ``*#25*WHERE##`` seen
+    on a monitor session, or ``*25*bad*WHERE##``) carries no state:
+    ``is_on`` is ``None`` (it used to read ``False``), ``has_detection_parameter``
+    is ``False`` and the log names the form. The page only answers that
+    request with ``*25*31#0*WHERE##`` / ``*25*32#0*WHERE##``
+    (dry-contact-ir.md#what). Sent as a request, ``*#25*31##`` / ``*#25*311##``
+    were not answered by a live F461 2.0.11 (no dry contact on the plant,
+    ``lab_probe_writes_output.txt`` 2026-11-03); the emulated gateways put
+    the telegram on the bus on 9 of 12 (``$04B4009001`` / ``$04B4009011``;
+    ``nack, out`` 8, ``ack, out`` 1) and refuse it on 3 (lab 2026-11-03
+    oracle rows), so the request reaches a configured sensor.
     """
 
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
-        self._state = 1 if self._what == 31 else 0
+        # L-C1 (lab 2026-11-03): no WHAT, no state. ``*#25*WHERE##`` is the
+        # status request, not a reply; it was read as OFF before.
+        self._state: int | None = (
+            None if self._what is None else (1 if self._what == 31 else 0)
+        )
         self._detection: int | None
         try:
             self._detection = int(self._what_param[0]) if self._what_param else None
@@ -94,7 +110,13 @@ class OWNDryContactEvent(OWNEvent):
         )
 
         state_text = "ON" if self._state == 1 else "OFF"
-        if self._detection == 1:
+        if self._state is None:
+            self._human_readable_log = (
+                f"Sensor {self._sensor} sent no state: the frame carries no WHAT "
+                "(the *#25*WHERE## status request form, not a published WHO 25 "
+                "event: dry-contact-ir.md#what)."
+            )
+        elif self._detection == 1:
             self._human_readable_log = f"Sensor {self._sensor} detected {state_text}."
         elif self._detection == 0:
             self._human_readable_log = f"Sensor {self._sensor} reported {state_text}."
@@ -105,7 +127,10 @@ class OWNDryContactEvent(OWNEvent):
             )
 
     @property
-    def is_on(self) -> bool:
+    def is_on(self) -> bool | None:
+        """True for WHAT 31, False for WHAT 32, None when the frame carries no WHAT (``*#25*WHERE##``)."""
+        if self._state is None:
+            return None
         return self._state == 1
 
     @property
@@ -142,6 +167,9 @@ class OWNDryContactEvent(OWNEvent):
 
 
 
+_CEN_PLUS_MAX_OBJECT = 2047  # cen-plus.md#where---virtual-object: Object 0..2047
+
+
 class OWNCENPlusEvent(OWNEvent):
     """WHO 25 WHAT 21..28 CEN+ frames (``*25*WHAT#PUSHBUTTON*2OBJECT##``).
 
@@ -152,7 +180,15 @@ class OWNCENPlusEvent(OWNEvent):
     and is logged; ``push_button`` keeps the historical ``0`` for that case
     (MyHOME pins it: ``tests/test_message_edges.py``
     ``test_who25_routing_and_bounds_safety``). A bare WHERE ``2`` carries no
-    Object and leaves ``object`` ``None`` (logged).
+    Object and leaves ``object`` ``None`` (logged). An Object above ``2047``
+    (``*25*21#1*22048##``) is kept on ``object`` as received, parsing stays
+    permissive (decision D1), and the log notes the range. The firmware
+    enforces the bound: a live F461 2.0.11 ACKs ``*25*21#1*22047##`` (and
+    echoes it on the event bus) and NACKs ``*25*21#1*22048##``
+    (``lab_probe_writes_output.txt`` 2026-11-03); the emulated gateways put
+    ``22047`` on the bus on 9 of 12 and refuse ``22048`` before the bus on
+    12 of 12 (``nack, silent`` 11, ``ack, silent`` 1; lab 2026-11-03 oracle
+    rows). ``OWNCenPlusCommand`` refuses to build it.
     """
 
     def __init__(self, data: str) -> None:
@@ -188,6 +224,12 @@ class OWNCENPlusEvent(OWNEvent):
             self._human_readable_log = (
                 f"CEN+ WHAT {self._state} on bare WHERE 2 carries no Object "
                 "(WHERE is 2 + OBJECT: cen-plus.md#where---virtual-object)."
+            )
+        elif self.object.isdigit() and int(self.object) > _CEN_PLUS_MAX_OBJECT:
+            self._human_readable_log = (
+                f"Button {self.push_button} of CEN+ object {self.object} sent WHAT "
+                f"{self._state}: the Object is outside the published 0..2047 "
+                "(cen-plus.md#where---virtual-object)."
             )
         elif self._state == 21:
             self._human_readable_log = f"Button {self.push_button} of CEN+ object {self.object} has been pressed"  # pylint: disable=line-too-long
@@ -433,19 +475,48 @@ class OWNCenPlusCommand(OWNCommand):
     values ``WHAT 25..28`` (#rotary-selector-events---what-2528) are decoded by
     ``OWNCENPlusEvent`` but the page describes them as events of a physical
     selector and gives no action frame for them, so there is no rotary builder.
+
+    Bounds (decisions D20 / D21, ``ValueError``): ``where`` is the virtual
+    address ``2`` + Object with the Object in ``0..2047``
+    (cen-plus.md#where---virtual-object: ``20`` is Object 0, ``22047`` Object
+    2047; a bare ``2`` carries no Object), sent as given; ``button`` is an
+    integer ``0..31`` (cen-plus.md#pushbutton-parameter; ``bool`` and
+    fractional values are refused). The firmware enforces the Object bound:
+    a live F461 2.0.11 ACKs ``*25*21#1*22047##`` and ``*25*24#1*22047##`` and
+    NACKs ``*25*21#1*22048##`` (``lab_probe_writes_output.txt`` 2026-11-03);
+    the emulated gateways put ``22047`` on the bus on 9 of 12 and refuse
+    ``22048`` before the bus on 12 of 12 (lab 2026-11-03 oracle rows).
+    ``OWNCENPlusEvent`` still parses the refused frame.
     """
 
     @staticmethod
     def _button(button: int | str) -> int:
+        if isinstance(button, bool) or (isinstance(button, float) and button % 1 != 0):
+            raise ValueError("CEN+ button must be between 0 and 31")
         value = int(button)
         if not 0 <= value <= 31:
             raise ValueError("CEN+ button must be between 0 and 31")
         return value
 
+    @staticmethod
+    def _cen_plus_where(where: str | int) -> str:
+        """``2`` + Object, Object ``0..2047`` (cen-plus.md#where---virtual-object), returned as given."""
+        w = _require_non_empty_where(where)
+        if (
+            len(w) < 2
+            or not w.isdigit()
+            or w[0] != "2"
+            or int(w[1:]) > _CEN_PLUS_MAX_OBJECT
+        ):
+            raise ValueError(
+                "CEN+ where must be the prefix 2 followed by an object between 0 and 2047"
+            )
+        return w
+
     @classmethod
     def press(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
         """CEN+ short press event (*25*21#<button>*<where>##)."""
-        w = _require_non_empty_where(where)
+        w = cls._cen_plus_where(where)
         btn = cls._button(button)
         message = cls(f"*25*21#{btn}*{w}##")
         message._human_readable_log = (
@@ -456,7 +527,7 @@ class OWNCenPlusCommand(OWNCommand):
     @classmethod
     def start_long_press(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
         """CEN+ start long press event (*25*22#<button>*<where>##)."""
-        w = _require_non_empty_where(where)
+        w = cls._cen_plus_where(where)
         btn = cls._button(button)
         message = cls(f"*25*22#{btn}*{w}##")
         message._human_readable_log = (
@@ -467,7 +538,7 @@ class OWNCenPlusCommand(OWNCommand):
     @classmethod
     def release(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
         """CEN+ release after long press (*25*24#<button>*<where>##)."""
-        w = _require_non_empty_where(where)
+        w = cls._cen_plus_where(where)
         btn = cls._button(button)
         message = cls(f"*25*24#{btn}*{w}##")
         message._human_readable_log = (
@@ -478,7 +549,7 @@ class OWNCenPlusCommand(OWNCommand):
     @classmethod
     def still_held(cls, where: str, button: int | str = 1) -> OWNCenPlusCommand:
         """CEN+ heartbeat while still held (*25*23#<button>*<where>##)."""
-        w = _require_non_empty_where(where)
+        w = cls._cen_plus_where(where)
         btn = cls._button(button)
         message = cls(f"*25*23#{btn}*{w}##")
         message._human_readable_log = (
