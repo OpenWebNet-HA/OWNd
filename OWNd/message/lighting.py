@@ -50,6 +50,13 @@ SPEED_MAX = 255
 BLINK_PERIOD_MIN = 0.5
 BLINK_PERIOD_MAX = 5.0
 
+# Relative dimmer steps (who-1-lighting/what.md "Switching and levels": WHAT 30
+# "Increase one level", 31 "Decrease one level", 30#LEVELS#SPEED / 31#LEVELS#SPEED).
+# A step is a command, not a state: a live F461 2.0.11 + F418 answered
+# *1*30*0010## / *1*31*0010## with separate *1*8*0010## / *1*7*0010## preset
+# frames (reports/data/live_f418_0010_2026-11-03/lab_probe_output.txt).
+_STEP_WHATS = (30, 31)
+
 # DIMENSION 2 report the TS10_1_0_23 touchscreen ignores as an unusable timer
 # (who-1-lighting/dimensions.md "Historical timer handling").
 _UNUSABLE_TIMER_REPORT = (255, 255, 255)
@@ -658,10 +665,34 @@ class OWNLightingEvent(OWNEvent):
     def is_on(self) -> bool | None:
         """True/False when the on/off state is known, None otherwise (e.g. a
         motion or end-of-movement event, a reply carrying only a dimension such as illuminance
-        or a timer, an anomaly state, or a WHAT outside the published table; see unknown_state)."""
-        if self._state is None or self._motion or self._motion_end or self._is_anomaly:
+        or a timer, an anomaly state, a relative step (see :attr:`is_step`), or a WHAT
+        outside the published table; see unknown_state).
+
+        A ``WHAT 30`` / ``31`` step (``*1*30*WHERE##``, ``30#LEVELS#SPEED``,
+        ``31#LEVELS#SPEED``; what.md "Switching and levels") is a relative
+        command, not a state: a live F461 2.0.11 with an F418 at ``0010``
+        answered ``*1*30*0010##`` (53 % -> 63 %) with a separate ``*1*8*0010##``
+        and ``*1*31*0010##`` (63 % -> 47 %) with ``*1*7*0010##``; the resulting
+        preset, not the step, carries the state (``lab_probe_output.txt``,
+        2026-11-03). It used to be ``True``.
+        """
+        if (
+            self._state is None
+            or self._state in _STEP_WHATS
+            or self._motion
+            or self._motion_end
+            or self._is_anomaly
+        ):
             return None
         return 0 < self._state < 32
+
+    @property
+    def is_step(self) -> bool:
+        """True for a relative dimmer step, ``WHAT 30`` (up) or ``31`` (down),
+        with or without ``#LEVELS#SPEED`` parameters (see :attr:`levels`,
+        :attr:`transition`); such a frame has no on/off state (:attr:`is_on`
+        ``None``)."""
+        return self._state in _STEP_WHATS
 
     @property
     def is_anomaly(self) -> bool:
@@ -1037,16 +1068,36 @@ class OWNLightingCommand(OWNCommand):
     def step_up(
         cls, where: str | int, delta: int | None = None, speed: int | None = None
     ) -> OWNLightingCommand:
-        """One level up (WHAT 30), or ``30#delta#speed`` for a dimmer 100
-        (libqtdevices lighting_device.cpp:230-233, 409-412)."""
+        """``*1*30*WHERE##`` (one level up, what.md "Switching and levels"), or
+        ``*1*30#delta#speed*WHERE##`` with ``delta`` 1..100 and ``speed``
+        0..255 (``30#LEVELS#SPEED``, the dimmer 100 form of libqtdevices
+        lighting_device.cpp:230-233, 409-412).
+
+        ``delta`` is kept at 1..100 on live evidence: an F461 2.0.11 with an
+        F418 at ``0010`` accepts ``#N`` as N percent levels, ``*1*30#5#0*0010##``
+        moved 47 % -> 52 % and ``*1*30#50#0*0010##`` moved 52 % -> 100 %
+        (``lab_probe_output.txt``, 2026-11-03; firmware-observed on one
+        gateway). The public WHO 1 PDF lists ``dimmerLevel10 2..10`` for this
+        field; the wider range is libqtdevices' dimmer100 use of it, kept here
+        because the gateway applied it. An out-of-range ``delta`` or ``speed``
+        raises ``ValueError``.
+        """
         return cls._step(where, 30, "up", delta, speed)
 
     @classmethod
     def step_down(
         cls, where: str | int, delta: int | None = None, speed: int | None = None
     ) -> OWNLightingCommand:
-        """One level down (WHAT 31), or ``31#delta#speed`` for a dimmer 100
-        (libqtdevices lighting_device.cpp:235-238, 414-417)."""
+        """``*1*31*WHERE##`` (one level down, what.md "Switching and levels"), or
+        ``*1*31#delta#speed*WHERE##`` with ``delta`` 1..100 and ``speed``
+        0..255 (``31#LEVELS#SPEED``, the dimmer 100 form of libqtdevices
+        lighting_device.cpp:235-238, 414-417).
+
+        Same bounds and evidence as :meth:`step_up`: the live F461 2.0.11 +
+        F418 run took ``#5`` and ``#50`` as percent levels (``*1*31*0010##``
+        itself moved 63 % -> 47 %, echoed as ``*1*7*0010##``); the public PDF
+        lists ``dimmerLevel10 2..10``, the wider range is libqtdevices' dimmer100 use.
+        """
         return cls._step(where, 31, "down", delta, speed)
 
     @classmethod

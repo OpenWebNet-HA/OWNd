@@ -302,8 +302,80 @@ def test_step_with_levels_and_speed(frame: str, levels: int | None, transition: 
     assert isinstance(msg, OWNLightingEvent)
     assert msg.levels == levels
     assert msg.transition == transition
-    assert msg.is_on is True
+    assert msg.is_on is None  # L-B1 (lab 2026-11-03): a step is a command, not a state
+    assert msg.is_step is True
     assert msg.human_readable_log == log
+
+
+# --- Lab 2026-11-03 L-B1 / L-B2: WHAT 30 / 31 steps are relative ---------------
+#
+# Live F461 2.0.11 + F418 at 0010 (reports/data/live_f418_0010_2026-11-03/
+# lab_probe_output.txt): *1*30*0010## moved 53 % -> 63 % and the gateway echoed
+# *1*8*0010##; *1*31*0010## moved 63 % -> 47 % with echo *1*7*0010##;
+# *1*30#5#0*0010## moved 47 % -> 52 %; *1*30#50#0*0010## moved 52 % -> 100 %.
+
+
+@pytest.mark.parametrize(
+    ("frame", "levels", "log"),
+    [
+        ("*1*30*0010##", None, "Light 0010 is dimmed up one level."),
+        ("*1*31*0010##", None, "Light 0010 is dimmed down one level."),
+        ("*1*30#5#0*0010##", 5, "Light 0010 is dimmed up by 5 levels at speed 0."),
+        ("*1*30#50#0*0010##", 50, "Light 0010 is dimmed up by 50 levels at speed 0."),
+        ("*1*31#5#0*0010##", 5, "Light 0010 is dimmed down by 5 levels at speed 0."),
+    ],
+)
+def test_step_frames_of_the_live_run_carry_no_state(frame: str, levels: int | None, log: str) -> None:
+    """L-B1: the step itself carries no on/off state; the F461 reports the
+    resulting preset in a separate frame (*1*8*0010## after *1*30*0010##)."""
+    msg = OWNMessage.parse(frame)
+    assert isinstance(msg, OWNLightingEvent)
+    assert msg.is_step is True
+    assert msg.is_on is None
+    assert msg.brightness is None
+    assert msg.levels == levels
+    assert msg.unknown_state is None
+    assert msg.is_sensor is False
+    assert msg.human_readable_log == log
+
+
+@pytest.mark.parametrize(
+    ("frame", "preset", "is_on"),
+    [
+        ("*1*8*0010##", 8, True),  # preset echo after *1*30*0010## (dim 1 readback 163)
+        ("*1*7*0010##", 7, True),  # preset echo after *1*31*0010## (dim 1 readback 147)
+        ("*1*10*0010##", 10, True),  # echo after *1*1*0010## at 100 %
+        ("*1*1*0010##", None, True),
+        ("*1*0*0010##", None, False),
+    ],
+)
+def test_preset_echo_after_a_step_still_carries_the_state(frame: str, preset: int | None, is_on: bool) -> None:
+    """L-B1: only the preset / switch frames the gateway sends after a step
+    carry is_on; they are not steps."""
+    msg = OWNMessage.parse(frame)
+    assert isinstance(msg, OWNLightingEvent)
+    assert msg.is_step is False
+    assert msg.is_on is is_on
+    assert msg.brightness_preset == preset
+
+
+def test_step_builders_emit_the_live_run_frames() -> None:
+    """L-B2: delta stays 1..100 (the F461 + F418 took #5 and #50 as percent
+    levels: 47 -> 52 %, 52 -> 100 %); the PDF lists dimmerLevel10 2..10, the wider
+    range is libqtdevices' dimmer100 use, kept because the gateway applied it."""
+    assert str(OWNLightingCommand.step_up("0010")) == "*1*30*0010##"
+    assert str(OWNLightingCommand.step_down("0010")) == "*1*31*0010##"
+    assert str(OWNLightingCommand.step_up("0010", 5, 0)) == "*1*30#5#0*0010##"
+    assert str(OWNLightingCommand.step_up("0010", 50, 0)) == "*1*30#50#0*0010##"
+    assert str(OWNLightingCommand.step_up("0010", 100)) == "*1*30#100#0*0010##"
+    assert str(OWNLightingCommand.step_down("0010", 1, 255)) == "*1*31#1#255*0010##"
+    for delta in (0, 101):
+        with pytest.raises(ValueError):
+            OWNLightingCommand.step_up("0010", delta)
+        with pytest.raises(ValueError):
+            OWNLightingCommand.step_down("0010", delta)
+    with pytest.raises(ValueError):
+        OWNLightingCommand.step_up("0010", 5, 256)
 
 
 @pytest.mark.parametrize(

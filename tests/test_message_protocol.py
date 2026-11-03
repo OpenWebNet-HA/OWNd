@@ -355,12 +355,20 @@ def test_lighting_what_outside_the_table_is_an_unknown_state(what: int) -> None:
 
 @pytest.mark.parametrize(
     ("what", "is_on"),
-    [(0, False), *((w, True) for w in range(1, 19)), *((w, True) for w in range(20, 32))],
+    [
+        (0, False),
+        *((w, True) for w in range(1, 19)),
+        *((w, True) for w in range(20, 30)),
+        # WHAT 30 / 31 are relative steps, not a state (lab 2026-11-03 L-B1)
+        (30, None),
+        (31, None),
+    ],
 )
-def test_lighting_what_in_the_table_keeps_its_state(what: int, is_on: bool) -> None:
+def test_lighting_what_in_the_table_keeps_its_state(what: int, is_on: bool | None) -> None:
     msg = OWNLightingEvent(f"*1*{what}*21##")
 
     assert msg.is_on is is_on
+    assert msg.is_step is (what in (30, 31))
     assert msg.unknown_state is None
     assert "unknown" not in msg.human_readable_log
 
@@ -403,7 +411,8 @@ def test_lighting_translation_wrapper_is_not_an_unknown_state(frame: str) -> Non
 def test_lighting_step_what_has_a_log(frame: str, log: str) -> None:
     msg = OWNLightingEvent(frame)
 
-    assert msg.is_on is True
+    assert msg.is_on is None  # a relative step is not a state (lab 2026-11-03 L-B1)
+    assert msg.is_step is True
     assert msg.unknown_state is None
     assert msg.human_readable_log == log
 
