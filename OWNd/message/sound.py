@@ -200,25 +200,35 @@ class OWNSoundEvent(OWNEvent):
         # 50 / 53 Follow Me, 101 / 102 RDS start / stop (base band / stereo
         # channel as ``is_stereo_channel``). `*16*20*100##` / `*16*23*100##`
         # cycle the sources on the plant of reverse-engineering
-        # sound-matrix-routing.md (ENCY_CONFIRM SD-S4).
+        # sound-matrix-routing.md (ENCY_CONFIRM SD-S4). The log keeps the
+        # generic "received command: N" text these WHATs had before (MyHOME
+        # tests/test_message.py pins it for `*16*30*22##`) and adds the name.
         elif self._state in (20, 23):
             self._is_source_cycle = True
-            self._human_readable_log = f"{subject} cycles to the next source."
+            self._human_readable_log = (
+                f"{subject} received command: {self._state} (cycle to the next source)."
+            )
         elif self._state in (30, 33):
             self._is_sleep = True
-            self._human_readable_log = f"{subject} sleep is ON."
+            self._human_readable_log = f"{subject} received command: {self._state} (sleep ON)."
         elif self._state == 40:
             self._is_sleep_off = True
-            self._human_readable_log = f"{subject} sleep is OFF."
+            self._human_readable_log = f"{subject} received command: {self._state} (sleep OFF)."
         elif self._state in (50, 53):
             self._is_follow_me = True
-            self._human_readable_log = f"{subject} is switched ON with Follow Me."
+            self._human_readable_log = (
+                f"{subject} received command: {self._state} (switched ON with Follow Me)."
+            )
         elif self._state == 101:
             self._is_rds_start = True
-            self._human_readable_log = f"{subject} starts RDS transmission."
+            self._human_readable_log = (
+                f"{subject} received command: {self._state} (start RDS transmission)."
+            )
         elif self._state == 102:
             self._is_rds_stop = True
-            self._human_readable_log = f"{subject} stops RDS transmission."
+            self._human_readable_log = (
+                f"{subject} received command: {self._state} (stop RDS transmission)."
+            )
         elif self._state is not None and 2001 <= self._state <= 2015:
             self._high_tone_step_delta = self._state - 2000
             self._human_readable_log = (

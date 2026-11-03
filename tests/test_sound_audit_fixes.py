@@ -617,15 +617,15 @@ def test_s3_module_docstring_names_the_dialects() -> None:
 @pytest.mark.parametrize(
     ("frame", "attribute", "stereo", "log"),
     [
-        ("*16*20*100##", "is_source_cycle", False, "All audio sources cycles to the next source."),
-        ("*16*23*100##", "is_source_cycle", True, "All audio sources cycles to the next source."),
-        ("*16*30*21##", "is_sleep", False, "Audio Zone 21 sleep is ON."),
-        ("*16*33*21##", "is_sleep", True, "Audio Zone 21 sleep is ON."),
-        ("*16*40*21##", "is_sleep_off", None, "Audio Zone 21 sleep is OFF."),
-        ("*16*50*21##", "is_follow_me", False, "Audio Zone 21 is switched ON with Follow Me."),
-        ("*16*53*21##", "is_follow_me", True, "Audio Zone 21 is switched ON with Follow Me."),
-        ("*16*101*101##", "is_rds_start", None, "Audio Source 1 starts RDS transmission."),
-        ("*16*102*101##", "is_rds_stop", None, "Audio Source 1 stops RDS transmission."),
+        ("*16*20*100##", "is_source_cycle", False, "All audio sources received command: 20 (cycle to the next source)."),
+        ("*16*23*100##", "is_source_cycle", True, "All audio sources received command: 23 (cycle to the next source)."),
+        ("*16*30*21##", "is_sleep", False, "Audio Zone 21 received command: 30 (sleep ON)."),
+        ("*16*33*21##", "is_sleep", True, "Audio Zone 21 received command: 33 (sleep ON)."),
+        ("*16*40*21##", "is_sleep_off", None, "Audio Zone 21 received command: 40 (sleep OFF)."),
+        ("*16*50*21##", "is_follow_me", False, "Audio Zone 21 received command: 50 (switched ON with Follow Me)."),
+        ("*16*53*21##", "is_follow_me", True, "Audio Zone 21 received command: 53 (switched ON with Follow Me)."),
+        ("*16*101*101##", "is_rds_start", None, "Audio Source 1 received command: 101 (start RDS transmission)."),
+        ("*16*102*101##", "is_rds_stop", None, "Audio Source 1 received command: 102 (stop RDS transmission)."),
     ],
 )
 def test_s4_who16_named_whats(frame: str, attribute: str, stereo: bool | None, log: str) -> None:
@@ -633,6 +633,8 @@ def test_s4_who16_named_whats(frame: str, attribute: str, stereo: bool | None, l
     assert getattr(event, attribute) is True
     assert event.is_stereo_channel is stereo
     assert event.human_readable_log == log
+    # MyHOME tests/test_message.py pins the generic text for `*16*30*22##`.
+    assert f"received command: {event.what}" in event.human_readable_log
     for other in ("is_source_cycle", "is_sleep", "is_sleep_off", "is_follow_me", "is_rds_start", "is_rds_stop"):
         if other != attribute:
             assert getattr(event, other) is False, other
