@@ -30,6 +30,10 @@ MESSAGE_TYPE_SEASON = "hvac_season"
 MESSAGE_TYPE_FAN_SPEED = "fan_speed"
 MESSAGE_TYPE_ZONE_STATE = "zone_state"
 MESSAGE_TYPE_SPLIT_CONTROL = "split_control"
+# Firmware-observed zone setpoints (Dimensions 2 and 3 are not in the
+# published WHO 4 document; live F461 2.0.11, lab audit 2026-11-03).
+MESSAGE_TYPE_PROTECTION_SETPOINT = "protection_setpoint"
+MESSAGE_TYPE_ANTIFREEZE_SETPOINT = "antifreeze_setpoint"
 
 # ``OWNHeatingEvent.mode``: the coarse climate mode of a WHAT, the four
 # historical values plus two the Encyclopedia keeps apart from them
@@ -152,6 +156,13 @@ _WHO4_SPLIT_SETPOINT_REGEX = re.compile(r"[0-9]{3,4}", re.ASCII)
 _WHO4_HUMIDITY_REGEX = re.compile(r"[0-9]+(?:\.[0-9]+)?", re.ASCII)
 # DIMENSION 19 fan-coil OFF states beyond the published 0..8 table.
 _FAN_COIL_OFF_STATES = (14, 15, 16)
+# DIMENSION 19 published valve / fan-coil values (dimensions.md "DIMENSION 19"):
+# 0 off, 1 on, 2 opened, 3 closed, 4 stop, 5 fan-coil off, 6..8 fan-coil on.
+_VALVE_PUBLISHED_STATES = range(0, 9)
+# DIMENSION 14 published setpoint range ``0050..0400`` (dimensions.md
+# "DIMENSION 14", page 18); a reply outside it is kept and flagged in the log.
+_WHO4_SETPOINT_MIN = 5.0
+_WHO4_SETPOINT_MAX = 40.0
 
 # WHO 4 DIMENSION 22 is the published split-unit (air conditioning) IR
 # control: ``*#4*3#Z#N*22##`` requests the current setting and
@@ -615,6 +626,8 @@ class OWNHeatingEvent(OWNEvent):
         self._local_offset_raw = None
         self._local_control_state = None
         self._local_set_temperature = None
+        self._protection_setpoint: float | None = None
+        self._antifreeze_setpoint: float | None = None
         self._measured_temperature = None
         self._secondary_temperature = None
         self._measured_humidity = None
@@ -879,6 +892,39 @@ class OWNHeatingEvent(OWNEvent):
                 if self._secondary_temperature is not None:
                     self._human_readable_log = f"{subject}'s secondary sensor {self._sensor} is reporting a temperature of {self._secondary_temperature}°C."  # pylint: disable=line-too-long
 
+        elif self._dimension in (2, 3) and not is_write:  # Protection / antifreeze setpoints
+            # ``*#4*Z*2*T##`` and ``*#4*Z*3*T##`` are not in the published
+            # WHO 4 document (Encyclopedia dimensions.md has no Dimension 2
+            # or 3; Dimension 7 carries the protection *mode*). They were
+            # observed on a live F461 2.0.11: zone 2 (a KW4691) answered
+            # ``*#4*2*2##`` with ``*#4*2*2*0350##`` and ``*#4*2*3##`` with
+            # ``*#4*2*3*0070##``, the BTicino factory defaults of the thermal
+            # protection setpoint (cooling side, 35.0 °C) and the antifreeze
+            # setpoint (heating side, 7.0 °C), so the value is decoded as the
+            # ``SXXX`` tenths of Dimension 14 (lab audit 2026-11-03, L-A1).
+            # The same plant also applied the writes ``*#4*2*#2*0340##`` and
+            # ``*#4*2*#3*0060##`` (ACK, read back as ``0340`` / ``0060``) and
+            # NACKed ``*#4*2*#3*0999##`` (read back unchanged). In the
+            # ``lab-2026-11-03`` firmware-oracle suite the reads are
+            # forwarded to the bus (dimension bytes ``0C`` / ``0F``) by 10 of
+            # the 12 emulated gateways (refused on 2). Reads and writes stay
+            # raw: there is no builder for them.
+            temperature = (
+                who4_temperature(self._dimension_value[0])
+                if self._dimension_value
+                else None
+            )
+            if self._dimension == 2:
+                self._type = MESSAGE_TYPE_PROTECTION_SETPOINT
+                self._protection_setpoint = temperature
+                if temperature is not None:
+                    self._human_readable_log = f"{subject}'s thermal protection setpoint is {temperature}°C."  # pylint: disable=line-too-long
+            else:
+                self._type = MESSAGE_TYPE_ANTIFREEZE_SETPOINT
+                self._antifreeze_setpoint = temperature
+                if temperature is not None:
+                    self._human_readable_log = f"{subject}'s antifreeze setpoint is {temperature}°C."
+
         elif self._dimension == 5 and self._dimension_value:  # Local control
             # MyHOME_Suite writes *#4*Z*#5*val##; the meaning of val is not
             # published, so only log it.
@@ -987,6 +1033,20 @@ class OWNHeatingEvent(OWNEvent):
             )
             if self._set_temperature is not None:
                 self._human_readable_log = f"{subject}'s target temperature is set to {self._set_temperature}°C."  # pylint: disable=line-too-long
+                if not _WHO4_SETPOINT_MIN <= self._set_temperature <= _WHO4_SETPOINT_MAX:
+                    # ``T`` is published as ``0050..0400`` (Encyclopedia
+                    # dimensions.md "DIMENSION 14", page 18). The value is
+                    # kept (the parser stays permissive) but the log no
+                    # longer presents ``*#4*1*14*0999*3##`` as a plain
+                    # 99.9 °C setpoint (lab audit 2026-11-03, L-A2). A live
+                    # F461 2.0.11 NACKs the write ``*#4*2*#14*0999*3##`` but
+                    # accepts ``*#4*2*#14*0049*3##`` and reads back ``0045``
+                    # (4.5 °C, below the published lower bound), so such a
+                    # reply is a real stored value, not a decoding error.
+                    self._human_readable_log = (
+                        f"{subject}'s target temperature is set to {self._set_temperature}°C "
+                        f"(outside the published {_WHO4_SETPOINT_MIN}..{_WHO4_SETPOINT_MAX} °C range)."
+                    )
 
         elif self._dimension == 15 and not is_write:  # Probe temperature reading
             # ``*#4*WHERE*15*P*T[*...]##``. The touchscreen test report
@@ -1030,11 +1090,32 @@ class OWNHeatingEvent(OWNEvent):
             # documents (the page's only source, ENCY_CONFIRM TC-H8:
             # functional-only), not fan speeds 9..11.
             self._type = MESSAGE_TYPE_ACTION
-            self._is_cooling = self._dimension_value[0] in _valve_active_states
-            self._is_heating = self._dimension_value[1] in _valve_active_states
-            # Handle cooling valve status relative to fan speed/status
             _cooling_value = int(self._dimension_value[0])
-            if _cooling_value == 0:
+            _heating_value = int(self._dimension_value[1])
+            # A ``CV`` / ``HV`` outside the published ``0..8`` and the
+            # MyHOME-team ``14..16`` is not a fan speed: ``*#4*1*19*9*0##``
+            # was decoded as "cooling fan is on at speed 4" (lab audit
+            # 2026-11-03, L-A3). Such a side is logged as an unpublished
+            # valve value and left undecided: ``is_cooling`` / ``is_heating``
+            # ``None``, no fan state, ``is_active`` ``None`` unless the other
+            # side is active. The live F461 2.0.11 answers ``*#4*2*19##``
+            # with ``*#4*2*19*5*0##`` (published values only).
+            _cooling_published = (
+                _cooling_value in _VALVE_PUBLISHED_STATES
+                or _cooling_value in _FAN_COIL_OFF_STATES
+            )
+            _heating_published = (
+                _heating_value in _VALVE_PUBLISHED_STATES
+                or _heating_value in _FAN_COIL_OFF_STATES
+            )
+            if _cooling_published:
+                self._is_cooling = self._dimension_value[0] in _valve_active_states
+            if _heating_published:
+                self._is_heating = self._dimension_value[1] in _valve_active_states
+            # Handle cooling valve status relative to fan speed/status
+            if not _cooling_published:
+                self._human_readable_log = f"{subject}'s cooling valve reports the unpublished valve value {_cooling_value}"  # pylint: disable=line-too-long
+            elif _cooling_value == 0:
                 self._human_readable_log = f"{subject}'s cooling valve is off"
             elif _cooling_value == 1:
                 self._human_readable_log = f"{subject}'s cooling valve is on"
@@ -1055,18 +1136,17 @@ class OWNHeatingEvent(OWNEvent):
                 self._human_readable_log = (
                     f"{subject}'s cooling fan-coil is off (state {_cooling_value})"
                 )
-            else:
-                _fan_mode = _cooling_value - 5
-                if _fan_mode > 0:
-                    self._cooling_fan_on = True
-                    self._cooling_fan_speed = _fan_mode
-                    self._human_readable_log = f"{subject}'s cooling fan is on at speed {self._cooling_fan_speed}"  # pylint: disable=line-too-long
-                else:
-                    self._cooling_fan_on = False
-                    self._human_readable_log = f"{subject}'s cooling fan is off"
+            elif _cooling_value == 5:
+                self._cooling_fan_on = False
+                self._human_readable_log = f"{subject}'s cooling fan is off"
+            else:  # 6..8
+                self._cooling_fan_on = True
+                self._cooling_fan_speed = _cooling_value - 5
+                self._human_readable_log = f"{subject}'s cooling fan is on at speed {self._cooling_fan_speed}"  # pylint: disable=line-too-long
             # Handle heating valve status relative to fan speed/status
-            _heating_value = int(self._dimension_value[1])
-            if _heating_value == 0:
+            if not _heating_published:
+                self._human_readable_log += f"; heating valve reports the unpublished valve value {_heating_value}."  # pylint: disable=line-too-long
+            elif _heating_value == 0:
                 self._human_readable_log += "; heating valve is off."
             elif _heating_value == 1:
                 self._human_readable_log += "; heating valve is on."
@@ -1079,26 +1159,29 @@ class OWNHeatingEvent(OWNEvent):
             elif _heating_value in _FAN_COIL_OFF_STATES:
                 self._fan_on = False
                 self._human_readable_log += f"; heating fan-coil is off (state {_heating_value})."
-            else:
-                _fan_mode = _heating_value - 5
-                if _fan_mode > 0:
-                    self._fan_on = True
-                    self._fan_speed = _fan_mode
-                    self._human_readable_log += (
-                        f"; heating fan is on at speed {self._fan_speed}."
-                    )
-                else:
-                    self._fan_on = False
-                    self._human_readable_log += "; heating fan is off."
+            elif _heating_value == 5:
+                self._fan_on = False
+                self._human_readable_log += "; heating fan is off."
+            else:  # 6..8
+                self._fan_on = True
+                self._fan_speed = _heating_value - 5
+                self._human_readable_log += (
+                    f"; heating fan is on at speed {self._fan_speed}."
+                )
             # A fan-coil value on one side must not hide an open valve or a running fan
             # on the other side: *#4*2*19*5*1## (cooling fan off, heating valve on) is an
             # active zone (F461 plant capture, tests/test_f461_live_plant.py).
-            self._is_active = bool(
+            if (
                 self._is_cooling
                 or self._is_heating
                 or self._cooling_fan_on
                 or self._fan_on
-            )
+            ):
+                self._is_active = True
+            elif _cooling_published and _heating_published:
+                self._is_active = False
+            # else: an unpublished side with nothing active on the other
+            # side leaves is_active() None.
 
         elif (
             self._dimension == 20
@@ -1429,6 +1512,28 @@ class OWNHeatingEvent(OWNEvent):
         return self._local_set_temperature
 
     @property
+    def protection_setpoint(self) -> float | None:
+        """Thermal protection setpoint (cooling side) of a Dimension 2 reply, else None.
+
+        ``*#4*Z*2*T##`` is not in the published WHO 4 document; it was
+        observed on a live F461 2.0.11 (zone 2 KW4691: ``*#4*2*2*0350##``,
+        the BTicino factory default 35.0 °C). ``T`` is decoded like
+        Dimension 14 (``who4_temperature``).
+        """
+        return self._protection_setpoint
+
+    @property
+    def antifreeze_setpoint(self) -> float | None:
+        """Antifreeze setpoint (heating side) of a Dimension 3 reply, else None.
+
+        ``*#4*Z*3*T##`` is not in the published WHO 4 document; it was
+        observed on a live F461 2.0.11 (zone 2 KW4691: ``*#4*2*3*0070##``,
+        the BTicino factory default 7.0 °C). ``T`` is decoded like
+        Dimension 14 (``who4_temperature``).
+        """
+        return self._antifreeze_setpoint
+
+    @property
     def fan_speed(self) -> int | None:
         return self._fan_speed
 
@@ -1702,6 +1807,13 @@ class OWNHeatingCommand(OWNCommand):
         ``#105`` / ``#0#N`` (ORACLE_CONFIRM H2, H19). The temperature is
         clamped to ``5.0..40.0`` (``T`` is ``0050..0400``; MyHOME relies on
         the clamp) and rounded to 0.5 °C; only a non-finite value raises.
+        The published bound is the one to keep: a live F461 2.0.11 NACKed
+        ``*#4*2*#14*0999*3##`` (zone 2 read back ``0230``, unchanged),
+        applied ``*#4*2*#14*0400*3##`` (read back ``0400``) and accepted
+        ``*#4*2*#14*0049*3##`` as ``0045`` (4.5 °C, below the published
+        lower bound; the zone is a KW4691 standalone thermostat), so a
+        value below 5.0 is not refused by every gateway but is not a
+        published setpoint either (lab audit 2026-11-03, L-A2).
         """
         zone, zone_name = _zone_address_and_name(where, standalone=standalone)
 
