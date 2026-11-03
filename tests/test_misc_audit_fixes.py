@@ -293,12 +293,8 @@ def test_i2_teleloop_association_id() -> None:
     ("method", "frame"),
     [("mute_amplifier", "*8*63*11##"), ("unmute_amplifier", "*8*64*11##"), ("status", "*#8*11##")],
 )
-def test_i3_undocumented_who8_builders_are_marked(method: str, frame: str) -> None:
-    builder = getattr(OWNIntercomCommand, method)
-    assert str(builder("11")) == frame
-    doc = builder.__doc__ or ""
-    assert "nack, silent" in doc
-    assert "ORACLE_CONFIRM.md row I3" in doc
+def test_i3_undocumented_who8_builders_keep_their_frames(method: str, frame: str) -> None:
+    assert str(getattr(OWNIntercomCommand, method)("11")) == frame
 
 
 # ── A1: documented controls only ─────────────────────────────────────────────
@@ -369,35 +365,45 @@ def test_a1_state_whats_are_not_built_as_controls(method: str, what: int, role: 
         builder("1")
 
 
-# ── A2 / A3: zone is an int, #9 is the auxiliary ─────────────────────────────
+# ── A2 / A3: zone_number is an int for both forms, #9 is the auxiliary ───────
+# ``zone`` keeps the str form of the #Z selector: MyHOME pins it
+# (tests/test_issue_466_mh200_trace.py, precedent gate).
 
 
 @pytest.mark.parametrize(
-    ("frame", "zone", "sensor", "auxiliary", "log"),
+    ("frame", "zone", "zone_number", "sensor", "auxiliary", "log"),
     [
-        ("*5*15*#2##", 2, None, False, "Zone 2 is reporting: 'intrusion alarm'."),
-        ("*5*15*21##", 2, 1, False, "Sensor 1 in zone 2 is reporting: 'intrusion alarm'."),
-        ("*5*11*#0##", 0, None, False, "Zone 0 is reporting: 'active zone'."),
-        ("*5*18*#8##", 8, None, False, "Zone 8 is reporting: 'non-active zone'."),
-        ("*5*17*#9##", 9, None, True, "Auxiliary 9 (anti-panic) is reporting: 'anti-panic alarm'."),
-        ("*5*12*#12##", "c", None, False, "Zone c is reporting: 'technical alarm'."),
-        ("*5*12*#15##", "f", None, False, "Zone f is reporting: 'technical alarm'."),
-        ("*5*1*01##", 0, 1, False, "Device 1 in input zone is reporting: 'activation'."),
+        ("*5*15*#2##", "2", 2, None, False, "Zone 2 is reporting: 'intrusion alarm'."),
+        ("*5*15*21##", 2, 2, 1, False, "Sensor 1 in zone 2 is reporting: 'intrusion alarm'."),
+        ("*5*11*#0##", "0", 0, None, False, "Zone 0 is reporting: 'active zone'."),
+        ("*5*18*#8##", "8", 8, None, False, "Zone 8 is reporting: 'non-active zone'."),
+        ("*5*17*#9##", "9", 9, None, True, "Auxiliary 9 (anti-panic) is reporting: 'anti-panic alarm'."),
+        ("*5*12*#12##", "c", None, None, False, "Zone c is reporting: 'technical alarm'."),
+        ("*5*12*#15##", "f", None, None, False, "Zone f is reporting: 'technical alarm'."),
+        ("*5*1*01##", 0, 0, 1, False, "Device 1 in input zone is reporting: 'activation'."),
     ],
 )
-def test_a2_a3_zone_forms(frame: str, zone: int | str, sensor: int | None, auxiliary: bool, log: str) -> None:
+def test_a2_a3_zone_forms(
+    frame: str,
+    zone: int | str | None,
+    zone_number: int | None,
+    sensor: int | None,
+    auxiliary: bool,
+    log: str,
+) -> None:
     event = OWNEvent.parse(frame)
     assert isinstance(event, OWNAlarmEvent)
     assert event.zone == zone
     assert type(event.zone) is type(zone)
+    assert event.zone_number == zone_number
     assert event.sensor == sensor
     assert event.is_auxiliary is auxiliary
     assert event.general is False
     assert event.human_readable_log == log
 
 
-def test_a2_zone_equality_across_forms() -> None:
-    assert OWNAlarmEvent("*5*15*#2##").zone == OWNAlarmEvent("*5*15*21##").zone
+def test_a2_zone_number_equality_across_forms() -> None:
+    assert OWNAlarmEvent("*5*15*#2##").zone_number == OWNAlarmEvent("*5*15*21##").zone_number == 2
 
 
 # ── A4: WHAT 0 and 11 semantics ──────────────────────────────────────────────

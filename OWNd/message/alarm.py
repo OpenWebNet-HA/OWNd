@@ -22,8 +22,11 @@ class OWNAlarmEvent(OWNEvent):
     the TS10 filter accepts anti-panic only at ``#9``,
     #historical-event-validation), ``#12`` zone C / AUX C, ``#15`` zone F /
     AUX F, ``ZS`` a sensor ``S`` of zone ``Z`` (``01..0n`` input-zone devices).
-    ``zone`` is an ``int`` for both the ``#Z`` selector and the ``ZS`` sensor
-    form (``"c"`` / ``"f"`` for ``#12`` / ``#15``).
+    ``zone`` keeps its historical shape, a ``str`` for the ``#Z`` selector
+    (``"1"``; ``"c"`` / ``"f"`` for ``#12`` / ``#15``) and an ``int`` for the
+    ``ZS`` sensor form, because MyHOME pins the ``str`` form
+    (``tests/test_issue_466_mh200_trace.py``); ``zone_number`` is the ``int``
+    for both forms (``None`` for ``c`` / ``f`` and system frames).
 
     WHAT semantics (``what.md``): ``0`` Maintenance and ``1`` Activation are
     central-unit states, ``11`` Active zone / ``18`` Non-active zone are zone
@@ -40,6 +43,7 @@ class OWNAlarmEvent(OWNEvent):
         # Zone may be a letter ("c", "f"), a number, or None (system-wide).
         self._zone: str | int | None = None
         self._sensor: int | None = None
+        self._zone_number: int | None = None
         self._auxiliary = False
 
         where = self._where or ""
@@ -57,15 +61,18 @@ class OWNAlarmEvent(OWNEvent):
             elif selector == "9":
                 # addressing.md: #9 is auxiliary 9, the anti-panic source, not
                 # a central zone (central zones are #0..#8).
-                self._zone = 9
+                self._zone = selector
+                self._zone_number = 9
                 self._auxiliary = True
                 self._human_readable_log = "Auxiliary 9 (anti-panic) is reporting: "
             else:
                 # The frame grammar only lets digits follow the '#'.
-                self._zone = int(selector)
+                self._zone = selector
+                self._zone_number = int(selector)
                 self._human_readable_log = f"Zone {self._zone} is reporting: "
         elif len(where) > 1:
             self._zone = int(where[0])
+            self._zone_number = self._zone
             self._sensor = int(where[1:])
             if self._zone == 0:
                 self._human_readable_log = (
@@ -141,6 +148,16 @@ class OWNAlarmEvent(OWNEvent):
     @property
     def zone(self) -> str | int | None:
         return self._zone
+
+    @property
+    def zone_number(self) -> int | None:
+        """Zone as an ``int`` for both the ``#Z`` selector and the ``ZS`` sensor form.
+
+        ``*5*15*#2##`` and ``*5*15*21##`` both give ``2`` (addressing.md);
+        ``None`` for ``#12`` / ``#15`` (``zone`` ``"c"`` / ``"f"``) and for
+        system frames. ``zone`` keeps the ``str`` form of the selector.
+        """
+        return self._zone_number
 
     @property
     def sensor(self) -> int | None:

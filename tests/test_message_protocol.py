@@ -215,7 +215,8 @@ def test_alarm_zone_telemetry_does_not_pollute_system_arm_state() -> None:
     z_act = OWNMessage.parse("*5*11*#1##")
     assert isinstance(z_act, OWNAlarmEvent)
     assert z_act.general is False
-    assert z_act.zone == 1  # int for the #Z selector (report 21 A2)
+    assert z_act.zone == "1"  # str for the #Z selector (MyHOME pins it); zone_number is the int
+    assert z_act.zone_number == 1
     assert z_act.is_zone_active is True
     assert z_act.is_armed_home is False
     assert z_act.is_armed_away is False
@@ -223,7 +224,8 @@ def test_alarm_zone_telemetry_does_not_pollute_system_arm_state() -> None:
     z_byp = OWNMessage.parse("*5*18*#7##")
     assert isinstance(z_byp, OWNAlarmEvent)
     assert z_byp.general is False
-    assert z_byp.zone == 7
+    assert z_byp.zone == "7"
+    assert z_byp.zone_number == 7
     assert z_byp.is_zone_inactive is True
     assert z_byp.is_zone_active is False
     assert z_byp.is_disarmed is False
