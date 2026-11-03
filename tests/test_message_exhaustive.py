@@ -187,13 +187,12 @@ class TestMessageExhaustiveCoverage:
         cmd_auto = OWNHeatingCommand.set_mode("1", mode=CLIMATE_MODE_AUTO)
         assert cmd_auto is not None
 
-        # set_temperature refuses <5.0 and >40.0 instead of clamping (report 21 H19)
-        with pytest.raises(ValueError, match="Invalid temperature"):
-            OWNHeatingCommand.set_temperature("1", 2.0, mode=CLIMATE_MODE_HEAT)
-        with pytest.raises(ValueError, match="Invalid temperature"):
-            OWNHeatingCommand.set_temperature("1", 45.0, mode=CLIMATE_MODE_HEAT)
-        assert "0050" in str(OWNHeatingCommand.set_temperature("1", 5.0, mode=CLIMATE_MODE_HEAT))
-        assert "0400" in str(OWNHeatingCommand.set_temperature("1", 40.0, mode=CLIMATE_MODE_HEAT))
+        # set_temperature edge clamping (<5.0 and >40.0 and zone 0)
+        cmd_low = OWNHeatingCommand.set_temperature("1", 2.0, mode=CLIMATE_MODE_HEAT)
+        assert "0050" in str(cmd_low)
+
+        cmd_high = OWNHeatingCommand.set_temperature("1", 45.0, mode=CLIMATE_MODE_HEAT)
+        assert "0400" in str(cmd_high)
 
         cmd_zone0 = OWNHeatingCommand.set_temperature("0", 21.0, mode=CLIMATE_MODE_HEAT)
         assert "*#4*#0*" in str(cmd_zone0)

@@ -141,8 +141,9 @@ def test_where_zero_actuator_is_a_pump_not_a_zone() -> None:
     assert pump.actuator == 2
     assert call.zone == 0
     assert zone_actuator.zone == 1
-    # ``#0#1`` is the 4-zone central unit 1, not zone 1 (report 21 H1).
-    assert central_zone.zone == 0
+    # ``#0#1`` is the 4-zone central unit 1 (report 21 H1); ``zone`` keeps
+    # the selector 1 for MyHOME's routing.
+    assert central_zone.zone == 1
     assert central_zone.central_unit == 1
     assert central_zone.unique_id == "4-#0#1"
 

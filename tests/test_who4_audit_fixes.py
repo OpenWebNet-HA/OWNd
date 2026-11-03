@@ -24,9 +24,7 @@ from OWNd.message import (
     CLIMATE_MODE_AUTO,
     CLIMATE_MODE_COOL,
     CLIMATE_MODE_HEAT,
-    CLIMATE_MODE_HOLIDAY,
     CLIMATE_MODE_OFF,
-    CLIMATE_MODE_PROTECTION,
     MESSAGE_TYPE_ACTION,
     MESSAGE_TYPE_FAN_SPEED,
     MESSAGE_TYPE_MAIN_HUMIDITY,
@@ -98,7 +96,9 @@ def test_h1_four_zone_central_unit_is_not_zone_c(
     event = _event(frame)
     assert event.scope == SCOPE_CENTRAL
     assert event.central_unit == central_unit
-    assert event.zone == 0
+    # ``zone`` keeps the selector ``C`` (MyHOME routes ``#0#C`` on it);
+    # the central-unit identity is ``scope`` / ``central_unit`` / ``unique_id``.
+    assert event.zone == (central_unit or 0)
     assert event.zone_number is None
     assert event.message_type == message_type
     assert event.human_readable_log.startswith(f"Central unit {event.address}")
@@ -269,9 +269,9 @@ def test_split_prefix_outside_dimension_22_has_no_scope() -> None:
 @pytest.mark.parametrize(
     ("frame", "mode", "operating_mode", "season"),
     [
-        ("*4*102*#1##", CLIMATE_MODE_PROTECTION, OPERATING_MODE_ANTIFREEZE, SEASON_HEATING),
-        ("*4*202*#1##", CLIMATE_MODE_PROTECTION, OPERATING_MODE_THERMAL_PROTECTION, SEASON_CONDITIONING),
-        ("*4*302*#1##", CLIMATE_MODE_PROTECTION, OPERATING_MODE_PROTECTION, None),
+        ("*4*102*#1##", CLIMATE_MODE_OFF, OPERATING_MODE_ANTIFREEZE, SEASON_HEATING),
+        ("*4*202*#1##", CLIMATE_MODE_OFF, OPERATING_MODE_THERMAL_PROTECTION, SEASON_CONDITIONING),
+        ("*4*302*#1##", CLIMATE_MODE_OFF, OPERATING_MODE_PROTECTION, None),
         ("*4*103*#1##", CLIMATE_MODE_OFF, OPERATING_MODE_OFF, SEASON_HEATING),
         ("*4*203*#1##", CLIMATE_MODE_OFF, OPERATING_MODE_OFF, SEASON_CONDITIONING),
         ("*4*303*#1##", CLIMATE_MODE_OFF, OPERATING_MODE_OFF, None),
@@ -284,12 +284,12 @@ def test_split_prefix_outside_dimension_22_has_no_scope() -> None:
         ("*4*112*#1##", CLIMATE_MODE_HEAT, OPERATING_MODE_TIMED_MANUAL, SEASON_HEATING),
         ("*4*212*#1##", CLIMATE_MODE_COOL, OPERATING_MODE_TIMED_MANUAL, SEASON_CONDITIONING),
         ("*4*312*#1##", CLIMATE_MODE_AUTO, OPERATING_MODE_TIMED_MANUAL, None),
-        ("*4*115*#1##", CLIMATE_MODE_HOLIDAY, OPERATING_MODE_HOLIDAY, SEASON_HEATING),
-        ("*4*215*#1##", CLIMATE_MODE_HOLIDAY, OPERATING_MODE_HOLIDAY, SEASON_CONDITIONING),
-        ("*4*315*#1##", CLIMATE_MODE_HOLIDAY, OPERATING_MODE_HOLIDAY, None),
-        ("*4*13005*#0##", CLIMATE_MODE_HOLIDAY, OPERATING_MODE_VACATION, SEASON_HEATING),
-        ("*4*23005*#0##", CLIMATE_MODE_HOLIDAY, OPERATING_MODE_VACATION, SEASON_CONDITIONING),
-        ("*4*33005*#0##", CLIMATE_MODE_HOLIDAY, OPERATING_MODE_VACATION, None),
+        ("*4*115*#1##", CLIMATE_MODE_HEAT, OPERATING_MODE_HOLIDAY, SEASON_HEATING),
+        ("*4*215*#1##", CLIMATE_MODE_COOL, OPERATING_MODE_HOLIDAY, SEASON_CONDITIONING),
+        ("*4*315*#1##", CLIMATE_MODE_AUTO, OPERATING_MODE_HOLIDAY, None),
+        ("*4*13005*#0##", CLIMATE_MODE_HEAT, OPERATING_MODE_VACATION, SEASON_HEATING),
+        ("*4*23005*#0##", CLIMATE_MODE_COOL, OPERATING_MODE_VACATION, SEASON_CONDITIONING),
+        ("*4*33005*#0##", CLIMATE_MODE_AUTO, OPERATING_MODE_VACATION, None),
         ("*4*1101*#0##", CLIMATE_MODE_HEAT, OPERATING_MODE_PROGRAM, SEASON_HEATING),
         ("*4*2103*#0##", CLIMATE_MODE_COOL, OPERATING_MODE_PROGRAM, SEASON_CONDITIONING),
         ("*4*3102*#0##", CLIMATE_MODE_AUTO, OPERATING_MODE_PROGRAM, None),
@@ -313,11 +313,13 @@ def test_h5_h6_h7_every_what_family_has_its_own_operating_mode(
 
 
 def test_h5_protection_is_distinguishable_from_off() -> None:
-    assert _event("*4*102*#1##").human_readable_log == "Zone 1's mode is set to 'protection' (antifreeze)."
-    assert _event("*4*202*#1##").human_readable_log == "Zone 1's mode is set to 'protection' (thermal protection)."
-    assert _event("*4*302*#1##").human_readable_log == "Zone 1's mode is set to 'protection' (protection)."
-    assert _event("*4*303*#1##").human_readable_log == "Zone 1's mode is set to 'off'."
-    assert _event("*4*102*#1##").mode != _event("*4*103*#1##").mode
+    # ``mode`` and the log line stay ``off`` (MyHOME turns the zone OFF on a
+    # protection WHAT and pins "Zone 2's mode is set to 'off'." on its F461
+    # trace); ``operating_mode`` tells protection and OFF apart.
+    for what in (102, 202, 302, 303):
+        assert _event(f"*4*{what}*#1##").human_readable_log == "Zone 1's mode is set to 'off'."
+    assert _event("*4*102*#1##").mode == _event("*4*103*#1##").mode == CLIMATE_MODE_OFF
+    assert _event("*4*102*#1##").operating_mode != _event("*4*103*#1##").operating_mode
 
 
 def test_h6_timed_manual_keeps_its_setpoint() -> None:
@@ -334,15 +336,15 @@ def test_h6_timed_manual_keeps_its_setpoint() -> None:
 def test_h6_holiday_and_vacation_carry_their_programs_and_days() -> None:
     daily = _event("*4*115#1101*#0##")
     assert (daily.mode, daily.operating_mode, daily.program, daily.set_temperature) == (
-        CLIMATE_MODE_HOLIDAY,
+        CLIMATE_MODE_HEAT,
         OPERATING_MODE_HOLIDAY,
         1,
         None,
     )
-    assert daily.human_readable_log == "Central unit #0's mode is set to 'holiday' (daily holiday plan) (program 1)."
+    assert daily.human_readable_log == "Central unit #0's mode is set to 'heat' (daily holiday plan) (program 1)."
     vacation = _event("*4*33002#3103*#0##")
     assert (vacation.operating_mode, vacation.holiday_days, vacation.program) == (OPERATING_MODE_VACATION, 2, 3)
-    assert vacation.human_readable_log == "Central unit #0's mode is set to 'holiday' (vacation for 2 days) (program 3)."
+    assert vacation.human_readable_log == "Central unit #0's mode is set to 'auto' (vacation for 2 days) (program 3)."
     assert _event("*4*13000*#0##").mode is None
     assert _event("*4*13256*#0##").mode is None
 
@@ -478,7 +480,7 @@ def test_h16_three_digit_probe_value_decodes() -> None:
 
 @pytest.mark.parametrize(
     "frame",
-    ["*#4*#1*#14*0205*1##", "*#4*50*#0*0215##", "*#4*2*#11*3##", "*#4*2*#7*1*1*0170##", "*#4*2*#12*0215*3##"],
+    ["*#4*50*#0*0215##", "*#4*2*#11*3##", "*#4*2*#7*1*1*0170##", "*#4*2*#12*0215*3##"],
 )
 def test_h17_dimension_writes_are_not_typed_as_state(frame: str) -> None:
     event = OWNEvent.parse(frame)
@@ -490,9 +492,12 @@ def test_h17_dimension_writes_are_not_typed_as_state(frame: str) -> None:
 
 
 def test_h17_written_values_stay_readable_without_a_type() -> None:
+    # The Dimension 14 write echo keeps its type: MyHOME updates the target
+    # temperature from ``OWNEvent.parse("*#4*01*#14*0220*1##")``.
     setpoint = OWNEvent.parse("*#4*#1*#14*0205*1##")
     assert isinstance(setpoint, OWNHeatingEvent)
     assert setpoint.set_temperature == 20.5
+    assert setpoint.message_type == MESSAGE_TYPE_TARGET_TEMPERATURE
     fan = OWNEvent.parse("*#4*2*#11*3##")
     assert isinstance(fan, OWNHeatingEvent)
     assert fan.fan_speed == 3
@@ -518,10 +523,14 @@ def test_h18_valid_calendar_dates_are_built() -> None:
         OWNHeatingCommand.set_holiday_end_date("#0", 32, 1, 2026)
 
 
-@pytest.mark.parametrize("temperature", [4.9, 4.0, 40.2, 40.5, 50.0, -3.0, 0.0])
-def test_h19_set_temperature_refuses_out_of_range_values(temperature: float) -> None:
-    with pytest.raises(ValueError, match="Invalid temperature"):
-        OWNHeatingCommand.set_temperature("1", temperature, CLIMATE_MODE_HEAT)
+@pytest.mark.parametrize(
+    ("temperature", "code"),
+    [(4.9, "0050"), (4.0, "0050"), (-3.0, "0050"), (0.0, "0050"), (40.2, "0400"), (40.5, "0400"), (50.0, "0400")],
+)
+def test_h19_set_temperature_clamps_out_of_range_values(temperature: float, code: str) -> None:
+    # MyHOME relies on the clamp (its ``test_set_temperature_clamp_low`` /
+    # ``_high``); only the address class is refused, see above.
+    assert str(OWNHeatingCommand.set_temperature("1", temperature, CLIMATE_MODE_HEAT)) == f"*#4*#1*#14*{code}*1##"
 
 
 def test_h19_set_temperature_in_range_rounds_to_half_degrees() -> None:
@@ -547,7 +556,9 @@ def test_h19_set_temperature_in_range_rounds_to_half_degrees() -> None:
         ("*#4*2*19*5*1##", 2, "4-2", MESSAGE_TYPE_ACTION, None),
         ("*#4*2*11*0##", 2, "4-2", MESSAGE_TYPE_FAN_SPEED, None),
         ("*4*110#0215*#0##", 0, "4-#0", MESSAGE_TYPE_MODE_TARGET, CLIMATE_MODE_HEAT),
-        ("*4*202*#0##", 0, "4-#0", MESSAGE_TYPE_MODE, CLIMATE_MODE_PROTECTION),
+        ("*4*202*#0##", 0, "4-#0", MESSAGE_TYPE_MODE, CLIMATE_MODE_OFF),
+        ("*4*0*#0#1##", 1, "4-#0#1", MESSAGE_TYPE_SEASON, None),
+        ("*#4*#0#1*20*0##", 1, "4-#0#1", MESSAGE_TYPE_ACTION, None),
     ],
 )
 def test_myhome_trace_frames_keep_their_zone_and_type(

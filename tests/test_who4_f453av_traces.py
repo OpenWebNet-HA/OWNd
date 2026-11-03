@@ -17,8 +17,6 @@ import pytest
 from OWNd.message import (
     CLIMATE_MODE_HEAT,
     CLIMATE_MODE_OFF,
-    CLIMATE_MODE_PROTECTION,
-    CLIMATE_MODE_HOLIDAY,
     MESSAGE_TYPE_MODE,
     MESSAGE_TYPE_SEASON,
     SEASON_CONDITIONING,
@@ -38,7 +36,7 @@ def test_holiday_on_report_carries_the_program_not_a_temperature():
     # Daily holiday ON: the central answers 115#1101 (program 1), not -10.1 °C.
     msg = _parse("*4*115#1101*#0##")
     assert msg.message_type == MESSAGE_TYPE_MODE
-    assert msg.mode == CLIMATE_MODE_HOLIDAY
+    assert msg.mode == CLIMATE_MODE_HEAT
     assert msg.season == SEASON_HEATING
     assert msg.program == 1
     assert msg.set_temperature is None
@@ -65,14 +63,15 @@ def test_season_frame_next_to_a_programmed_zone_is_not_a_mode(raw):
 
 def test_central_switching_to_summer_reports_thermal_protection():
     # One zone Heat -> Cool: the plant switches to summer and the central parks in
-    # thermal protection (*4*202*#0##), the conditioning-season protection state.
+    # thermal protection (*4*202*#0##), which is "off" in the conditioning season.
     msg = _parse("*4*202*#0##")
-    assert msg.mode == CLIMATE_MODE_PROTECTION
+    assert msg.mode == CLIMATE_MODE_OFF
+    assert msg.operating_mode == "thermal_protection"
     assert msg.season == SEASON_CONDITIONING
 
 
 @pytest.mark.parametrize(
-    ("raw", "mode"), [("*4*102*#0##", CLIMATE_MODE_PROTECTION), ("*4*103*#0##", CLIMATE_MODE_OFF)]
+    ("raw", "mode"), [("*4*102*#0##", CLIMATE_MODE_OFF), ("*4*103*#0##", CLIMATE_MODE_OFF)]
 )
 def test_central_antifreeze_and_off_in_winter(raw, mode):
     msg = _parse(raw)

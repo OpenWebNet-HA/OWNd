@@ -49,7 +49,7 @@ def test_event_parse_matches_message_parse() -> None:
     [
         ("*#4*#1*14*#0230*1##", 1, 23.0),
         ("*#4*1*14*#0215*3##", 1, 21.5),
-        ("*#4*#0#2*14*#0200*1##", 0, 20.0),  # #0#2 is the 4-zone central unit 2 (report 21 H1)
+        ("*#4*#0#2*14*#0200*1##", 2, 20.0),  # #0#2 is the 4-zone central unit 2; ``zone`` keeps 2 (report 21 H1)
     ],
 )
 def test_hash_prefixed_setpoint_zone_forms(frame: str, zone: int, setpoint: float) -> None:

@@ -9,7 +9,9 @@ no temperature field), see docs in the pull request.
 """
 
 from OWNd.message import (
-    CLIMATE_MODE_HOLIDAY,
+    CLIMATE_MODE_AUTO,
+    CLIMATE_MODE_COOL,
+    CLIMATE_MODE_HEAT,
     SEASON_CONDITIONING,
     SEASON_HEATING,
     OWNEvent,
@@ -21,7 +23,7 @@ from OWNd.message import (
 def test_holiday_plan_parameter_is_a_program_not_a_temperature():
     msg = OWNEvent.parse("*4*115#1102*#0##")
     assert isinstance(msg, OWNHeatingEvent)
-    assert msg.mode == CLIMATE_MODE_HOLIDAY
+    assert msg.mode == CLIMATE_MODE_HEAT
     assert msg.season == SEASON_HEATING
     assert msg.program == 2
     assert msg.set_temperature is None
@@ -30,7 +32,7 @@ def test_holiday_plan_parameter_is_a_program_not_a_temperature():
 
 def test_cooling_holiday_plan_parameter():
     msg = OWNEvent.parse("*4*215#2102*#0##")
-    assert msg.mode == CLIMATE_MODE_HOLIDAY
+    assert msg.mode == CLIMATE_MODE_COOL
     assert msg.season == SEASON_CONDITIONING
     assert msg.program == 2
     assert msg.set_temperature is None
@@ -62,7 +64,7 @@ def test_holiday_days_parameter_is_a_program_not_a_temperature():
     # 13DDD#P / 23DDD#P / 33DDD#P carry the program the plant resumes after the
     # holiday, exactly like 115#P; 13005#1102 used to read as -10.2 degrees.
     heat = OWNEvent.parse("*4*13005#1102*#0##")
-    assert heat.mode == CLIMATE_MODE_HOLIDAY
+    assert heat.mode == CLIMATE_MODE_HEAT
     assert heat.season == SEASON_HEATING
     assert heat.holiday_days == 5
     assert heat.program == 2
@@ -70,7 +72,7 @@ def test_holiday_days_parameter_is_a_program_not_a_temperature():
     assert heat.message_type == "hvac_mode"
 
     cool = OWNEvent.parse("*4*23005#2102*#0##")
-    assert cool.mode == CLIMATE_MODE_HOLIDAY
+    assert cool.mode == CLIMATE_MODE_COOL
     assert cool.season == SEASON_CONDITIONING
     assert cool.holiday_days == 5
     assert cool.program == 2
@@ -78,7 +80,7 @@ def test_holiday_days_parameter_is_a_program_not_a_temperature():
     assert cool.message_type == "hvac_mode"
 
     auto = OWNEvent.parse("*4*33005#3102*#0##")
-    assert auto.mode == CLIMATE_MODE_HOLIDAY
+    assert auto.mode == CLIMATE_MODE_AUTO
     assert auto.season is None
     assert auto.holiday_days == 5
     assert auto.program == 2
@@ -92,7 +94,7 @@ def test_set_central_holiday_round_trips_without_a_temperature():
     assert str(command) == "*4*33005#3102*#0##"
 
     event = OWNHeatingEvent(str(command))
-    assert event.mode == CLIMATE_MODE_HOLIDAY
+    assert event.mode == CLIMATE_MODE_AUTO
     assert event.holiday_days == 5
     assert event.program == 2
     assert event.set_temperature is None
@@ -112,12 +114,12 @@ def test_multi_day_vacation_uses_the_generic_return_program_in_every_season():
     # 33DDD), unlike the daily holiday plan (1101..1103 / 2101..2103).
     # 3102 used to decode as a -10.2 degree setpoint.
     heat = OWNEvent.parse("*4*13005#3102*#0##")
-    assert (heat.mode, heat.holiday_days, heat.program) == (CLIMATE_MODE_HOLIDAY, 5, 2)
+    assert (heat.mode, heat.holiday_days, heat.program) == (CLIMATE_MODE_HEAT, 5, 2)
     assert heat.set_temperature is None
     assert heat.message_type == "hvac_mode"
 
     cool = OWNEvent.parse("*4*23005#3102*#0##")
-    assert (cool.mode, cool.holiday_days, cool.program) == (CLIMATE_MODE_HOLIDAY, 5, 2)
+    assert (cool.mode, cool.holiday_days, cool.program) == (CLIMATE_MODE_COOL, 5, 2)
     assert cool.set_temperature is None
     assert cool.message_type == "hvac_mode"
 
@@ -135,7 +137,7 @@ def test_multi_day_vacation_countdown_and_expiry_cycle():
     """
     # 1. Client initiates 5-day vacation command with return program 2
     cmd = OWNEvent.parse("*4*13005#3102*#0##")
-    assert cmd.mode == CLIMATE_MODE_HOLIDAY
+    assert cmd.mode == CLIMATE_MODE_HEAT
     assert cmd.season == SEASON_HEATING
     assert cmd.holiday_days == 5
     assert cmd.program == 2
@@ -143,7 +145,7 @@ def test_multi_day_vacation_countdown_and_expiry_cycle():
 
     # 2. Central unit / gateway broadcasts active vacation telemetry without #P
     active = OWNEvent.parse("*4*13005*#0##")
-    assert active.mode == CLIMATE_MODE_HOLIDAY
+    assert active.mode == CLIMATE_MODE_HEAT
     assert active.season == SEASON_HEATING
     assert active.holiday_days == 5
     assert active.program is None
@@ -152,14 +154,14 @@ def test_multi_day_vacation_countdown_and_expiry_cycle():
     # 3. Midnight countdown decrements across remaining days (SUB.B #1 in 3550 CU)
     for day in (4, 3, 2, 1):
         tick = OWNEvent.parse(f"*4*13{day:03d}*#0##")
-        assert tick.mode == CLIMATE_MODE_HOLIDAY
+        assert tick.mode == CLIMATE_MODE_HEAT
         assert tick.season == SEASON_HEATING
         assert tick.holiday_days == day
         assert tick.program is None
 
     # 4. Vacation expires: central unit restores weekly program 2 via *4*1102*#0##
     expiry = OWNEvent.parse("*4*1102*#0##")
-    assert expiry.mode == "heat"
+    assert expiry.mode == CLIMATE_MODE_HEAT
     assert expiry.season == SEASON_HEATING
     assert expiry.program == 2
     assert expiry.holiday_days is None
@@ -168,27 +170,27 @@ def test_multi_day_vacation_countdown_and_expiry_cycle():
     # 5. Cooling season equivalent cycle (23DDD)
     cool_cmd = OWNEvent.parse("*4*23005#3102*#0##")
     assert (cool_cmd.mode, cool_cmd.season, cool_cmd.holiday_days, cool_cmd.program) == (
-        CLIMATE_MODE_HOLIDAY,
+        CLIMATE_MODE_COOL,
         SEASON_CONDITIONING,
         5,
         2,
     )
     cool_active = OWNEvent.parse("*4*23005*#0##")
     assert (cool_active.mode, cool_active.season, cool_active.holiday_days, cool_active.program) == (
-        CLIMATE_MODE_HOLIDAY,
+        CLIMATE_MODE_COOL,
         SEASON_CONDITIONING,
         5,
         None,
     )
     cool_tick = OWNEvent.parse("*4*23001*#0##")
     assert (cool_tick.mode, cool_tick.season, cool_tick.holiday_days) == (
-        CLIMATE_MODE_HOLIDAY,
+        CLIMATE_MODE_COOL,
         SEASON_CONDITIONING,
         1,
     )
     cool_expiry = OWNEvent.parse("*4*2102*#0##")
     assert (cool_expiry.mode, cool_expiry.season, cool_expiry.program, cool_expiry.holiday_days) == (
-        "cool",
+        CLIMATE_MODE_COOL,
         SEASON_CONDITIONING,
         2,
         None,

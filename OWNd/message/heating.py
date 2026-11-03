@@ -43,8 +43,6 @@ CLIMATE_MODE_OFF = "off"
 CLIMATE_MODE_HEAT = "heat"
 CLIMATE_MODE_COOL = "cool"
 CLIMATE_MODE_AUTO = "auto"
-CLIMATE_MODE_PROTECTION = "protection"
-CLIMATE_MODE_HOLIDAY = "holiday"
 
 # ``OWNHeatingEvent.operating_mode``: one value per published WHAT family
 # (Encyclopedia ``who-4-temperature-control/what.md``). The protection
@@ -382,7 +380,11 @@ class _Who4Address:
     def __init__(self, where: str | None, where_param: list[str], dimension: int | None) -> None:
         self.address = "#".join([where or "", *where_param])
         self.scope: str | None = None
-        self.zone = 0  # the legacy integer zone (0 for the central unit and the general address)
+        # The legacy integer zone: 0 for ``#0`` and the general address, ``C``
+        # for the 4-zone central unit ``#0#C`` (MyHOME routes ``#0#C`` frames
+        # on ``zone == C``; ``scope`` / ``central_unit`` / ``unique_id`` carry
+        # the central-unit identity).
+        self.zone = 0
         self.zone_number: int | None = None
         self.central_unit: int | None = None
         self.probe_number: int | None = None
@@ -396,6 +398,8 @@ class _Who4Address:
         if _WHO4_CENTRAL_WHERE_REGEX.fullmatch(base):
             self.scope = SCOPE_CENTRAL
             self.central_unit = int(base[3:]) if len(base) > 2 else None
+            if self.central_unit is not None:
+                self.zone = self.central_unit
         elif match := _WHO4_ZONE_VIA_CENTRAL_REGEX.fullmatch(base):
             self.scope = SCOPE_ZONE_VIA_CENTRAL
             self.zone = self.zone_number = int(match.group("zone"))
@@ -657,11 +661,12 @@ class OWNHeatingEvent(OWNEvent):
             elif self._mode in (102, 202, 302):
                 # Protection states (Encyclopedia what.md "Protection and OFF
                 # states": 102 antifreeze, 202 thermal protection, 302 generic
-                # protection), distinct from OFF (ENCY_CONFIRM TC-H5: the
-                # touchscreen client keeps "local protection" and "local OFF"
-                # apart).
+                # protection). ``mode`` stays ``off`` (MyHOME turns the zone
+                # OFF on them and pins the log line); the finer state is
+                # ``operating_mode`` (ENCY_CONFIRM TC-H5: the touchscreen
+                # client keeps "local protection" and "local OFF" apart).
                 self._type = MESSAGE_TYPE_MODE
-                self._mode_name = CLIMATE_MODE_PROTECTION
+                self._mode_name = CLIMATE_MODE_OFF
                 self._season = _season
                 self._operating_mode = {
                     102: OPERATING_MODE_ANTIFREEZE,
@@ -669,7 +674,7 @@ class OWNHeatingEvent(OWNEvent):
                     302: OPERATING_MODE_PROTECTION,
                 }[self._mode]
                 self._human_readable_log = (
-                    f"{subject}'s mode is set to '{self._mode_name}' ({self._operating_mode.replace('_', ' ')})"
+                    f"{subject}'s mode is set to '{self._mode_name}'"
                 )
             elif self._mode in (103, 203, 303):
                 self._type = MESSAGE_TYPE_MODE
@@ -699,12 +704,16 @@ class OWNHeatingEvent(OWNEvent):
                 )
             elif self._mode in (115, 215, 315):
                 # Daily holiday plan (Encyclopedia what.md "Manual and
-                # programmed operation"): neither manual nor automatic.
+                # programmed operation"): neither manual nor automatic;
+                # ``mode`` keeps the season-coloured heat / cool / auto value
+                # MyHOME pins, ``operating_mode`` says ``holiday``.
                 self._type = MESSAGE_TYPE_MODE
-                self._mode_name = CLIMATE_MODE_HOLIDAY
+                self._mode_name = _coarse
                 self._season = _season
                 self._operating_mode = OPERATING_MODE_HOLIDAY
-                self._human_readable_log = f"{subject}'s mode is set to 'holiday' (daily holiday plan)"
+                self._human_readable_log = (
+                    f"{subject}'s mode is set to '{self._mode_name}' (daily holiday plan)"
+                )
             elif (
                 13001 <= self._mode <= 13255
                 or 23001 <= self._mode <= 23255
@@ -714,12 +723,12 @@ class OWNHeatingEvent(OWNEvent):
                 # program and scenario forms", 001..255; Legrand WHO 4 p. 5 /
                 # p. 64; libqtdevices thermal_device.cpp:58, 258-262, 303-307).
                 self._type = MESSAGE_TYPE_MODE
-                self._mode_name = CLIMATE_MODE_HOLIDAY
+                self._mode_name = _coarse
                 self._season = _season
                 self._operating_mode = OPERATING_MODE_VACATION
                 self._holiday_days = self._mode % 1000
                 self._human_readable_log = (
-                    f"{subject}'s mode is set to 'holiday' (vacation for {self._holiday_days} days)"
+                    f"{subject}'s mode is set to '{self._mode_name}' (vacation for {self._holiday_days} days)"
                 )
             elif (
                 1101 <= self._mode <= 1103
@@ -948,11 +957,11 @@ class OWNHeatingEvent(OWNEvent):
 
         elif self._dimension == 14:  # Set temperature
             # A write (``*#4*#1*#14*0205*1##``) is a command, not a state
-            # (Encyclopedia dimensions.md "DIMENSION 14"): the written
-            # setpoint is kept in ``set_temperature`` but the frame stays
-            # untyped here, as DIMENSION 7 / 30 / 31 / 32 writes do.
-            if not is_write:
-                self._type = MESSAGE_TYPE_TARGET_TEMPERATURE
+            # (Encyclopedia dimensions.md "DIMENSION 14"), but a write echo
+            # on the event path keeps its ``target_temperature`` type: MyHOME
+            # updates the entity's target from it (its legacy-platform test
+            # replays ``*#4*01*#14*0220*1##`` through ``OWNEvent.parse``).
+            self._type = MESSAGE_TYPE_TARGET_TEMPERATURE
             # Some central units prefix the value with '#'
             # (*#4*#1*14*#0230*1##, MyHOME#139); the value is the same.
             self._set_temperature = (
@@ -1231,7 +1240,13 @@ class OWNHeatingEvent(OWNEvent):
 
     @property
     def zone(self) -> int:
-        """The legacy integer zone: 0 for the central unit, the general address and an external probe."""
+        """The legacy integer zone.
+
+        0 for the central unit ``#0``, the general address and an external
+        probe; the selector ``C`` for the 4-zone central unit ``#0#C`` (MyHOME
+        routes those frames on it; ``scope`` / ``central_unit`` / ``unique_id``
+        carry the central-unit identity).
+        """
         return self._zone
 
     @property
@@ -1282,10 +1297,10 @@ class OWNHeatingEvent(OWNEvent):
         """The coarse climate mode of the WHAT (``CLIMATE_MODE_*``), else ``None``.
 
         ``heat`` / ``cool`` / ``auto`` for manual, automatic, timed manual,
-        program and scenario WHATs in the heating / conditioning / generic
-        context, ``off`` for 103 / 203 / 303, ``protection`` for 102 / 202 /
-        302 and ``holiday`` for the daily holiday plan (x15) and vacation
-        (x3DDD) WHATs; ``operating_mode`` tells them apart.
+        daily holiday plan (x15), vacation (x3DDD), program and scenario WHATs
+        in the heating / conditioning / generic context, ``off`` for 103 /
+        203 / 303 and the protection WHATs 102 / 202 / 302 (MyHOME routes on
+        these values); ``operating_mode`` tells the families apart.
         """
         return self._mode_name
 
@@ -1661,23 +1676,18 @@ class OWNHeatingCommand(OWNCommand):
         unit, or the central unit ``#0`` / ``#0#C``; a three-digit
         probe-class address (``001`` all probes of zone 1, ``105`` probe 1 of
         zone 5, ``#105``) raises ``ValueError`` instead of being rewritten
-        to ``#1`` / ``#105`` (ORACLE_CONFIRM H2, H19). The temperature must
-        be within ``5.0..40.0`` (``T`` is ``0050..0400``) and is then rounded
-        to 0.5 °C; outside that range ``ValueError`` is raised instead of
-        clamping.
+        to ``#1`` / ``#105`` (ORACLE_CONFIRM H2, H19). The temperature is
+        clamped to ``5.0..40.0`` (``T`` is ``0050..0400``; MyHOME relies on
+        the clamp) and rounded to 0.5 °C; only a non-finite value raises.
         """
         zone, zone_name = _zone_address_and_name(where, standalone=standalone)
 
         temp_val = float(temperature)
         if not math.isfinite(temp_val):
             raise ValueError("temperature must be finite")
-        if not 5.0 <= temp_val <= 40.0:
-            # ``T`` is ``0050..0400`` in 0.5 °C steps (Encyclopedia what.md
-            # "Zone setup commands"); out of range is refused, not clamped.
-            raise ValueError(
-                f"Invalid temperature: {temp_val}. Temperature must be 5.0..40.0 °C"
-            )
-        temperature = round(temp_val * 2) / 2
+        # ``T`` is ``0050..0400`` in 0.5 °C steps (Encyclopedia what.md
+        # "Zone setup commands"): clamp, as ``set_central_temperature`` does.
+        temperature = round(max(5.0, min(40.0, temp_val)) * 2) / 2
         temperature_print = f"{temperature}"
         temperature_code = int(temperature * 10)
 
