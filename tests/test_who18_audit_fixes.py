@@ -539,9 +539,53 @@ def test_e5_actuator_builders_oracle_rows() -> None:
 
 
 def test_e5_actuator_builders_validation() -> None:
-    for where in ("51", "11", 56):
+    for where in ("51", "11", 56, "7", "70", "7256", "701", "71#1", "71#0#0"):
         with pytest.raises(ValueError, match="expected 7N#0"):
             OWNEnergyCommand.enable_actuator(where)
+    assert str(OWNEnergyCommand.enable_actuator("7255")) == "*18*71*7255#0##"
+    assert str(OWNEnergyCommand.enable_actuator("71#0")) == "*18*71*71#0##"
+
+
+@pytest.mark.parametrize(
+    ("frame", "field", "params"),
+    [
+        # The frame grammar admits digits only in WHAT / DIMENSION parameters
+        # (`*18*57#10#x*51##` does not parse), so the decoders' digit guards
+        # are exercised white-box: the parsed lists are replaced before the
+        # decoder runs again. No exception, typed fields stay None / empty.
+        ("*18*57#10#1*51##", "_what_param", ["10", "x"]),
+        ("*18*57#10#1*51##", "_what_param", ["x", "1"]),
+        ("*18*58#10*51##", "_what_param", [""]),
+        ("*18*73#15*71#0##", "_what_param", ["x"]),
+        ("*18*73#15*71#0##", "_what_param", [""]),
+        ("*#18*51*512#10*1*2##", "_dimension_param", ["x"]),
+        ("*#18*51*512#10*1*2##", "_dimension_param", [""]),
+        ("*#18*51*511#1#1*1*2##", "_dimension_value", ["x", "y"]),
+        ("*#18*51*511#1#1*1*2##", "_dimension_value", ["1", "y"]),
+        ("*#18*51*511#1#1*1*2##", "_dimension_value", ["", "2"]),
+    ],
+)
+def test_non_digit_parameters_never_raise(frame: str, field: str, params: list[str]) -> None:
+    event = OWNMessage.parse(frame)
+    assert isinstance(event, OWNEnergyEvent)
+    assert event.message_type is not None
+    setattr(event, field, params)
+    event._type = None
+    event._series_month = None
+    event._series_day = None
+    event._forcing_time = None
+    event._monthly_average_consumption = {}
+    event._hourly_consumption = {}
+    event._daily_consumption = {}
+    if field == "_what_param":
+        event._decode_what()
+    else:
+        event._decode_dimension()
+    assert event.message_type is None
+    assert event.series_month is None and event.series_day is None
+    assert event.forcing_time is None
+    assert event.monthly_average_consumption == {}
+    assert event.hourly_consumption == {} and event.daily_consumption == {}
     with pytest.raises(ValueError, match="time must be between 1 and 254"):
         OWNEnergyCommand.force_actuator(71, 0)
     with pytest.raises(ValueError, match="time must be between 1 and 254"):
@@ -697,10 +741,11 @@ def test_e11_dimension_259_is_check_not_tracking() -> None:
     assert isinstance(off, OWNStopAndGoEvent)
     assert off.flag_dimension == STOP_AND_GO_DIM_CHECK_OFF
     assert off.is_check_active is False
-    assert off.is_tracking_active is None
+    # Kept for existing consumers (pre-2.0.0b13 reading of 259).
+    assert off.is_tracking_active is False
     on = OWNEvent.parse("*#18*11*259*0##")
     assert on.is_check_active is True
-    assert on.is_tracking_active is None
+    assert on.is_tracking_active is True
     tracking = OWNEvent.parse("*18*28*11##")
     assert tracking.is_tracking_active is True
     assert tracking.is_check_active is None

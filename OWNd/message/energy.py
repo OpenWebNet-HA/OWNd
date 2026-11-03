@@ -175,8 +175,8 @@ class OWNEnergyEvent(OWNEvent):
         params = self._what_param
         if self._what in HISTORICAL_SERIES_DIMENSIONS:
             expected = 2 if self._what == ENERGY_SERIES_DAILY else 1
-            # WHAT parameters are digit-only by the frame grammar.
-            if len(params) != expected:
+            # Guarded: a non-digit or empty parameter keeps the typed fields None.
+            if len(params) != expected or not all(p.isdigit() for p in params):
                 return
             month = int(params[0])
             day = int(params[1]) if expected == 2 else None
@@ -195,7 +195,7 @@ class OWNEnergyEvent(OWNEvent):
             if params:
                 # Time in tens of minutes, 1..254 (what.md "Force for a
                 # specified time").
-                if len(params) != 1 or not 1 <= int(params[0]) <= 254:
+                if len(params) != 1 or not params[0].isdigit() or not 1 <= int(params[0]) <= 254:
                     return
                 self._forcing_time = int(params[0])
                 self._human_readable_log = f"Actuator {self._address} is forced for {self._forcing_time * 10} minutes."  # pylint: disable=line-too-long
@@ -240,7 +240,7 @@ class OWNEnergyEvent(OWNEvent):
                 return
 
             if len(self._dimension_value) < 2 or not all(
-                self._dimension_value[:2]
+                v.isdigit() for v in self._dimension_value[:2]
             ):
                 return
             # Tag 1..24 is an hourly measure, 25 the daily total; nothing
@@ -394,6 +394,7 @@ class OWNEnergyEvent(OWNEvent):
         """
         if (
             len(self._dimension_param) != 1
+            or not self._dimension_param[0].isdigit()
             or len(self._dimension_value) != 2
             or not all(v.isdigit() for v in self._dimension_value)
         ):
@@ -627,6 +628,11 @@ class OWNEnergyEvent(OWNEvent):
         return self._human_readable_log
 
 
+# Energy Management actuator address ``7N#0``, N = 1..255, no leading zero
+# (Encyclopedia who-18 addressing.md "Published WHERE forms").
+_ACTUATOR_WHERE = re.compile(r"^7(?P<number>[1-9]\d{0,2})#0$")
+
+
 def _normalize_actuator_where(where: str | int) -> str:
     """Normalize actuator address by ensuring #0 suffix per WHO 18 specification."""
     target = require_non_empty_where(where)
@@ -642,9 +648,10 @@ def _require_actuator_where(where: str | int) -> str:
     (Encyclopedia who-18 addressing.md "Family-specific operations").
     """
     target = _normalize_actuator_where(where)
-    if not target.startswith("7"):
+    match = _ACTUATOR_WHERE.match(target)
+    if match is None or not 1 <= int(match.group("number")) <= 255:
         raise ValueError(
-            f"Invalid Energy Management actuator address '{where}': expected 7N#0"
+            f"Invalid Energy Management actuator address '{where}': expected 7N#0 (N = 1..255)"
         )
     return target
 
@@ -1286,10 +1293,13 @@ class OWNStopAndGoEvent(OWNEvent):
                     self._is_auto_reset_active = not active
                 elif self._dimension == STOP_AND_GO_DIM_CHECK_OFF:
                     # DIMENSION 259 is "Check off/on" (Encyclopedia who-18
-                    # dimensions.md "Individual Stop&Go flags"); nothing in
-                    # the docs equates it with the WHAT 28/29 tracking
-                    # controls, so it no longer sets is_tracking_active.
+                    # dimensions.md "Individual Stop&Go flags"): is_check_active
+                    # carries it. is_tracking_active is kept as before for
+                    # existing consumers (the pre-2.0.0b13 reading of 259 as
+                    # the WHAT 28/29 tracking state; the docs do not equate
+                    # the two, so is_check_active is the documented field).
                     self._is_check_active = not active
+                    self._is_tracking_active = not active
                 self._human_readable_log = (
                     f"Stop&Go breaker {self._where} status flag {self._dimension} is {bit}."
                 )
@@ -1321,7 +1331,7 @@ class OWNStopAndGoEvent(OWNEvent):
 
     @property
     def is_tracking_active(self) -> bool | None:
-        """Earth leakage tracking state from WHAT 28 / 29 (libqtdevices TS10_1_0_23 Stop&Go controls), else None."""
+        """Earth leakage tracking state from WHAT 28 / 29 (libqtdevices TS10_1_0_23 Stop&Go controls) and, for compatibility, from DIMENSION 259 (see ``is_check_active``), else None."""
         return self._is_tracking_active
 
     @property

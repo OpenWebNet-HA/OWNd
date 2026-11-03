@@ -158,9 +158,10 @@ def test_stop_and_go_dimension_status_mask_event() -> None:
         (STOP_AND_GO_DIM_SELF_TEST_DISABLED, 1, True, None, None, None, None),
         (STOP_AND_GO_DIM_AUTORESET_OFF, 1, True, None, None, False, None),
         (STOP_AND_GO_DIM_AUTORESET_OFF, 0, False, None, None, True, None),
-        # 259 is "Check off/on", not the WHAT 28/29 tracking (report 21 E11)
-        (STOP_AND_GO_DIM_CHECK_OFF, 1, True, None, None, None, None),
-        (STOP_AND_GO_DIM_CHECK_OFF, 0, False, None, None, None, None),
+        # 259 is "Check off/on" (is_check_active, report 21 E11); the
+        # pre-2.0.0b13 is_tracking_active reading is kept for consumers.
+        (STOP_AND_GO_DIM_CHECK_OFF, 1, True, None, None, None, False),
+        (STOP_AND_GO_DIM_CHECK_OFF, 0, False, None, None, None, True),
         (STOP_AND_GO_DIM_WAITING_CLOSING, 1, True, None, None, None, None),
         (STOP_AND_GO_DIM_FIRST_24H_OPENING, 1, True, None, None, None, None),
         (STOP_AND_GO_DIM_DOWNSTREAM_POWER_FAILURE, 1, True, None, None, None, None),
