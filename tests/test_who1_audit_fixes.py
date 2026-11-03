@@ -333,23 +333,29 @@ def test_translation_wrapper_is_untouched() -> None:
     assert msg.human_readable_log == "*1*1000#1*12##"
 
 
-# --- L7 / L8 / L9: builders raise on out-of-range values --------------------
+# --- L7 / L8 / L9: builders validate the type, keep the pinned fallbacks ------
+# Precedent gate: MyHOME (tests/test_message_edges.py) pins switch_on('21', 300)
+# -> *1*1*21##, switch_off('21', -1) -> *1*0*21##, set_brightness(50, -5) ->
+# speed 0 and flash(-1) -> *1*20*21##, and light.py passes Home Assistant
+# transition seconds straight through, so out-of-range values keep the
+# pre-existing fallback; only bool / fractional values raise (OWNd#129).
 
 
 @pytest.mark.parametrize("speed", [-1, 256, 300, 1000])
-def test_switch_on_off_reject_out_of_range_speed(speed: int) -> None:
+def test_switch_on_off_drop_out_of_range_speed(speed: int) -> None:
     """L7 (what.md "Switching and levels": speed 0 last, 1..254 explicit, 255
-    default): no silent plain *1*1*W## any more."""
-    with pytest.raises(ValueError, match=f"transition speed must be between 0 and 255, got {speed}"):
-        OWNLightingCommand.switch_on("12", speed)
-    with pytest.raises(ValueError, match="transition speed must be between 0 and 255"):
-        OWNLightingCommand.switch_off("12", speed)
+    default): an out-of-range speed is not a speed; the plain frame goes out."""
+    assert str(OWNLightingCommand.switch_on("12", speed)) == "*1*1*12##"
+    assert str(OWNLightingCommand.switch_off("12", speed)) == "*1*0*12##"
+    assert _check_speed(speed) is None
 
 
 @pytest.mark.parametrize("speed", [True, 2.5])
 def test_switch_on_rejects_non_integer_speed(speed: object) -> None:
     with pytest.raises(ValueError, match="must be an integer"):
         OWNLightingCommand.switch_on("12", speed)  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match="must be an integer"):
+        OWNLightingCommand.switch_off("12", speed)  # type: ignore[arg-type]
 
 
 def test_switch_on_off_accept_the_published_speed_range() -> None:
@@ -364,13 +370,17 @@ def test_switch_on_off_accept_the_published_speed_range() -> None:
 
 
 @pytest.mark.parametrize("speed", [-1, 300])
-def test_set_brightness_rejects_out_of_range_transition(speed: int) -> None:
-    """L8 (dimensions.md "Value fields": SPEED 0 = "last speed used" has a
-    meaning, so an out-of-range value is not rewritten to it)."""
-    with pytest.raises(ValueError, match="transition speed must be between 0 and 255"):
-        OWNLightingCommand.set_brightness("12", 50, speed)
-    with pytest.raises(ValueError, match="transition speed must be between 0 and 255"):
-        OWNLightingCommand.set_brightness("12", 0, speed)
+def test_set_brightness_sends_last_speed_for_out_of_range_transition(speed: int) -> None:
+    """L8 (dimensions.md "Value fields": SPEED 0 = "last speed used"): the
+    pre-existing fallback MyHOME pins."""
+    assert str(OWNLightingCommand.set_brightness("12", 50, speed)) == "*#1*12*#1*150*0##"
+    assert str(OWNLightingCommand.set_brightness("12", 0, speed)) == "*1*0*12##"
+
+
+@pytest.mark.parametrize("speed", [True, 2.5])
+def test_set_brightness_rejects_non_integer_transition(speed: object) -> None:
+    with pytest.raises(ValueError, match="must be integers"):
+        OWNLightingCommand.set_brightness("12", 50, speed)  # type: ignore[arg-type]
 
 
 def test_set_brightness_keeps_valid_transitions() -> None:
@@ -381,10 +391,10 @@ def test_set_brightness_keeps_valid_transitions() -> None:
 
 
 @pytest.mark.parametrize("period", [0, 0.2, 0.49, 5.01, 7, -1, True])
-def test_flash_rejects_out_of_range_period(period: object) -> None:
-    """L9 (what.md "Blinking operations": WHAT 20..29 = 0.5..5 s in 0.5 s steps)."""
-    with pytest.raises(ValueError, match="blink period must be between 0.5 and 5.0"):
-        OWNLightingCommand.flash("12", period)  # type: ignore[arg-type]
+def test_flash_falls_back_to_half_a_second_outside_the_range(period: object) -> None:
+    """L9 (what.md "Blinking operations": WHAT 20..29 = 0.5..5 s in 0.5 s steps):
+    an out-of-range period is the 0.5 s default, as MyHOME pins."""
+    assert str(OWNLightingCommand.flash("12", period)) == "*1*20*12##"  # type: ignore[arg-type]
 
 
 def test_flash_accepts_the_published_range() -> None:

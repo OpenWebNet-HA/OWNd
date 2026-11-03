@@ -790,11 +790,16 @@ def _where_target(where: str | int) -> str:
 
 
 def _check_speed(speed: int | None, name: str = "transition speed") -> int | None:
-    """Return ``speed`` as an int within the published SPEED field, or raise.
+    """Return ``speed`` as an int within the published SPEED field, else ``None``.
 
     what.md "Switching and levels": ``0`` = last speed used, ``1..254`` explicit,
-    ``255`` default. ``None`` means "no speed field". Anything else is not a
-    speed and must not be rewritten silently (audit rows L7, L8).
+    ``255`` default. ``None`` means "no speed field". A ``bool`` or a fractional
+    float is not a speed and raises ``ValueError`` (the builder convention of
+    OWNd#129). A value outside 0..255 is not a speed either: it is dropped
+    (``None``), as before, so the builders keep their pre-existing fallback
+    (``switch_on('21', 300)`` -> ``*1*1*21##``, ``set_brightness(..., -5)`` ->
+    speed ``0``); MyHOME passes Home Assistant transition seconds through and
+    pins those frames (precedent gate, audit rows L7, L8).
     """
     if speed is None:
         return None
@@ -802,9 +807,7 @@ def _check_speed(speed: int | None, name: str = "transition speed") -> int | Non
         raise ValueError(f"{name} must be an integer between {SPEED_MIN} and {SPEED_MAX}")
     value = int(speed)
     if not SPEED_MIN <= value <= SPEED_MAX:
-        raise ValueError(
-            f"{name} must be between {SPEED_MIN} and {SPEED_MAX}, got {value}"
-        )
+        return None
     return value
 
 
@@ -968,18 +971,19 @@ class OWNLightingCommand(OWNCommand):
         _freqency: float | None = None,
     ) -> OWNLightingCommand:
         """Blink every ``_frequency`` seconds: WHAT 20..29 = 0.5..5 s in 0.5 s steps
-        (what.md "Blinking operations"). ``None`` means the 0.5 s default; a
-        period outside 0.5..5 s raises ``ValueError`` (audit row L9); an
-        in-range period is rounded to the nearest 0.5 s step."""
+        (what.md "Blinking operations"). ``None``, a ``bool`` or a period outside
+        0.5..5 s falls back to the 0.5 s default (WHAT 20), as before (MyHOME pins
+        ``flash('21', -1)`` -> ``*1*20*21##``; audit row L9); an in-range period
+        is rounded to the nearest 0.5 s step."""
         # Compatibility with the misspelled keyword exposed by bundled V2.
         if _freqency is not None:
             _frequency = _freqency
-        if _frequency is None:
+        if (
+            _frequency is None
+            or isinstance(_frequency, bool)
+            or not BLINK_PERIOD_MIN <= _frequency <= BLINK_PERIOD_MAX
+        ):
             _frequency = BLINK_PERIOD_MIN
-        if isinstance(_frequency, bool) or not BLINK_PERIOD_MIN <= _frequency <= BLINK_PERIOD_MAX:
-            raise ValueError(
-                f"blink period must be between {BLINK_PERIOD_MIN} and {BLINK_PERIOD_MAX} seconds, got {_frequency!r}"  # pylint: disable=line-too-long
-            )
         _frequency = round(_frequency * 2) / 2
         _what = int((_frequency / 0.5) + 19)
         message = cls(f"*1*{_what}*{_where_target(where)}##")
@@ -989,8 +993,9 @@ class OWNLightingCommand(OWNCommand):
     @classmethod
     def switch_on(cls, where: str | int, _transition: int | None = None) -> OWNLightingCommand:
         """``*1*1*WHERE##``, or ``*1*1#SPEED*WHERE##`` with a speed 0..255
-        (what.md "Switching and levels"); an out-of-range speed raises
-        ``ValueError`` instead of dropping the speed (audit row L7)."""
+        (what.md "Switching and levels"); a ``bool`` / fractional speed raises
+        ``ValueError``, an out-of-range speed is dropped (plain frame), as
+        before (audit row L7, precedent gate)."""
         speed = _check_speed(_transition)
         if speed is not None:
             message = cls(f"*1*1#{speed}*{_where_target(where)}##")
@@ -1003,8 +1008,9 @@ class OWNLightingCommand(OWNCommand):
     @classmethod
     def switch_off(cls, where: str | int, _transition: int | None = None) -> OWNLightingCommand:
         """``*1*0*WHERE##``, or ``*1*0#SPEED*WHERE##`` with a speed 0..255
-        (what.md "Switching and levels"); an out-of-range speed raises
-        ``ValueError`` instead of dropping the speed (audit row L7)."""
+        (what.md "Switching and levels"); a ``bool`` / fractional speed raises
+        ``ValueError``, an out-of-range speed is dropped (plain frame), as
+        before (audit row L7, precedent gate)."""
         speed = _check_speed(_transition)
         if speed is not None:
             message = cls(f"*1*0#{speed}*{_where_target(where)}##")
@@ -1115,9 +1121,10 @@ class OWNLightingCommand(OWNCommand):
         standard ``DIMENSION 1`` write ``*#1*WHERE*#1*<100+level>*<speed>##``.
 
         ``_transition`` is the published SPEED field (``0`` = last speed used,
-        ``1..254``, ``255`` = default; dimensions.md "Value fields"): a value
-        outside 0..255 raises ``ValueError`` instead of being rewritten to ``0``
-        (audit row L8).
+        ``1..254``, ``255`` = default; dimensions.md "Value fields"): a ``bool``
+        or fractional value raises ``ValueError``; a value outside 0..255 is
+        sent as ``0`` (last speed used), as before (audit row L8, precedent
+        gate: MyHOME pins that frame).
         """
         if any(
             isinstance(x, bool) or (isinstance(x, float) and x % 1 != 0)
