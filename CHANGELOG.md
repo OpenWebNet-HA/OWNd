@@ -4,9 +4,6 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
-### Fixed
-- **WHO 7 (`OWNAVCommand.receive_video`)**: a camera number below 10 is zero-padded to the four-digit WHERE form of the WHO 7 PDF WHERE table (`4000` = Camera 00 .. `4099` = Camera 99): `receive_video(5)` now builds `*7*0*4005##` instead of the invalid `*7*0*405##` (two-digit cameras such as `12` were already right), and a non-canonical full WHERE string (`"04005"`, `"+4005"`) is normalised from the parsed value instead of being sent as typed. The accepted ranges are unchanged: `0..99` and `4000..4999` (decision D20, OWNd#128). Evidence boundary: the fix rests on the PDF table alone; in the firmware oracle (2026-11-04) every `*7*0*WHERE##` form, old `405` and fixed `4005` alike and every edge from `4000` to `5000`, is `nack/silent` on F461, F454, MH202, MH200N, MyHomeServer1, F453AV and 3488 (only `*7*9**##` is accepted, by F453AV), so no emulated gateway implements camera selection and the oracle can neither confirm the zero-pad nor settle the `4099` / `4999` range.
-
 ## [2.0.0b13] - 2026-11-02
 
 ### Added

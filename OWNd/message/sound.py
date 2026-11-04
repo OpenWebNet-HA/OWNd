@@ -264,6 +264,20 @@ class OWNSoundEvent(OWNEvent):
 class OWNAVCommand(OWNCommand):
     @classmethod
     def receive_video(cls, where: str | int) -> OWNAVCommand | None:
+        """Build the WHO 7 ``*7*0*WHERE##`` camera selection frame.
+
+        A camera number ``0..99`` is prefixed with ``40`` as typed, and a full
+        ``4000..4999`` WHERE is sent as typed (decision D20, OWNd#128).
+
+        Documentation note (no runtime change): the WHO 7 PDF WHERE table lists
+        ``4000`` = Camera 00 .. ``4099`` = Camera 99, which would make single-digit
+        cameras two-digit (``5`` -> ``4005``), while the same specification elsewhere
+        allows ``4000..5000`` (ownkb:claim:c003560, ownkb:question:q100005). There
+        is no committed physical WHO 7 video capture; both ``*7*0*405##`` and
+        ``*7*0*4005##`` are NACKed by a live F461 2.0.11 and neither is in the
+        firmware oracle index, so the emitted frame stays as it is until a real
+        camera capture settles what hardware accepts and emits.
+        """
         camera_id: str | int = where
         where_str = str(where)
         try:
@@ -271,15 +285,8 @@ class OWNAVCommand(OWNCommand):
         except (ValueError, TypeError):
             return None
         if 0 <= val < 100:
-            # WHO 7 PDF WHERE table: 4000 = Camera 00 .. 4099 = Camera 99, so a
-            # camera number is zero-padded to two digits (5 -> 4005, not 405); the
-            # log names the camera the same two-digit way as the 40xx branch.
-            camera_id = f"{val:02d}"
             where_str = f"40{camera_id}"
         elif 4000 <= val < 5000:
-            # Canonical four digits from the parsed value ("04005" / "+4005" -> 4005);
-            # the accepted range 4000..4999 is decision D20 (OWNd#128).
-            where_str = str(val)
             camera_id = where_str[2:]
         else:
             return None
