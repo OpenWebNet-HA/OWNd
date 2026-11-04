@@ -500,7 +500,7 @@ def _builder_zone_parts(where: str | int) -> tuple[str, int, int | None]:
     unit = int(match.group("unit")) if match.group("unit") is not None else None
     if zone == 0 and unit is not None and not where_str.startswith("#"):
         # ``0#N`` is actuator N of zone 0 in the Dimension 20 actuator
-        # grammar (Encyclopedia addressing.md "Actuator forms"; the event
+        # grammar (Encyclopedia addressing.md "Actuator addressing"; the event
         # classifier labels it SCOPE_ACTUATOR), not a spelling of the
         # 4-zone central unit ``#0#N``: refuse it instead of retargeting.
         raise ValueError(
