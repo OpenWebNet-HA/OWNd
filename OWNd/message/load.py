@@ -17,13 +17,7 @@ Evidence, in order of weight:
   ``*3*1*`` and ``*3*3*`` are NACKed with nothing on the bus, for a priority
   and for the general WHERE 0 alike; ``*#3*0##`` is also NACKed with nothing on
   the bus (``bt_energia`` at ``0x00b91c``/``0x00b998`` only accepts ``*#3##``
-  and ``*#3*##`` for general status). A 2026-11-03 oracle run over the twelve
-  emulated gateways (review-session ``ORACLE_CONFIRM.md`` row L1) confirms it:
-  ``*#3*0##`` is refused on 12/12, ``*#3##`` goes out on 8 gateways as
-  ``$03AA001614`` and ``*#3*##`` goes out on F454 and F459. Both firmware
-  spellings parse as a general ``OWNLoadCommand`` status request (WHERE
-  ``None`` for ``*#3##``, ``""`` for ``*#3*##``) and ``general_status()``
-  builds ``*#3##``, the one accepted most widely. ``*#3*#N##`` (``$03AA001614``) and
+  and ``*#3*##`` for general status). ``*#3*#N##`` (``$03AA001614``) and
   ``*#3*10*D##`` (D 0-4, ``$03AA0016xx``) still put their register-read
   telegrams on the bus, but in the oracle fixture they get a NACK (``*#*0##``)
   on the command session — the opposite of the specification's "ACK if command
@@ -52,9 +46,7 @@ Evidence, in order of weight:
   pp. 4, 6-7), as summarised by the OpenWebNet Encyclopedia
   (https://github.com/OpenWebNet-HA/OpenWebNet-Encyclopedia/blob/main/functional/who-3-load-management/README.md#measurement-dimension-values).
   WHAT 0 load disabled, 1 enabled, 2 forced, 3 forcing removed; WHERE 0
-  general, 10 control unit, #1-#8 priority; the general status request is
-  ``*#3*0##`` (``who-3-load-management/README.md#status-requests``, which the
-  firmware refuses, see above); DIMENSION 0-4 at WHERE 10 are
+  general, 10 control unit, #1-#8 priority; DIMENSION 0-4 at WHERE 10 are
   All dimensions (``T*C*P*E``), Voltage (``T``, Volt), Current (``C``, Ampere),
   Power (``P``, Watt), and Energy (``E``, unit unspecified in the spec).
 """
@@ -250,11 +242,9 @@ class OWNLoadCommand(OWNCommand):
     ``*#3*10*D##`` (both put their ``$03AA0016xx`` register reads on the bus,
     though in the oracle fixture the command session replies NACK when no F421
     answers within the 4 s bus timeout, opposite to ``WHO_3.pdf`` p. 6 "ACK if
-    command is sent to Bus"), and ``*#3##`` (``general_status``; out as
-    ``$03AA001614`` on F453, F453AV, F454, F459, H4684, MH200, MH200N and MH202,
-    review-session ``ORACLE_CONFIRM.md`` row L1). WHAT 0, 1 and 3, the general
-    WHERE 0 and the documented general status request ``*#3*0##`` are refused
-    by the gateways with no bus output, so there is no builder for them.
+    command is sent to Bus"). WHAT 0, 1 and 3, the general WHERE 0 and the
+    general status request ``*#3*0##`` are refused by the gateways with no bus
+    output, so there is no builder for them.
     """
 
     def __init__(self, data: str) -> None:
@@ -265,9 +255,6 @@ class OWNLoadCommand(OWNCommand):
                 self._human_readable_log = f"Forcing load priority {_priority}."
         elif self._message_type == "STATUS_REQUEST" and _priority is not None:
             self._human_readable_log = f"Requesting load priority {_priority} status."
-        elif self._message_type == "STATUS_REQUEST" and not self._where:
-            # *#3## and *#3*##: the two general spellings bt_energia accepts.
-            self._human_readable_log = "Requesting general load status."
         elif (
             self._message_type == "DIMENSION_REQUEST"
             and self._where == LOAD_CONTROL_UNIT
@@ -281,18 +268,6 @@ class OWNLoadCommand(OWNCommand):
     def force(cls, priority: int) -> OWNLoadCommand:
         """Force the load on ``priority`` 1-8 (``*3*2*#N##``)."""
         return cls(f"*3*{LOAD_STATE_FORCED}*{_priority_where(priority)}##")
-
-    @classmethod
-    def general_status(cls) -> OWNLoadCommand:
-        """Request every priority's state (``*#3##``).
-
-        The published general request ``*#3*0##`` (Encyclopedia
-        ``who-3-load-management/README.md#status-requests``) is refused by all
-        twelve emulated gateways; ``*#3##`` reaches the bus on eight of them
-        (``$03AA001614``) and ``*#3*##`` only on F454 and F459 (review-session
-        ``ORACLE_CONFIRM.md`` row L1; ``bt_energia`` ``0x00b91c`` / ``0x00b998``).
-        """
-        return cls("*#3##")
 
     @classmethod
     def status(cls, priority: int) -> OWNLoadCommand:

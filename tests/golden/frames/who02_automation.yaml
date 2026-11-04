@@ -122,6 +122,19 @@
     method: stop_shutter
     args: ["0"]
 
+- id: cover.dim.write.pos.75
+  frame: "*#2*93*#10*75##"
+  direction: dimension_write
+  who: 2
+  what: null
+  where: "93"
+  dimension: 10
+  dimension_values: ["75"]
+  source: conflict
+  mcp_valid: true
+  mcp_notes: "Grammar-only: a DIMENSION 10 write. WHO_2.pdf / Encyclopedia who-2-automation/dimensions.md define DIMENSION 10 as request / response / event only (shutter status); the position write is DIMENSION 11 (*#2*WHERE*#11#PRIORITY*LEVEL##). Was labelled legrand-spec as 'Set shutter position to 75%'; no committed plant trace carries this frame, so it pins parser shape only and claims no meaning."
+  roundtrip: true
+
 - id: cover.dim.write.level.30.no_priority
   frame: "*#2*93*#11*30##"
   direction: dimension_write

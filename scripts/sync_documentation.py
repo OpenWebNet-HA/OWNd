@@ -114,7 +114,7 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
     WhoCatalogDefinition(
         who="**2**",
         name="Automation",
-        description="Shutters, blinds and motorized curtains: Up/Down/Stop, advanced Up/Down/Stop with step and priority (`*2*11#STEP#PRIORITY*WHERE##`), Dimension 10 status (state, level, priority, info) and Dimension 11 go-to-level (`*#2*WHERE*#11#PRIORITY*LEVEL##`), short & full replies",
+        description="Shutters, blinds and motorized curtains: Up/Down/Stop, Dimension 10 status replies (state, position), Dimension 11 go-to-level position (`*#2*WHERE*#11#PRIORITY*LEVEL##`), short & full replies",
         dispatch_who_keys=(2,),
     ),
     WhoCatalogDefinition(

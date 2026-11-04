@@ -21,7 +21,7 @@ Every other source (`legrand-spec`, `encyclopedia`, `openwebnet4j`, `public-read
 - A `builder:` block proves the builder matches the fixture, not that either is right. When both are written in the same change from the same reading, the test only compares the code with itself. Prefer builder parity against a capture or an independent source such as `openwebnet4j`.
 - When a capture arrives for a frame that so far exists only as a spec-derived fixture, add the capture and keep the spec entry only if it agrees.
 
-## Supported Subsystems Catalog (165 Fixtures)
+## Supported Subsystems Catalog (166 Fixtures)
 
 - **Signaling (`who00_signaling.yaml`)**: Gateway ACK (`*#*1##`) and NACK (`*#*0##`).
 - **WHO=0 Scenarios (`who00_scenario.yaml`)**: Basic scenario execution and stop.
