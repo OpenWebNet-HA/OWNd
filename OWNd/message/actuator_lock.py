@@ -12,9 +12,13 @@ Evidence boundaries (Encyclopedia who-14-special-commands/README.md):
   (:attr:`OWNActuatorLockCommand.is_status_request`) is therefore
   **undocumented**: it is read if seen on the bus but no builder emits it
   (audit row A1; ENCY_CONFIRM LS-A1).
-- "Addressing": WHO 14 has no address grammar of its own; the WHERE is read
-  "in the context of the selected actuator Object and the underlying
-  system". The Lighting page gives the local-bus interface as ``01..09`` or
+- "Addressing": the Encyclopedia page says WHO 14 has no address grammar of
+  its own, but the WHO 1 PDF (chapter 4 "WHO 14", 4.2 "WHERE Table") gives
+  it one: General ``0``, Area ``A [00, 1-9, 100]`` and Point-to-point
+  ``A;PL``; the builders accept all three (General / Area bare, APL with the
+  optional ``#4#01..09`` interface), and the 2026-11-04 oracle rows forward
+  the General and Area forms on F461, MH202 and F454 exactly like the APL
+  form (audit AL-1). The Lighting page gives the local-bus interface as ``01..09`` or
   ``11..15`` (who-1-lighting/addressing.md "Address scopes"), while the
   builders here refuse ``11..15`` on firmware evidence (the ``bt_luci`` flex
   DFA accepts ``#4#0[1-9]`` only, tests/test_who14_actuator_lock.py); the
@@ -46,7 +50,7 @@ ACTUATOR_LOCK_STATE_NAMES: dict[int, str] = {
 def _format_actuator_where(
     where: str | int, interface: str | int | None = None
 ) -> str:
-    """Validate and format a WHO 14 Point-to-Point (APL) WHERE with optional #4#01..09 routing.
+    """Validate and format a WHO 14 WHERE: General 0, Area 00 / 1..9 / 100, or Point-to-Point (APL) with optional #4#01..09 routing.
 
     Interfaces ``11..15`` (who-1-lighting/addressing.md) are refused here on
     ``bt_luci`` evidence (flex DFA ``#4#0[1-9]``); the parser accepts them.
@@ -74,9 +78,28 @@ def _format_actuator_where(
     else:
         base = target
 
+    # General and Area forms of the WHO 14 WHERE table (WHO 1 PDF chapter 4.2:
+    # General "0", Area "A [00, 1-9, 100]"), the same set OWNMessage.is_general /
+    # is_area accept for WHO 1 and 2. Accepted bare only: the #4#I routing suffix
+    # is a point-to-point concept. Oracle 2026-11-04 (work/oracle-run/verify-n1-al1):
+    # *14*0*0##, *14*1*0##, *14*0*1##, *14*1*1## are forwarded on F461 020011,
+    # MH202 010024 and F454 020051 with the same verdict profile as the APL form
+    # (ack/out on MH202 and F454, nack/out on F461, which NACKs every WHO 14 frame).
+    # ASCII first: a fullwidth digit such as "\uff11" passes isdigit() and int().
+    is_general_or_area = base.isascii() and (
+        base == "0"
+        or base in ("00", "100")
+        or (len(base) == 1 and base.isdigit() and 1 <= int(base) <= 9)
+    )
+    if is_general_or_area:
+        if iface_raw is not None or interface is not None:
+            raise ValueError(
+                f"WHO 14 General / Area WHERE '{base}' takes no #4# interface suffix"
+            )
+        return base
     if not base.isascii() or not is_apl_address(base):
         raise ValueError(
-            f"Invalid WHO 14 Point-to-Point (APL) actuator WHERE address: '{base}'"
+            f"Invalid WHO 14 actuator WHERE address: '{base}' (General 0, Area 00 / 1..9 / 100, or Point-to-Point APL)"
         )
 
     if interface is not None:
