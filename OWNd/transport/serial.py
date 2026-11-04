@@ -9,10 +9,16 @@ import logging
 from ..connection import COMMAND_RESPONSE_MAX_FRAMES, COMMAND_TIMEOUT
 from ..connection.command_session import (
     DESTRUCTIVE_FRAME_REASON,
+    DESTRUCTIVE_WHO22_REASON,
     destructive_frame_error,
 )
 from ..exceptions import OWNError, OWNProtocolError
-from ..message import OWNMessage, OWNSignaling, is_who4_dimension_22_crash_form
+from ..message import (
+    OWNMessage,
+    OWNSignaling,
+    is_who22_bare_power_frame,
+    is_who4_dimension_22_crash_form,
+)
 from .base import OWNTransport
 
 SEPARATOR = b"##"
@@ -163,15 +169,23 @@ class AsyncSerialTransport(OWNTransport):
         text = str(message)
         if not text.endswith("##"):
             text += "##"
-        if is_who4_dimension_22_crash_form(text):
-            # Never written, whatever the caller: it crashes bt_termo.
-            err: OWNError = destructive_frame_error(text)
+        destructive_reason = (
+            DESTRUCTIVE_FRAME_REASON
+            if is_who4_dimension_22_crash_form(text)
+            else DESTRUCTIVE_WHO22_REASON
+            if is_who22_bare_power_frame(text)
+            else None
+        )
+        if destructive_reason is not None:
+            # Never written, whatever the caller: it crashes bt_termo (WHO 4
+            # dimension 22) or the sound daemon (bare WHO 22 power frame).
+            err: OWNError = destructive_frame_error(text, destructive_reason)
             self._last_error = err
             self._logger.error(
                 "%s Refusing to send `%s`: %s.",
                 self.log_id,
                 text,
-                DESTRUCTIVE_FRAME_REASON,
+                destructive_reason,
             )
             if raise_on_error:
                 raise err

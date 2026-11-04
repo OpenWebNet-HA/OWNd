@@ -227,6 +227,7 @@ from .sound import (
     OWNAVCommand,
     OWNSoundCommand,
     OWNSoundDiffusionCommand,
+    is_who22_bare_power_frame,
     OWNSoundDiffusionEvent,
     OWNSoundEvent,
 )
@@ -397,6 +398,7 @@ __all__ = [
     "OWNSoundCommand",
     "OWNSoundDiffusionEvent",
     "OWNSoundDiffusionCommand",
+    "is_who22_bare_power_frame",
     # Energy (WHO 18)
     "MESSAGE_TYPE_ACTIVE_POWER",
     "MESSAGE_TYPE_ENERGY_TOTALIZER",
