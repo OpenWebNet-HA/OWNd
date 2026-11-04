@@ -1090,7 +1090,20 @@ class OWNSoundDiffusionCommand(OWNCommand):
     def turn_on_with_source(
         cls, where: str | int, source_id: int | str, multimedia_type: int | str = 4
     ) -> OWNSoundDiffusionCommand:
-        """Power a zone on and play a source: ``*22*1#TYPE#SOURCE*WHERE##`` (TYPE 4 on the traced plant)."""
+        """Power a zone on and play a source: ``*22*1#TYPE#SOURCE*WHERE##`` (TYPE 4 on the traced plant).
+
+        Evidence boundary: the Encyclopedia reads the second WHAT parameter
+        of WHAT 0 / 1 / 2 / 34 as ``WHAT#MULTIMEDIA_TYPE#AREA`` (the AREA of
+        the target, who-22-sound-diffusion#what; plant captures such as
+        ``*22*2#4#1*5#2#1##`` read it as area 1 with the source in WHERE),
+        while this builder, derived from the traced plant, puts ``source_id``
+        there. The firmware oracle cannot settle it: the ``bt_multi``
+        gateways copy ``WHAT#4#X`` verbatim into the last bus byte
+        (``$0490018213`` / ``$0490018223``), so whether that nibble is an
+        area or a source needs a physical device. The frame is unchanged
+        until a committed on-wire trace shows which reading the hardware
+        follows; ``route_source`` (WHAT 35) names the source explicitly.
+        """
         target = _require_non_empty_where(where)
         source = int(source_id)
         if source < 1:
@@ -1257,7 +1270,11 @@ class OWNSoundDiffusionCommand(OWNCommand):
         MH200N, MH202, MyHomeServer1), ``DIMENSION 10`` is an upward tuner-to-gateway
         report and client-originated ``*#22*WHERE*#10*...##`` writes are NACKed with
         no SCS bus output. Use ``start_rds``, ``stop_rds``, and ``request_rds`` for
-        client-to-gateway RDS control.
+        client-to-gateway RDS control. The published grammar has no client write
+        of dimension 10 either (Encyclopedia who-22-sound-diffusion
+        #payloads-and-concrete-operations, #source-activity-and-rds: dimension 10
+        is a report payload, RDS is controlled by WHAT 31 / 32); the builder is
+        kept for callers that already build it.
         """
         target = _require_non_empty_where(where)
         formatted = text[:8].ljust(8)
@@ -1276,7 +1293,13 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def open_paging(cls, where: str | int = "5#3#0#0", channel: int | str = 1) -> OWNSoundDiffusionCommand:
-        """Open a paging channel: ``*22*19#CHANNEL*WHERE##`` (``5#3#0#0`` is the whole house)."""
+        """Open a paging channel: ``*22*19#CHANNEL*WHERE##`` (``5#3#0#0`` is the whole house).
+
+        Provenance: trace-derived from a plant with a paging unit. The WHO 22
+        WHAT table of the Encyclopedia (who-22-sound-diffusion#what) has no
+        ``19`` or ``20``; nine emulated gateways forward ``*22*19#1*5#3#0#0##``
+        (``$04B7008010``) without a documented counterpart.
+        """
         target = _require_non_empty_where(where)
         ch = int(channel)
         if ch < 1:
@@ -1287,7 +1310,7 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def start_paging_voice(cls, where: str | int = "5#3#0#0", channel: int | str = 1) -> OWNSoundDiffusionCommand:
-        """Start the paging voice transmission: ``*22*20#CHANNEL*WHERE##``."""
+        """Start the paging voice transmission: ``*22*20#CHANNEL*WHERE##`` (trace-derived, not in the published WHAT table; see ``open_paging``)."""
         target = _require_non_empty_where(where)
         ch = int(channel)
         if ch < 1:
@@ -1298,6 +1321,20 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def volume_up(cls, where: str | int, step: int = 1) -> OWNSoundDiffusionCommand:
+        """Increase the volume by ``step`` (1..31): ``*22*3*WHERE##`` / ``*22*3#STEP*WHERE##``.
+
+        A step of 1 is sent as the bare ``*22*3*WHERE##`` and a larger step as
+        ``*22*3#STEP*WHERE##``: both forms are preserved on purpose (#127;
+        #128 bounds ``step`` to ``1..31``). The Encyclopedia defines only
+        ``*22*3#VOLUME_STEP*3#AREA#POINT##`` (who-22-sound-diffusion
+        #payloads-and-concrete-operations, step ``1..31``). Firmware oracle
+        note: F454, F459 and MyHomeServer1 put the bare form on the bus with
+        step ``00`` (``$0494018100``) where ``3#1`` gives ``01``; F453, F453AV,
+        F460, F461, MH200N and MH202 send the same bytes for both.
+        ``*22*3#1*3#1#1##`` is in the oracle index (``sound-who22``); the bare
+        form is not. Changing the step-1 form needs a #127 reopen and an
+        on-wire trace.
+        """
         s = int(step)
         if not 1 <= s <= 31:
             raise ValueError("step must be positive and between 1 and 31")
@@ -1309,6 +1346,7 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def volume_down(cls, where: str | int, step: int = 1) -> OWNSoundDiffusionCommand:
+        """Decrease the volume by ``step`` (1..31): bare ``*22*4*WHERE##`` for step 1, ``*22*4#STEP*WHERE##`` above (both kept on purpose, #127; see ``volume_up`` for the oracle note)."""
         s = int(step)
         if not 1 <= s <= 31:
             raise ValueError("step must be positive and between 1 and 31")

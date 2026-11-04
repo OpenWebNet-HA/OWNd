@@ -4,6 +4,9 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **WHO 22 (`OWNSoundDiffusionCommand`) evidence-boundary docstrings, no behaviour change**: `volume_up` / `volume_down` record that the bare step-1 form (`*22*3*WHERE##` / `*22*4*WHERE##`) and the `3#STEP` / `4#STEP` form are both kept on purpose (#127, #128) and what the firmware oracle shows for them (F454, F459 and MyHomeServer1 put the bare form on the bus with step `00` where `3#1` gives `01`; the other `bt_multi` gateways send the same bytes for both); `turn_on_with_source` notes that the Encyclopedia reads the second WHAT parameter of WHAT 1 as the target AREA while the traced plant form carries the source, a reading the oracle cannot distinguish; `send_rds_text` adds that the published grammar has no client write of dimension 10 (the `bt_multi` NACK note is kept); `open_paging` / `start_paging_voice` state that WHAT 19 / 20 are trace-derived and absent from the published WHAT table. Frames, decoded values, logs and accepted parameter domains are unchanged.
+
 ## [2.0.0b13] - 2026-11-02
 
 ### Added
