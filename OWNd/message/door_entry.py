@@ -157,7 +157,20 @@ class OWNDoorEntryEvent(OWNEvent):
 
 
 class OWNDoorEntryCommand(OWNCommand):
-    """WHO 6 commands for door locks, staircase lighting, and cameras."""
+    """WHO 6 commands for door locks, staircase lighting, and cameras.
+
+    Documentation context (no committed plant trace, so the builders and their
+    ``where=0`` defaults are unchanged): the Encyclopedia
+    ``functional/who-6-basic-video-door-entry/README.md`` #l4686sdk-reference
+    publishes ``WHERE = 4000..4095`` (riser form appends ``#2``) for Camera ON
+    (``*6*0*WHERE##``), Open lock (``*6*10*WHERE##``) and Camera cycling
+    (``*6*18*WHERE##``, which needs a preceding Camera ON). The page is
+    product-scoped (L4686SDK 1.0.0) and the historical simulator accepts a
+    wider index range, so no range is enforced here. On the emulated gateways
+    of the firmware oracle (no entrance panel on the bus) ``*6*10*0##`` is
+    ``nack`` on all 12 while ``*6*10*4001##`` is forwarded by F453, F453AV,
+    H4684 and MH200; that is not evidence about a physical panel.
+    """
 
     @classmethod
     def open_lock(cls, where: str | int = 0) -> OWNDoorEntryCommand:
@@ -585,7 +598,15 @@ class OWNIntercomCommand(OWNCommand):
     def cycle_camera(
         cls, caller: str | int, master_caller: str | int
     ) -> OWNIntercomCommand:
-        """Cycle to the next external unit / camera."""
+        """Cycle to the next external unit / camera: ``*8*6#CALLER*MASTER_CALLER##``.
+
+        Documentation context (archived touchscreen client, libqtdevices; the
+        Encyclopedia ``functional/who-8-video-door-entry-telephony/README.md``
+        #historical-touchscreen-call-model): that client writes the WHERE as
+        the original caller of the call being cycled, not a camera address.
+        No committed plant trace of the frame exists, so OWNd keeps its
+        historical decoding of the WHERE on the event side.
+        """
         caller_str = str(caller).strip()
         master_str = str(master_caller).strip()
         message = cls(f"*8*6#{caller_str}*{master_str}##")
@@ -685,7 +706,19 @@ class OWNIntercomCommand(OWNCommand):
         kind: int = KIND_INTERNAL_INTERCOM,
         mm_type: int = MMTYPE_AUDIO,
     ) -> OWNIntercomCommand:
-        """Terminate call session."""
+        """Terminate call session: ``*8*3#KIND#MMTYPE*WHERE##``, WHERE sent as given.
+
+        Documentation context (no committed plant trace, so the default
+        ``END_ALL_CALLS`` and the verbatim WHERE are unchanged): the archived
+        touchscreen client (libqtdevices, Encyclopedia ``who-8`` README
+        #historical-touchscreen-call-model) serializes end-call as
+        ``*8*3#KIND#MMTYPE*4LOCAL##``, the literal ``4`` concatenated in front
+        of its local address (``411`` for local ``11``), and its parser treats
+        an end-call ``MMTYPE`` of ``3`` as a stop-video notification. On the
+        emulated gateways of the firmware oracle ``*8*3#6#2*4##``,
+        ``*8*3#6#2*11##`` and ``*8*3#6#2*411##`` are all ``nack`` with no
+        intercom on the bus, which decides nothing between the spellings.
+        """
         target = str(where).strip()
         message = cls(f"*8*3#{kind}#{mm_type}*{target}##")
         message._human_readable_log = f"Ending call session on {target}."
@@ -703,7 +736,12 @@ class OWNIntercomCommand(OWNCommand):
 
     @classmethod
     def mute_amplifier(cls, where: str | int) -> OWNIntercomCommand:
-        """Silence multimedia amplifier."""
+        """Silence multimedia amplifier: ``*8*63*WHERE##``.
+
+        The Encyclopedia ``who-8`` README lists WHAT 63 / 64 only as received
+        events of the local amplifier; ``*8*63*11##`` is ``nack`` on the 12
+        emulated gateways with nothing on the bus. Kept as is: no plant trace.
+        """
         target = str(where).strip()
         message = cls(f"*8*63*{target}##")
         message._human_readable_log = (
@@ -713,7 +751,7 @@ class OWNIntercomCommand(OWNCommand):
 
     @classmethod
     def unmute_amplifier(cls, where: str | int) -> OWNIntercomCommand:
-        """Restore multimedia amplifier audio."""
+        """Restore multimedia amplifier audio: ``*8*64*WHERE##`` (see ``mute_amplifier``)."""
         target = str(where).strip()
         message = cls(f"*8*64*{target}##")
         message._human_readable_log = (
@@ -723,7 +761,12 @@ class OWNIntercomCommand(OWNCommand):
 
     @classmethod
     def status(cls, where: str | int) -> OWNIntercomCommand:
-        """Request device/intercom status."""
+        """Request device/intercom status: ``*#8*WHERE##``.
+
+        No WHO 8 status request is on the Encyclopedia ``who-8`` README and
+        ``*#8*11##`` is ``nack`` on the 12 emulated gateways with nothing on
+        the bus. Kept as is: no plant trace.
+        """
         target = str(where).strip()
         message = cls(f"*#8*{target}##")
         message._human_readable_log = f"Requesting intercom status for {target}."

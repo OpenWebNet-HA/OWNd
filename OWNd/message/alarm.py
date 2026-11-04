@@ -226,6 +226,26 @@ class OWNAlarmCommand(OWNCommand):
     disarm.
 
     The arm/disarm/trigger builders below are kept for API compatibility.
+
+    Documentation context only (no committed plant trace backs any of it, so
+    nothing below changes what the builders emit):
+
+    - The archived touchscreen client (libqtdevices, TS10) arms and disarms
+      with password frames rather than the WHAT 1 / 2 / 8 / 9 state codes:
+      ``*5*36#PASSWORD*0##`` toggles the armed state and
+      ``*5*50#PASSWORD#MASK*0##`` sets the zone partialization (eight textual
+      bits for zones 1..8, ``1`` = partialized). The Encyclopedia
+      (``functional/who-5-alarm/protocol.md`` #historical-password-controls,
+      #write-support) lists WHAT 1, 2, 8, 9 and 17 as states / events and says
+      their presence in the vocabulary is not permission to send them as
+      controls. OWNd has no builder for the password frames: the password
+      format and acceptance rules are not established by any capture.
+    - On the emulated gateways of the firmware oracle (no central unit on the
+      bus) ``*5*2*0##``, ``*5*1*0##``, ``*5*17*0##``, ``*5*8*0##`` and
+      ``*5*9*0##`` are refused on 9 of 12 and turned into a central-unit poll
+      on F453, MH200 and MH200N; the password frames go out on H4684 and MH202
+      as password telegrams. Empty-bus ACKs / NACKs say nothing about what a
+      real central unit does with them.
     """
 
     @classmethod

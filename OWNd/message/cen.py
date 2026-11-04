@@ -51,6 +51,20 @@ class OWNCENEvent(OWNEvent):
 
 
 class OWNDryContactEvent(OWNEvent):
+    """WHO 25 WHAT 31 / 32 dry contact and IR frames.
+
+    ``sensor`` strips a leading ``3`` from the WHERE (``*25*31#1*339##`` ->
+    ``39``), the form every committed capture carries (``31``, ``33``,
+    ``331..339`` on MH200N, MH202, F454 and H4890; golden fixture
+    ``dry_contact.event.on.339``). Documentation context: the WHO 25 PDF
+    WHERE table writes the published WHERE with that prefix, ``3`` +
+    ``[1-201]`` (automation dry-contact interface) or ``3`` + ``[1-9][1-9]``
+    (alarm / IR interface, zone and sensor), and the Encyclopedia
+    ``functional/who-25-transversal/dry-contact-ir.md`` describes the sensor
+    number without it. ``OWNDryContactCommand.status`` sends the WHERE as
+    given.
+    """
+
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
@@ -305,7 +319,17 @@ class OWNCenCommand(OWNCommand):
 
 
 class OWNCenPlusCommand(OWNCommand):
-    """Command builder for WHO=25 CEN+ scenario pushbuttons."""
+    """Command builder for WHO=25 CEN+ scenario pushbuttons (``WHAT 21..24``).
+
+    Documentation context: the WHO 15/25 PDF WHAT table also lists the
+    rotary-selector codes ``WHAT 25..28`` (slow / fast clockwise, slow / fast
+    counter-clockwise) and marks them writable, but its action grammar is
+    written for ``21..24`` only and no committed plant trace shows a client
+    sending ``25..28``, so no builder emits them. The Encyclopedia
+    ``functional/who-25-transversal/cen-plus.md`` gives the WHERE as the
+    prefix ``2`` followed by an Object ``0..2047`` and the pushbutton as
+    ``0..31``; only the pushbutton range is enforced here.
+    """
 
     @staticmethod
     def _button(button: int | str) -> int:

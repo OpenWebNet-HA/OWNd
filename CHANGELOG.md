@@ -4,6 +4,9 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Documentation
+- **WHO 5 / 6 / 8 / 25 docstrings**: provenance notes only, no behaviour change. `OWNAlarmCommand` records the archived touchscreen client's password frames (`*5*36#PASSWORD*0##`, `*5*50#PASSWORD#MASK*0##`) and the firmware-oracle verdicts on the WHAT 1 / 2 / 8 / 9 / 17 frames; `OWNDoorEntryCommand` records the L4686SDK `WHERE = 4000..4095` range of the WHO 6 page; `OWNIntercomCommand.end_call` / `cycle_camera` record the touchscreen client's `*8*3#KIND#MMTYPE*4LOCAL##` and `*8*6#CALLER*ORIGINAL_CALLER##` shapes and the oracle `nack` rows; `OWNDryContactEvent` records the WHO 25 PDF WHERE prefix table and `OWNCenPlusCommand` the PDF's rotary `WHAT 25..28` codes, which have no builder because no committed plant trace shows them. No decoded value, log string or builder output changes.
+
 ## [2.0.0b13] - 2026-11-02
 
 ### Added
