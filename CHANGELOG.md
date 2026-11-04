@@ -4,6 +4,11 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **WHO 18 (send layer, `is_who18_dimension_52_four_digit_year`)**: a DIMENSION 52 request with a four-digit year (`*#18*WHERE*52#2026#10##`, also with a value field) is refused by every send path with `reason="destructive_frame"`, like the WHO 4 dimension 22 crash forms, because it crashes F460 `020012` and F461 `020011` after the telegram goes out (`findings/audit-crash-frames.md`); the documented two-digit form `52#26#9` goes out unchanged. No builder emits the four-digit form and `OWNCommand.parse` stays permissive (2026-11-04 audit E18-1).
+- **WHO 18 documentation (no behaviour change)**: README and `docs/protocol_conformance_matrix.md` describe the WHO 18 energy totalizers as Wh, as OWNd and MyHOME read them (the PDF labels DIMENSION 51..54 'Watt' and only 72 'Wh'; capture `*#18*51*51*23791364##`); the DIMENSION 1200 docstrings describe `Time` as the published report-on-change parameter in minutes; the `report_current_month_energy`, `report_partial_month_energy`, `report_partial_day_energy`, Stop&Go addressing and `set_test_frequency` docstrings note the WHO_18.pdf forms and domains (DIMENSION 53 / 54 scalar, Stop&Go `1N` N = 1..127, TS10 DAYS 1..180) next to the unchanged wire output and accepted ranges (report 21 E1, E2, E3, E7, E8, E9).
+- Golden fixtures `energy.req.active_power.meter1`, `energy.resp.active_power.meter1.1450`, `energy.req.lifetime.meter1` and `energy.resp.lifetime.meter1.45230` (`*#18*1*1##`, `*#18*1*11*00452300##`) are relabelled `conflict` grammar-only records: SCS WHO 18 has no DIMENSION 1 (active power is 113), DIMENSION 11 is the ZigBee variant's Voltage, WHERE `1` is outside the `1N` / `5N` / `7N#0` families and no value is kWh (E12). Parser roundtrip coverage is unchanged.
+
 ## [2.0.0b13] - 2026-11-02
 
 ### Added

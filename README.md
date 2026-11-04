@@ -89,7 +89,7 @@ OWNd parses OpenWebNet frames and dispatches typed commands and events across th
 | **15** | CEN Scenarios | Scenario control, pushbutton push/release/extended press events, strongly typed command builders | `OWNCenCommand`, `OWNCENEvent` |
 | **16** / **22** | Sound Diffusion | Multi-source selection, zone activation, volume adjustment, F441 matrix routing, WHO 22 paging and standby | `OWNSoundCommand`, `OWNSoundDiffusionCommand`, `OWNSoundEvent`, `OWNSoundDiffusionEvent`, `OWNAVCommand` |
 | **17** | Scenario Programmer | MH200N / MH202 scenario activation and state monitoring | `OWNSceneCommand`, `OWNSceneEvent` |
-| **18** | Energy Management | Active power (W), hourly/daily/monthly consumption (kWh), Stop & Go breaker diagnostics | `OWNEnergyCommand`, `OWNStopAndGoCommand`, `OWNEnergyEvent`, `OWNStopAndGoEvent` |
+| **18** | Energy Management | Active power (W), hourly/daily/monthly consumption (Wh) as OWNd and MyHOME read them (the PDF labels DIMENSION 51..54 'Watt' and only 72 'Wh'), Stop & Go breaker diagnostics, Energy Management actuators | `OWNEnergyCommand`, `OWNStopAndGoCommand`, `OWNEnergyEvent`, `OWNStopAndGoEvent` |
 | **25** | CEN+ & Dry Contacts | 32-button keypads, rotary knob encoders (CW/CCW), dry contacts, PIR sensors, strongly typed command builders | `OWNCenPlusCommand`, `OWNCENPlusEvent`, `OWNDryContactCommand`, `OWNDryContactEvent` |
 <!-- END_WHO_CATALOG_TABLE -->
 
