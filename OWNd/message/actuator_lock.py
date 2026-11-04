@@ -80,8 +80,11 @@ def _format_actuator_where(
 
     # General and Area forms of the WHO 14 WHERE table (WHO 1 PDF chapter 4.2:
     # General "0", Area "A [00, 1-9, 100]"), the same set OWNMessage.is_general /
-    # is_area accept for WHO 1 and 2. Accepted bare only: the #4#I routing suffix
-    # is a point-to-point concept. Oracle 2026-11-04 (work/oracle-run/verify-n1-al1):
+    # is_area accept for WHO 1 and 2. Accepted bare only: the WHO 14 WHERE table
+    # (WHO 1 PDF p.22) lists no #4# form for any scope, so General / Area stay
+    # bare here; the point-to-point #4#01..09 rests on firmware evidence (the
+    # WHO 1 table does define #4#Int for General, Area, Group and point targets).
+    # Oracle 2026-11-04 (work/oracle-run/verify-n1-al1):
     # *14*0*0##, *14*1*0##, *14*0*1##, *14*1*1## are forwarded on F461 020011,
     # MH202 010024 and F454 020051 with the same verdict profile as the APL form
     # (ack/out on MH202 and F454, nack/out on F461, which NACKs every WHO 14 frame).
