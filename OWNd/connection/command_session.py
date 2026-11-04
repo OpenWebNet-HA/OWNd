@@ -25,7 +25,12 @@ from ..exceptions import (
     OWNProtocolError,
     OWNTimeoutError,
 )
-from ..message import OWNMessage, OWNSignaling, is_who4_dimension_22_crash_form
+from ..message import (
+    OWNMessage,
+    OWNSignaling,
+    is_who22_bare_power_frame,
+    is_who4_dimension_22_crash_form,
+)
 
 # Why every send path refuses a WHO 4 dimension 22 frame without an actuator
 # token (see ``OWNd.message.is_who4_dimension_22_crash_form``): the gateway
@@ -34,12 +39,22 @@ DESTRUCTIVE_FRAME_REASON = (
     "WHO 4 dimension 22 without an actuator token in WHERE crashes the "
     "thermoregulation daemon (bt_termo) on Linux IP gateways"
 )
+# Same treatment for the bare WHO 22 power frame
+# (``OWNd.message.is_who22_bare_power_frame``).
+DESTRUCTIVE_WHO22_REASON = (
+    "the bare WHO 22 power frame (WHAT 0 / 1 without #mmtype#area, not a published "
+    "form) crashes the sound daemon on eight of the twelve emulated gateways; use "
+    "turn_on_with_source / "
+    "route_source / turn_off_atomic"
+)
 
 
-def destructive_frame_error(frame: str) -> OWNProtocolError:
-    """The error every send path raises or records for a crashing WHO 4 dimension 22 frame."""
+def destructive_frame_error(
+    frame: str, reason: str = DESTRUCTIVE_FRAME_REASON
+) -> OWNProtocolError:
+    """The error every send path raises or records for a frame known to crash a gateway."""
     return OWNProtocolError(
-        f"Refusing to send `{frame}`: {DESTRUCTIVE_FRAME_REASON}",
+        f"Refusing to send `{frame}`: {reason}",
         frame=frame,
         reason="destructive_frame",
     )
@@ -94,6 +109,14 @@ class OWNCommandSession(OWNSession):
         if is_who4_dimension_22_crash_form(frame):
             connection._refuse_destructive_frame(
                 frame, message, raise_on_error=raise_on_error
+            )
+            return None
+        if is_who22_bare_power_frame(frame):
+            connection._refuse_destructive_frame(
+                frame,
+                message,
+                raise_on_error=raise_on_error,
+                reason=DESTRUCTIVE_WHO22_REASON,
             )
             return None
         try:
@@ -247,7 +270,12 @@ class OWNCommandSession(OWNSession):
             )
 
     def _refuse_destructive_frame(
-        self, frame: str, message: str | OWNMessage, *, raise_on_error: bool
+        self,
+        frame: str,
+        message: str | OWNMessage,
+        *,
+        raise_on_error: bool,
+        reason: str = DESTRUCTIVE_FRAME_REASON,
     ) -> None:
         """Record and log the refusal of a crashing WHO 4 dimension 22 frame, never written.
 
@@ -255,13 +283,13 @@ class OWNCommandSession(OWNSession):
         the caller's object, passed to the logger like every other send log
         line (formatted lazily, and what downstream tests assert on).
         """
-        err = destructive_frame_error(frame)
+        err = destructive_frame_error(frame, reason)
         self._last_error = err
         self._logger.error(
             "%s Refusing to send `%s`: %s.",
             self._log_id,
             message,
-            DESTRUCTIVE_FRAME_REASON,
+            reason,
         )
         if raise_on_error:
             raise err
@@ -279,6 +307,11 @@ class OWNCommandSession(OWNSession):
         frame = str(message)
         if is_who4_dimension_22_crash_form(frame):
             self._refuse_destructive_frame(frame, message, raise_on_error=raise_on_error)
+            return None
+        if is_who22_bare_power_frame(frame):
+            self._refuse_destructive_frame(
+                frame, message, raise_on_error=raise_on_error, reason=DESTRUCTIVE_WHO22_REASON
+            )
             return None
         msg_obj = (
             message
