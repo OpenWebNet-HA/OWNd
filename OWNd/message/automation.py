@@ -118,7 +118,9 @@ def _decode_go_to_level_fields(
     return _int_or_none(priority), _priority_bitfield(priority), selector, target
 
 
-def _priority_log_suffix(priority: int | None, bitfield: str | None, selector: int | None) -> str:
+def _priority_log_suffix(
+    priority: int | None, bitfield: str | None, selector: int | None
+) -> str:
     parts: list[str] = []
     if bitfield is not None:
         parts.append(f"priority {bitfield}")
@@ -196,7 +198,9 @@ class OWNAutomationEvent(OWNEvent):
             else:
                 self._human_readable_log = f"Cover {self._where}{self._interface_log_text} is opened at {self._position}%."
                 self._is_closed = False
-            self._human_readable_log = self._human_readable_log[:-1] + self._info_log_suffix + "."
+            self._human_readable_log = (
+                self._human_readable_log[:-1] + self._info_log_suffix + "."
+            )
         elif self._state == 1:
             self._human_readable_log = (
                 f"Cover {self._where}{self._interface_log_text} is opening."
@@ -271,7 +275,9 @@ class OWNAutomationEvent(OWNEvent):
 
     @property
     def _advanced_log_suffix(self) -> str:
-        return _priority_log_suffix(self._priority, self._priority_bitfield, self._selector)
+        return _priority_log_suffix(
+            self._priority, self._priority_bitfield, self._selector
+        )
 
     def _decode_shutter_status(self) -> None:
         """``*#2*WHERE*10*STATUS*LEVEL*PRIORITY*INFO##`` (``dimensions.md#dimension-10---shutter-status``)."""
@@ -387,15 +393,27 @@ class OWNAutomationEvent(OWNEvent):
 
     @property
     def priority_safety(self) -> bool | None:
-        return None if self._priority_bitfield is None else self._priority_bitfield[0] == "1"
+        return (
+            None
+            if self._priority_bitfield is None
+            else self._priority_bitfield[0] == "1"
+        )
 
     @property
     def priority_high(self) -> bool | None:
-        return None if self._priority_bitfield is None else self._priority_bitfield[1] == "1"
+        return (
+            None
+            if self._priority_bitfield is None
+            else self._priority_bitfield[1] == "1"
+        )
 
     @property
     def priority_medium(self) -> bool | None:
-        return None if self._priority_bitfield is None else self._priority_bitfield[2] == "1"
+        return (
+            None
+            if self._priority_bitfield is None
+            else self._priority_bitfield[2] == "1"
+        )
 
     @property
     def selector(self) -> int | None:
@@ -424,7 +442,11 @@ class OWNAutomationEvent(OWNEvent):
 
     @property
     def is_go_to_level(self) -> bool:
-        """True for ``*#2*WHERE*#11#PRIORITY[#SELECTOR]*LEVEL##`` parsed as an event directly."""
+        """True for ``*#2*WHERE*#11#PRIORITY[#SELECTOR]*LEVEL##`` parsed as an event directly.
+
+        That is the write form, which the F461 echoes on the event session; the WHO 2 PDF
+        publishes the event-session frame as ``*#2*WHERE*#11#PRIORITY#LEVEL*SELECTOR##``.
+        """
         return self._dimension == 11 and self._message_type == "DIMENSION_WRITING"
 
     @property
@@ -464,12 +486,20 @@ class OWNAutomationCommand(OWNCommand):
                 if self._target_level is not None
                 else "go to an invalid level"
             )
-            suffix = _priority_log_suffix(self._priority, self._priority_bitfield, self._selector)
-            self._human_readable_log = f"Cover {self._where}{self._interface_log_text} {target}{suffix}."
+            suffix = _priority_log_suffix(
+                self._priority, self._priority_bitfield, self._selector
+            )
+            self._human_readable_log = (
+                f"Cover {self._where}{self._interface_log_text} {target}{suffix}."
+            )
 
     @property
     def is_go_to_level(self) -> bool:
-        """True for ``*#2*WHERE*#11#PRIORITY[#SELECTOR]*LEVEL##`` (write or event-session echo)."""
+        """True for ``*#2*WHERE*#11#PRIORITY[#SELECTOR]*LEVEL##`` (write or event-session echo).
+
+        The F461 echoes the write form; the WHO 2 PDF publishes the event-session frame as
+        ``*#2*WHERE*#11#PRIORITY#LEVEL*SELECTOR##`` (LEVEL as the second ``#`` parameter).
+        """
         return self._dimension == 11 and self._message_type == "DIMENSION_WRITING"
 
     @property
@@ -536,7 +566,9 @@ class OWNAutomationCommand(OWNCommand):
         return message
 
     @classmethod
-    def set_shutter_level(cls, where: str | int, level: int = 30) -> OWNAutomationCommand:
+    def set_shutter_level(
+        cls, where: str | int, level: int = 30
+    ) -> OWNAutomationCommand:
         """``*#2*WHERE*#11#001*LEVEL##`` (``dimensions.md#dimension-11---go-to-level``, priority 001 = Medium)."""
         target = _require_non_empty_where(where)
         if (
@@ -558,11 +590,7 @@ class OWNAutomationCommand(OWNCommand):
     @property
     def is_shutter_status_query(self) -> bool:
         """True if this message is an advanced shutter status query (*#2*WHERE*10##)."""
-        return (
-            self.is_dimension_request
-            and self._dimension == 10
-            and bool(self._where)
-        )
+        return self.is_dimension_request and self._dimension == 10 and bool(self._where)
 
     @classmethod
     def report_shutter_level(
@@ -583,12 +611,16 @@ class OWNAutomationCommand(OWNCommand):
         pin), ``info`` 0, 12, 13, 14 or 15.
         """
         target = _require_non_empty_where(where)
-        numbers = [level, state, info] + ([] if isinstance(priority, str) else [priority])
+        numbers = [level, state, info] + (
+            [] if isinstance(priority, str) else [priority]
+        )
         if any(
             isinstance(x, bool) or (isinstance(x, float) and x % 1 != 0)
             for x in numbers
         ):
-            raise ValueError("shutter level, state, priority, and info must be integers")
+            raise ValueError(
+                "shutter level, state, priority, and info must be integers"
+            )
         lvl = int(level)
         if not (0 <= lvl <= 100 or lvl == _SHUTTER_LEVEL_UNKNOWN):
             raise ValueError("shutter level must be between 0 and 100 or 255")
@@ -605,9 +637,7 @@ class OWNAutomationCommand(OWNCommand):
             if lvl == _SHUTTER_LEVEL_UNKNOWN
             else f"position at {lvl}%"
         )
-        message._human_readable_log = (
-            f"Reporting shutter {message._where}{message._interface_log_text} {position} (state {st})."
-        )
+        message._human_readable_log = f"Reporting shutter {message._where}{message._interface_log_text} {position} (state {st})."
         return message
 
     @staticmethod
