@@ -628,6 +628,23 @@ class OWNEnergyEvent(OWNEvent):
         return self._human_readable_log
 
 
+# DIMENSION 52 with a four-digit year: ``*#18*WHERE*52#2026#10##`` and the
+# value-field form ``*#18*WHERE*52#2026#10*100##`` crash F460 020012 and F461
+# 020011 after the telegram went out (findings/audit-crash-frames.md;
+# tools/expected_divergences.yaml ``crash_frames``); the two-digit form
+# ``*#18*WHERE*52#26#9##`` does not. No builder emits the four-digit form; the
+# send layer refuses it when it is handed in as a raw frame (same pattern as
+# ``is_who4_dimension_22_crash_form``).
+_WHO18_DIM52_FOUR_DIGIT_YEAR = re.compile(
+    r"^\*#18\*[^*]+\*52#[0-9]{4}#[0-9]{1,2}(?:\*[^*]*)?##$", re.ASCII
+)
+
+
+def is_who18_dimension_52_four_digit_year(frame: object) -> bool:
+    """True for a WHO 18 DIMENSION 52 frame carrying a four-digit year (crashes F460 / F461)."""
+    return bool(_WHO18_DIM52_FOUR_DIGIT_YEAR.match(str(frame)))
+
+
 # Energy Management actuator address ``7N#0``, N = 1..255, no leading zero
 # (WHO 18 PDF WHERE table, "7N#0  N=[1-255]  Energy Management Actuators";
 # also Encyclopedia who-18 addressing.md).

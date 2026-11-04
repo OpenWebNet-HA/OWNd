@@ -84,6 +84,7 @@ from .door_entry import (
     PTZ_MOVE_UP,
 )
 from .energy import (
+    is_who18_dimension_52_four_digit_year,
     ENERGY_ACTUATOR_ENABLE,
     ENERGY_ACTUATOR_END_FORCING,
     ENERGY_ACTUATOR_FORCE,
@@ -341,6 +342,7 @@ __all__ = [
     "_zone_state",
     "_zone_state_text",
     "is_who4_dimension_22",
+    "is_who18_dimension_52_four_digit_year",
     "is_who4_dimension_22_crash_form",
     "OWNHeatingEvent",
     "OWNHeatingCommand",
