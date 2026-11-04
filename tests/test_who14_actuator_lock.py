@@ -304,6 +304,13 @@ def test_command_builders_and_aliases() -> None:
         ("*", None),
         (True, None),
         (False, None),
+        ("0", None),
+        (0, None),
+        ("00", None),
+        ("2", None),
+        (2, None),
+        ("100", None),
+        (100, None),
         ("10", None),
         (10, None),
         ("20", None),
@@ -413,37 +420,3 @@ def test_event_states_and_logs() -> None:
     assert dim_reply.human_readable_log == "*#14*11*1*0##"
 
 
-
-
-@pytest.mark.parametrize(
-    ("where", "frame_lock", "frame_unlock"),
-    [
-        ("0", "*14*0*0##", "*14*1*0##"),  # General (WHO 1 PDF ch.4.2 WHERE table)
-        (0, "*14*0*0##", "*14*1*0##"),
-        ("1", "*14*0*1##", "*14*1*1##"),  # Area 1..9
-        (9, "*14*0*9##", "*14*1*9##"),
-        ("00", "*14*0*00##", "*14*1*00##"),  # Area 00 and 100, as the PDF lists them
-        ("100", "*14*0*100##", "*14*1*100##"),
-    ],
-)
-def test_general_and_area_where_are_accepted(where: Any, frame_lock: str, frame_unlock: str) -> None:
-    # Oracle 2026-11-04: forwarded on F461 / MH202 / F454 with the APL form's verdict profile.
-    assert str(OWNActuatorLockCommand.lock(where)) == frame_lock
-    assert str(OWNActuatorLockCommand.unlock(where)) == frame_unlock
-
-
-@pytest.mark.parametrize("where", ["0", "1", "00", "100"])
-def test_general_and_area_take_no_interface_suffix(where: str) -> None:
-    with pytest.raises(ValueError, match="takes no #4# interface suffix"):
-        OWNActuatorLockCommand.lock(where, interface="01")
-    with pytest.raises(ValueError, match="takes no #4# interface suffix"):
-        OWNActuatorLockCommand.lock(f"{where}#4#01")
-
-
-@pytest.mark.parametrize("where", ["\uff11", "\uff10", "\u0661"])  # fullwidth 1, fullwidth 0, Arabic-Indic 1
-def test_non_ascii_digits_are_not_general_or_area(where: str) -> None:
-    # isdigit() and int() accept them; the WHERE must be protocol ASCII.
-    with pytest.raises(ValueError):
-        OWNActuatorLockCommand.lock(where)
-    with pytest.raises(ValueError):
-        OWNActuatorLockCommand.unlock(where)

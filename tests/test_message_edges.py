@@ -665,7 +665,7 @@ class TestSceneEdgeCases:
         assert isinstance(cg, OWNSceneCommand)
         assert cg.action is None
         assert cg.scenario is None
-        assert cg.human_readable_log == "Requesting global scene status (undocumented *#17## form)."
+        assert cg.human_readable_log == "Requesting global scene status."
 
         c_unknown = OWNSceneCommand("*17*99*10##")
         assert c_unknown.action == 99

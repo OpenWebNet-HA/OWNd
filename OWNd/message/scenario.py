@@ -11,35 +11,21 @@ from .base import (
 )
 
 
-# WHO 0 WHAT ranges (Encyclopedia who-0-scenarios/README.md "WHAT reference"):
-# 1..16 activate a stored scenario on an F420 or a 3456 IR interface, 17..20
-# only on a 3456; 40..46 are F420 programming / central-unit states. WHAT 0
-# and anything above 20 are not defined; the scenario library's 1..31 API
-# assertions "do not extend the published F420 or 3456 capacities"
-# ("Historical touchscreen behavior"; ENCY_CONFIRM LS-S1).
-SCENARIO_MAX_F420 = 16
-SCENARIO_MAX_3456 = 20
-
-SCENARIO_AVAILABILITY_F420_AND_3456 = "F420 and 3456"
-SCENARIO_AVAILABILITY_3456 = "3456"
-
 
 class OWNScenarioEvent(OWNEvent):
     """WHO 0 scenario activation and F420 programming / central-unit events.
 
-    ``*0*N*WHERE##`` with ``N`` 1..16 (F420 and 3456) or 17..20 (3456 only) is
-    a scenario activation; WHAT 40..46 are the F420 programming vocabulary and
-    central-unit states (who-0-scenarios/README.md "WHAT reference", "Event
-    model"). Any other WHAT (``0``, ``21``..) is reported as unknown, not as a
-    launch.
+    The published table (who-0-scenarios/README.md "WHAT reference") lists
+    ``*0*N*WHERE##`` with ``N`` 1..16 (F420 and 3456) and 17..20 (3456 only),
+    and WHAT 40..46 as the F420 programming vocabulary and central-unit states.
+    Decoding is unchanged: any WHAT outside 40..46 is reported as a launch of
+    that number, pending committed plant traces.
     """
 
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
-        self._scenario: int | None = None
-        self._unknown_what: int | None = None
-        self._availability: str | None = None
+        self._scenario = self._what
         self._control_panel = self._where
         self._programming_scenario: int | None = None
         self._event: str | None = None
@@ -47,8 +33,7 @@ class OWNScenarioEvent(OWNEvent):
         # (who-0-scenarios/README.md "Start recording - WHAT 40#X" ..
         # "Lock and unlock - WHAT 43 / 44"; libqtdevices scenario_device.cpp:27-35,
         # 93-156; mhs1 bt_luci accepts *0*40#N*W##, 41#N, 42, 42#N, 43, 44 and
-        # emits 40#N..46#N). The ``event`` values are kept stable; the log uses
-        # the page's wording.
+        # emits 40#N..46#N).
         _programming = {
             40: "programming started",
             41: "programming stopped",
@@ -58,81 +43,32 @@ class OWNScenarioEvent(OWNEvent):
             45: "unavailable",
             46: "memory full",
         }
-        module = f"Scenario module {self._control_panel}"
-        unit = f"Scenario central unit {self._control_panel}"
         if self._what is None:
             # Status request (*#0*W##, *#0##): no scenario and no event, as
             # OWNAuxEvent does for a bare *#9##.
-            pass
+            self._scenario = None
         elif self._what in _programming:
             self._event = _programming[self._what]
+            self._scenario = None
             # The grammar only admits digits in a WHAT parameter, so int()
             # cannot fail here.
             self._programming_scenario = (
                 int(self._what_param[0]) if self._what_param else None
             )
-            target = self._programming_scenario
-            if self._what == 40:
-                self._human_readable_log = (
-                    f"{module}: recording of scenario {target} started."
-                    if target is not None
-                    else f"{module}: recording started (no scenario selected)."
-                )
-            elif self._what == 41:
-                self._human_readable_log = (
-                    f"{module}: recording of scenario {target} ended."
-                    if target is not None
-                    else f"{module}: recording ended (no scenario selected)."
-                )
-            elif self._what == 42:
-                self._human_readable_log = (
-                    f"{module}: scenario {target} erased."
-                    if target is not None
-                    else f"{module}: all scenarios erased."
-                )
-            else:
-                # 43..46 describe the central unit, not a stored scenario
-                # ("Lock and unlock - WHAT 43 / 44"): "locked", "unlocked",
-                # "unavailable", "memory full".
-                suffix = f" (scenario {target})" if target is not None else ""
-                state = (
-                    "memory is full" if self._what == 46 else f"is {self._event}"
-                )
-                self._human_readable_log = f"{unit} {state}{suffix}."
-        elif 1 <= self._what <= SCENARIO_MAX_3456:
-            self._scenario = self._what
-            self._event = "launched"
-            self._availability = (
-                SCENARIO_AVAILABILITY_F420_AND_3456
-                if self._what <= SCENARIO_MAX_F420
-                else SCENARIO_AVAILABILITY_3456
+            _target = (
+                f"scenario {self._programming_scenario}"
+                if self._programming_scenario is not None
+                else "all scenarios"
             )
-            note = (
-                ""
-                if self._what <= SCENARIO_MAX_F420
-                else " (3456 IR interface only)"
-            )
-            self._human_readable_log = f"Scenario {self._scenario} from control panel {self._control_panel} has been launched{note}."  # pylint: disable=line-too-long
+            self._human_readable_log = f"Scenario module {self._control_panel}: {_target} {self._event}."  # pylint: disable=line-too-long
         else:
-            self._unknown_what = self._what
-            self._human_readable_log = f"Scenario module {self._control_panel} reports unknown WHAT {self._unknown_what}."  # pylint: disable=line-too-long
+            self._event = "launched"
+            self._human_readable_log = f"Scenario {self._scenario} from control panel {self._control_panel} has been launched."  # pylint: disable=line-too-long
 
     @property
     def scenario(self) -> int | None:
-        """Activated scenario number (WHAT 1..20), None for every other frame."""
+        """Activated scenario number (any WHAT outside 40..46), None for a programming / status frame."""
         return self._scenario
-
-    @property
-    def scenario_availability(self) -> str | None:
-        """``"F420 and 3456"`` for WHAT 1..16, ``"3456"`` for WHAT 17..20, else None
-        (who-0-scenarios/README.md "WHAT reference")."""
-        return self._availability
-
-    @property
-    def unknown_what(self) -> int | None:
-        """The raw WHAT when it is neither an activation (1..20) nor a
-        programming / central-unit state (40..46), else None."""
-        return self._unknown_what
 
     @property
     def control_panel(self) -> str | None:
@@ -140,9 +76,7 @@ class OWNScenarioEvent(OWNEvent):
 
     @property
     def event(self) -> str | None:
-        """'launched' for WHAT 1-20 (1..16 F420 and 3456, 17..20 3456 only), the
-        programming / central-unit state for WHAT 40-46, None for a status
-        request or an unknown WHAT (see unknown_what)."""
+        """'launched' for WHAT 1-31, the programming/lock state for WHAT 40-46, None for a status request."""
         return self._event
 
     @property
@@ -320,29 +254,10 @@ class OWNSceneCommand(OWNCommand):
             self._human_readable_log = f"Enabling scene {self._scene}."
         elif self._action == 4:
             self._human_readable_log = f"Disabling scene {self._scene}."
-        elif self._message_type == "STATUS_REQUEST":
-            # *#17*WHERE## ("Status request"); the bare *#17## is undocumented.
-            self._human_readable_log = (
-                f"Requesting status of scene {self._scene}."
-                if self._where
-                else "Requesting global scene status (undocumented *#17## form)."
-            )
-        elif self._dimension is not None:
-            # DIMENSION 40 / 41 are MyHOME_Suite implementation-only operations
-            # ("MyHOME_Suite extended scenario-programmer operations"): a write
-            # or a read of them is not the published status request.
-            if self.is_dimension_writing:
-                self._human_readable_log = (
-                    f"Writing scene {self._scene} dimension {self._dimension}."
-                )
-            elif self.is_dimension_request:
-                self._human_readable_log = (
-                    f"Requesting scene {self._scene} dimension {self._dimension}."
-                )
-            else:
-                self._human_readable_log = (
-                    f"Scene {self._scene} dimension {self._dimension} report."
-                )
+        elif self._action is None and self._where:
+            self._human_readable_log = f"Requesting status of scene {self._scene}."
+        elif self._action is None and not self._where:
+            self._human_readable_log = "Requesting global scene status."
 
     @property
     def scenario(self) -> str | None:

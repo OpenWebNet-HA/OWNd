@@ -28,10 +28,6 @@ LIGHTING_STATE_ANOMALY = 19
 # Legacy coarse-only dimmer transition-speed byte (0xF0 = 240) reported in WHO 1
 # DIMENSION 1 (*#1*WHERE*1*LEVEL100*240##) by pre-09W29 BTicino F414 dimmers
 # that only actuate live output on coarse WHAT 2..10 commands (MyHOME#767).
-# It is learned from DIMENSION 1 only: the F414 capture is a DIMENSION 1 reply
-# (golden ``light.dim.reply.level.30.speed240.61``) and the Encyclopedia records
-# that a DIMENSION 4 request to a classic F414 ends in NACK
-# (who-1-lighting/dimensions.md "DIMENSION 4 - 100-level status").
 DIMMER_SPEED_COARSE_ONLY = 240
 
 # Published LEVEL100 field (who-1-lighting/dimensions.md "Value fields"):
@@ -49,17 +45,6 @@ SPEED_MAX = 255
 # WHAT 20..29 = 0.5..5 s in 0.5 s steps.
 BLINK_PERIOD_MIN = 0.5
 BLINK_PERIOD_MAX = 5.0
-
-# Relative dimmer steps (who-1-lighting/what.md "Switching and levels": WHAT 30
-# "Increase one level", 31 "Decrease one level", 30#LEVELS#SPEED / 31#LEVELS#SPEED).
-# A step is a command, not a state: a live F461 2.0.11 + F418 answered
-# *1*30*0010## / *1*31*0010## with separate *1*8*0010## / *1*7*0010## preset
-# frames (reports/data/live_f418_0010_2026-11-03/lab_probe_output.txt).
-_STEP_WHATS = (30, 31)
-
-# DIMENSION 2 report the TS10_1_0_23 touchscreen ignores as an unusable timer
-# (who-1-lighting/dimensions.md "Historical timer handling").
-_UNUSABLE_TIMER_REPORT = (255, 255, 255)
 
 
 def _int_field(values: list[str], index: int) -> int | None:
@@ -232,7 +217,7 @@ def is_coarse_dimmer_where(
 ) -> bool:
     """Return True if ``where`` reported the 240 (0xF0) coarse-only dimmer speed.
 
-    Learning is reactive: a WHO 1 ``DIMENSION 1`` reply (never ``DIMENSION 4``) carrying
+    Learning is reactive: a WHO 1 ``DIMENSION 1`` or ``DIMENSION 4`` reply carrying
     ``transition == 240`` (``*#1*WHERE*1*LEVEL100*240##``) must be observed first
     (or registered via :func:`register_coarse_dimmer_where`).
 
@@ -305,11 +290,8 @@ class OWNLightingEvent(OWNEvent):
         self._brightness: int | None = None
         self._brightness_preset: int | None = None
         self._transition: int | None = None
-        self._levels: int | None = None
         self._status_level: int | None = None
         self._status_speed: int | None = None
-        self._working_time: int | None = None
-        self._max_working_time: int | None = None
         self._is_coarse_dimmer: bool = False
         self._timer: float | None = None
         self._blinker: float | None = None
@@ -338,21 +320,15 @@ class OWNLightingEvent(OWNEvent):
 
         if self._what is not None and self._what != 1000:
             self._state = self._what
-            # WHAT parameters are digits by grammar ((?:#\d+)*), so int() cannot fail.
-            params = [int(p) for p in self._what_param]
 
-            if self._state in (0, 1):  # Light off / on, optionally 0#SPEED / 1#SPEED
-                # what.md "Switching and levels": the parameterized forms switch
-                # using the requested transition speed and "must not be reduced
-                # to their leading numeric WHAT".
-                verb = "off" if self._state == 0 else "on"
-                if params:
-                    self._transition = params[0]
-                    self._human_readable_log = f"Light {self._where}{self._interface_log_text} is switched {verb} with transition speed {self._transition}."  # pylint: disable=line-too-long
-                else:
-                    self._human_readable_log = (
-                        f"Light {self._where}{self._interface_log_text} is switched {verb}."
-                    )
+            if self._state == 0:  # Light off
+                self._human_readable_log = (
+                    f"Light {self._where}{self._interface_log_text} is switched off."
+                )
+            elif self._state == 1:  # Light on
+                self._human_readable_log = (
+                    f"Light {self._where}{self._interface_log_text} is switched on."
+                )
             elif self._state > 1 and self._state < 11:  # Light dimmed to preset value
                 self._brightness_preset = self._state
                 if is_coarse_dimmer_where(full_where):
@@ -394,20 +370,8 @@ class OWNLightingEvent(OWNEvent):
                 self._blinker = 0.5 * (self._state - 19)
                 self._human_readable_log = f"Light {self._where}{self._interface_log_text} is blinking every {self._blinker}s."
             elif self._state == 30 or self._state == 31:  # One level up/down
-                # what.md "Switching and levels": 30#LEVELS#SPEED / 31#LEVELS#SPEED
-                # change several levels at the specified speed.
                 direction = "up" if self._state == 30 else "down"
-                if params:
-                    self._levels = params[0]
-                    self._transition = params[1] if len(params) > 1 else None
-                    speed_text = (
-                        f" at speed {self._transition}"
-                        if self._transition is not None
-                        else ""
-                    )
-                    self._human_readable_log = f"Light {self._where}{self._interface_log_text} is dimmed {direction} by {self._levels} levels{speed_text}."  # pylint: disable=line-too-long
-                else:
-                    self._human_readable_log = f"Light {self._where}{self._interface_log_text} is dimmed {direction} one level."  # pylint: disable=line-too-long
+                self._human_readable_log = f"Light {self._where}{self._interface_log_text} is dimmed {direction} one level."  # pylint: disable=line-too-long
             elif self._state == 34:  # Motion detected
                 self._type = MESSAGE_TYPE_MOTION
                 self._motion = True
@@ -438,8 +402,8 @@ class OWNLightingEvent(OWNEvent):
             sensor = f"Light/motion sensor {self._where}{self._interface_log_text}"
             if self._dimension == 1:  # Level and transition speed
                 # dimensions.md "DIMENSION 1 - level and speed":
-                # *#1*WHERE*1*LEVEL100*SPEED##. The speed is the only field the
-                # coarse-only F414 sentinel (240) is learned from.
+                # *#1*WHERE*1*LEVEL100*SPEED##; the speed carries the coarse-only
+                # F414 sentinel (240), as does the DIMENSION 4 trailing value.
                 self._brightness = self._decode_level100(1)
                 if self._brightness is not None:
                     # Some gateways omit the transition speed in the reply.
@@ -450,33 +414,29 @@ class OWNLightingEvent(OWNEvent):
                         )
                         register_coarse_dimmer_where(full_where, self._is_coarse_dimmer)
             elif self._dimension == 4:  # 100-level status with ON/OFF speed
-                # dimensions.md "DIMENSION 4 - 100-level status": a distinct
-                # state surface whose trailing value differs from DIMENSION 1
-                # at the same LEVEL100 (F418U2 through an MH202), so it gets
-                # its own field (status_speed) and is never read as the F414
-                # coarse sentinel (learned from the DIMENSION 1 speed slot
-                # only). It is also kept on ``transition``, as before, so a
-                # consumer that read the trailing value there keeps working
-                # (MyHOME asserts ``transition`` on DIMENSION 4 replies).
-                # The LEVEL100 field is the published level: an F454 answers a
-                # DIMENSION 1 request while OFF with this frame (golden
-                # light.dim.reply.level_transition.13, MyHOME#466), so it still
-                # carries brightness / is_on.
+                # dimensions.md "DIMENSION 4 - 100-level status": the same
+                # LEVEL100 level field as DIMENSION 1 (an F454 answers a
+                # DIMENSION 1 request while OFF with this frame, golden
+                # light.dim.reply.level_transition.13, MyHOME#466) plus a
+                # trailing ON/OFF speed, exposed as status_level / status_speed
+                # and, as before, on transition; the coarse-only F414 sentinel
+                # (240) is learned from it exactly as from DIMENSION 1.
                 self._brightness = self._decode_level100(4)
                 if self._brightness is not None:
                     self._status_level = self._brightness
                     self._status_speed = _int_field(values, 1)
                     self._transition = self._status_speed
+                    if self._transition is not None:
+                        self._is_coarse_dimmer = (
+                            self._transition == DIMMER_SPEED_COARSE_ONLY
+                        )
+                        register_coarse_dimmer_where(full_where, self._is_coarse_dimmer)
             elif self._dimension == 2:  # Time value
                 # dimensions.md "DIMENSION 2 - temporization":
                 # *#1*WHERE*2*HOURS*MINUTES*SECONDS## (three fields).
                 fields = tuple(_int_field(values, i) for i in range(3))
                 if None in fields:
                     self._human_readable_log = f"{subject} timer report '{'*'.join(values)}' is incomplete (HOURS*MINUTES*SECONDS expected)."  # pylint: disable=line-too-long
-                elif fields == _UNUSABLE_TIMER_REPORT:
-                    # "Historical timer handling": the touchscreen ignores
-                    # 255*255*255 as unusable timer state.
-                    self._human_readable_log = f"{subject} reports no usable timer (255*255*255)."
                 else:
                     hours, minutes, seconds = (int(f) for f in fields if f is not None)
                     self._timer = hours * 3600 + minutes * 60 + seconds
@@ -511,22 +471,6 @@ class OWNLightingEvent(OWNEvent):
                         hours=hours, minutes=minutes, seconds=seconds
                     )
                     self._human_readable_log = f"{sensor} has timeout set to {self._motion_timeout}."
-            elif self._dimension == 8:  # Accumulated lamp working time
-                # dimensions.md "DIMENSION 8 - working time":
-                # *#1*WHERE*8*WORKING_TIME## (hours, 1..100000).
-                self._working_time = _int_field(values, 0)
-                if self._working_time is None:
-                    self._human_readable_log = f"{subject} working time value is missing."
-                else:
-                    self._human_readable_log = f"{subject} has been working for {self._working_time} hours."  # pylint: disable=line-too-long
-            elif self._dimension == 9:  # Maximum lamp working time
-                # dimensions.md "DIMENSION 9 - maximum working time":
-                # *#1*WHERE*9*WORKING_TIME## (hours).
-                self._max_working_time = _int_field(values, 0)
-                if self._max_working_time is None:
-                    self._human_readable_log = f"{subject} maximum working time value is missing."
-                else:
-                    self._human_readable_log = f"{subject} maximum working time is {self._max_working_time} hours."  # pylint: disable=line-too-long
             elif self._dimension == 12:  # HSV Color (BTicino F429 DALI)
                 if len(self._dimension_value) >= 3:
                     try:
@@ -565,21 +509,19 @@ class OWNLightingEvent(OWNEvent):
                 self._human_readable_log = f"Light/motion sensor {self._where}{self._interface_log_text} has sent an unknown dimension {self._dimension}."
 
     def _decode_level100(self, dimension: int) -> int | None:
-        """Decode the LEVEL100 field of a DIMENSION 1 / 4 report into 0..100 %.
+        """Decode the LEVEL100 field of a DIMENSION 1 / 4 report into a percentage.
 
-        dimensions.md "Value fields": ``100`` = OFF, ``101..199`` = 1 %..99 %,
-        ``200`` = maximum; LEVEL100 "is not a literal percentage field and must
-        not be decoded as 100%..200%", so a value outside 100..200 yields
-        ``None`` (``is_on`` stays ``None``) and an empty field yields ``None``
-        with the state untouched. On a valid level ``_state`` becomes 0 / 1.
+        The published field (dimensions.md "Value fields") is ``100`` = OFF,
+        ``101..199`` = 1 %..99 %, ``200`` = maximum; the value is decoded as
+        ``level - 100`` as before, without a range check (the domain is
+        documented here only, pending committed plant traces). An empty field
+        yields ``None`` with the state untouched instead of raising. On a value
+        ``_state`` becomes 0 / 1.
         """
         subject = f"Light {self._where}{self._interface_log_text}"
         level = _int_field(self._dimension_value, 0)
         if level is None:
             self._human_readable_log = f"{subject} DIMENSION {dimension} level value is missing."
-            return None
-        if not LEVEL100_MIN <= level <= LEVEL100_MAX:
-            self._human_readable_log = f"{subject} reported level {level} outside 100..200 in DIMENSION {dimension}; not a LEVEL100 percentage."  # pylint: disable=line-too-long
             return None
         brightness = level - LEVEL100_MIN
         if brightness == 0:
@@ -611,18 +553,10 @@ class OWNLightingEvent(OWNEvent):
 
     @property
     def transition(self) -> int | None:
-        """Trailing speed value of a DIMENSION 1 report (``*#1*W*1*LEVEL100*SPEED##``),
-        of a DIMENSION 4 report (``*#1*W*4*LEVEL100*SPEED##``, also exposed as
-        :attr:`status_speed`) or of a parameterized WHAT (``0#SPEED``, ``1#SPEED``,
-        ``30#LEVELS#SPEED``, ``31#LEVELS#SPEED``); ``None`` otherwise. Use
-        :attr:`status_speed` to tell the DIMENSION 4 value apart (dimensions.md
-        "DIMENSION 4"); the F414 coarse sentinel is only learned from DIMENSION 1."""
+        """Trailing speed value of a DIMENSION 1 report (``*#1*W*1*LEVEL100*SPEED##``)
+        or of a DIMENSION 4 report (``*#1*W*4*LEVEL100*SPEED##``, also exposed as
+        :attr:`status_speed`); ``None`` otherwise."""
         return self._transition
-
-    @property
-    def levels(self) -> int | None:
-        """LEVELS of a ``30#LEVELS#SPEED`` / ``31#LEVELS#SPEED`` step, else ``None``."""
-        return self._levels
 
     @property
     def status_level(self) -> int | None:
@@ -641,58 +575,24 @@ class OWNLightingEvent(OWNEvent):
         ``2`` in DIMENSION 4 at the same level, and the Encyclopedia asks not to
         collapse the two secondary values (who-1-lighting/dimensions.md
         "DIMENSION 4 - 100-level status"). The same value is also on
-        :attr:`transition` for backward compatibility; it never feeds the
-        coarse-dimmer learning.
+        :attr:`transition` for backward compatibility and, as before, feeds the
+        coarse-only dimmer learning (240).
         """
         return self._status_speed
 
     @property
-    def working_time(self) -> int | None:
-        """Accumulated lamp working time in hours (DIMENSION 8), else ``None``."""
-        return self._working_time
-
-    @property
-    def max_working_time(self) -> int | None:
-        """Maximum lamp working time in hours (DIMENSION 9), else ``None``."""
-        return self._max_working_time
-
-    @property
     def is_coarse_dimmer(self) -> bool:
-        """True if this DIMENSION 1 report carries the coarse-only dimmer speed (240 / 0xF0)."""
+        """True if this event indicates a coarse-only dimmer (speed 240 / 0xF0)."""
         return self._is_coarse_dimmer
 
     @property
     def is_on(self) -> bool | None:
         """True/False when the on/off state is known, None otherwise (e.g. a
         motion or end-of-movement event, a reply carrying only a dimension such as illuminance
-        or a timer, an anomaly state, a relative step (see :attr:`is_step`), or a WHAT
-        outside the published table; see unknown_state).
-
-        A ``WHAT 30`` / ``31`` step (``*1*30*WHERE##``, ``30#LEVELS#SPEED``,
-        ``31#LEVELS#SPEED``; what.md "Switching and levels") is a relative
-        command, not a state: a live F461 2.0.11 with an F418 at ``0010``
-        answered ``*1*30*0010##`` (53 % -> 63 %) with a separate ``*1*8*0010##``
-        and ``*1*31*0010##`` (63 % -> 47 %) with ``*1*7*0010##``; the resulting
-        preset, not the step, carries the state (``lab_probe_output.txt``,
-        2026-11-03). It used to be ``True``.
-        """
-        if (
-            self._state is None
-            or self._state in _STEP_WHATS
-            or self._motion
-            or self._motion_end
-            or self._is_anomaly
-        ):
+        or a timer, an anomaly state, or a WHAT outside the published table; see unknown_state)."""
+        if self._state is None or self._motion or self._motion_end or self._is_anomaly:
             return None
         return 0 < self._state < 32
-
-    @property
-    def is_step(self) -> bool:
-        """True for a relative dimmer step, ``WHAT 30`` (up) or ``31`` (down),
-        with or without ``#LEVELS#SPEED`` parameters (see :attr:`levels`,
-        :attr:`transition`); such a frame has no on/off state (:attr:`is_on`
-        ``None``)."""
-        return self._state in _STEP_WHATS
 
     @property
     def is_anomaly(self) -> bool:
@@ -1069,18 +969,11 @@ class OWNLightingCommand(OWNCommand):
         cls, where: str | int, delta: int | None = None, speed: int | None = None
     ) -> OWNLightingCommand:
         """``*1*30*WHERE##`` (one level up, what.md "Switching and levels"), or
-        ``*1*30#delta#speed*WHERE##`` with ``delta`` 1..100 and ``speed``
-        0..255 (``30#LEVELS#SPEED``, the dimmer 100 form of libqtdevices
-        lighting_device.cpp:230-233, 409-412).
-
-        ``delta`` is kept at 1..100 on live evidence: an F461 2.0.11 with an
-        F418 at ``0010`` accepts ``#N`` as N percent levels, ``*1*30#5#0*0010##``
-        moved 47 % -> 52 % and ``*1*30#50#0*0010##`` moved 52 % -> 100 %
-        (``lab_probe_output.txt``, 2026-11-03; firmware-observed on one
-        gateway). The public WHO 1 PDF lists ``dimmerLevel10 2..10`` for this
-        field; the wider range is libqtdevices' dimmer100 use of it, kept here
-        because the gateway applied it. An out-of-range ``delta`` or ``speed``
-        raises ``ValueError``.
+        ``*1*30#delta#speed*WHERE##`` with ``delta`` 1..100 and ``speed`` 0..255
+        (``30#LEVELS#SPEED``, the dimmer 100 form of libqtdevices
+        lighting_device.cpp:230-233, 409-412; the public WHO 1 PDF lists
+        ``dimmerLevel10 2..10`` for this field). Out-of-range values raise
+        ``ValueError``.
         """
         return cls._step(where, 30, "up", delta, speed)
 
@@ -1089,14 +982,11 @@ class OWNLightingCommand(OWNCommand):
         cls, where: str | int, delta: int | None = None, speed: int | None = None
     ) -> OWNLightingCommand:
         """``*1*31*WHERE##`` (one level down, what.md "Switching and levels"), or
-        ``*1*31#delta#speed*WHERE##`` with ``delta`` 1..100 and ``speed``
-        0..255 (``31#LEVELS#SPEED``, the dimmer 100 form of libqtdevices
-        lighting_device.cpp:235-238, 414-417).
-
-        Same bounds and evidence as :meth:`step_up`: the live F461 2.0.11 +
-        F418 run took ``#5`` and ``#50`` as percent levels (``*1*31*0010##``
-        itself moved 63 % -> 47 %, echoed as ``*1*7*0010##``); the public PDF
-        lists ``dimmerLevel10 2..10``, the wider range is libqtdevices' dimmer100 use.
+        ``*1*31#delta#speed*WHERE##`` with ``delta`` 1..100 and ``speed`` 0..255
+        (``31#LEVELS#SPEED``, the dimmer 100 form of libqtdevices
+        lighting_device.cpp:235-238, 414-417; the public WHO 1 PDF lists
+        ``dimmerLevel10 2..10`` for this field). Out-of-range values raise
+        ``ValueError``.
         """
         return cls._step(where, 31, "down", delta, speed)
 
@@ -1166,7 +1056,7 @@ class OWNLightingCommand(OWNCommand):
         ``where`` (scoped to ``gateway`` when provided, or using the unscoped
         all-agree rule when ``gateway=None``). If ``where`` has reported the
         legacy ``SPEED = 240`` (``0xF0``) coarse-only sentinel in a prior
-        ``DIMENSION 1`` reply — or if ``coarse=True`` is passed explicitly —
+        ``DIMENSION 1``/``4`` reply — or if ``coarse=True`` is passed explicitly —
         emits ``*1*0*WHERE##`` for ``_level <= 0`` and ``*1*2..10*WHERE##`` via
         :func:`percent_to_brightness_preset` for ``1..100 %``. Otherwise emits the
         standard ``DIMENSION 1`` write ``*#1*WHERE*#1*<100+level>*<speed>##``.
