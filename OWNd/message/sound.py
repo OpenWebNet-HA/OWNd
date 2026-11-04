@@ -1,18 +1,9 @@
-"""WHO 16 Sound System and WHO 22 Sound Diffusion events and commands, plus the WHO 7 video stream commands.
-
-WHO 16 is the earlier Sound System dialect (Encyclopedia
-``who-16-sound-system``: amplifiers ``01..99``, sources ``101..109``, all
-sources ``100``); WHO 22 is the later Sound Diffusion / Multimedia dialect
-(``who-22-sound-diffusion``: tagged targets ``2#S``, ``3#A#P``, ``4#A``,
-``5#...``, ``6``). They are separate dialects and are not translated by
-numeric coincidence. ``OWNAVCommand`` opens and closes a WHO 7 video stream.
-"""
+"""WHO 16: Sound diffusion and audio/video door entry events and commands."""
 
 from __future__ import annotations
 
 import math
 import re
-import warnings
 
 from .base import (
     OWNCommand,
@@ -39,69 +30,6 @@ def _validate_frequency_step(step: object) -> int:
     return s
 
 
-# WHO 22 modulation (Encyclopedia who-22-sound-diffusion#core-parameters).
-_WHO22_BAND_NAMES = {1: "FM", 2: "AM-LW", 3: "AM-MW", 4: "AM-SW"}
-
-
-def _who22_frequency_khz(band: int | None, raw: int) -> int | None:
-    """Return the kHz value of a WHO 22 dimension 5 / 11 `FREQUENCY` field, or ``None``.
-
-    FM (modulation 1) is reported in 10 kHz units by an MH200N / F454 and in
-    100 kHz units by a MyHomeServer1; the two FM ranges (8750..10800 and
-    875..1080) do not overlap, so the value selects the unit, and a value in
-    neither range is not a frequency. AM-LW / AM-MW / AM-SW (modulation 2 /
-    3 / 4) are taken as kHz: an inference, the page publishes the bands but
-    no AM unit. Any other modulation fails closed.
-    """
-    if band in (2, 3, 4):
-        return raw if raw > 0 else None
-    if band == 1:
-        return next((v for v in (raw * 10, raw * 100) if 87500 <= v <= 108000), None)
-    return None
-
-
-def _is_who22_preset(preset: int) -> bool:
-    """True for a published WHO 22 equalizer preset: 2..11 built in, 16..25 user defined."""
-    return 2 <= preset <= 11 or 16 <= preset <= 25
-
-
-def _who22_target_area(target: str) -> int | None:
-    """Area of a WHO 22 target: `3#AREA#POINT`, `4#AREA` or `5#3#AREA#POINT`; ``None`` for a source / `6`."""
-    parts = target.split("#")
-    if parts[0] == "3" and len(parts) == 3 and parts[1].isdigit():
-        return int(parts[1])
-    if parts[0] == "4" and len(parts) == 2 and parts[1].isdigit():
-        return int(parts[1])
-    if parts[0] == "5" and len(parts) == 4 and parts[1] == "3" and parts[2].isdigit():
-        return int(parts[2])
-    return None
-
-
-def _validate_area(area: object, where: str, target: str, default: int | None = None) -> int:
-    """Return the area of a WHO 22 power / route frame: ``area`` if given, else the area of ``target``.
-
-    The derived area is range-checked like an explicit one (``3#12#1`` is
-    refused). For a source (``2#S``) or general (``6``) target no area can be
-    derived: ``default`` is used when given (the power builders keep the
-    pre-2.0.0b13 ``0``), otherwise ``ValueError`` asks for ``area=``.
-    """
-    if area is None:
-        derived = _who22_target_area(target)
-        if derived is None:
-            if default is not None:
-                return default
-            raise ValueError(f"area is required for target '{where}': it carries no area (give area=)")
-        if not 0 <= derived <= 9:
-            raise ValueError(f"area {derived} of target '{where}' must be between 0 and 9")
-        return derived
-    if isinstance(area, bool) or not isinstance(area, (int, str)):
-        raise ValueError(f"area must be between 0 and 9, got {area!r}")
-    a = int(area)
-    if not 0 <= a <= 9:
-        raise ValueError(f"area must be between 0 and 9, got {area}")
-    return a
-
-
 
 class OWNSoundEvent(OWNEvent):
     """State reported by a WHO 16 sound source or amplifier zone."""
@@ -111,14 +39,9 @@ class OWNSoundEvent(OWNEvent):
 
         self._state = self._what
         self._zone = self._where or ""
-        # WHERE 101..109 is source 1..9 and 100 every source (Encyclopedia
-        # who-16-sound-system#where); `100` has no source number.
-        self._is_all_sources = self._zone == "100"
-        self._is_source_event = bool(re.fullmatch(r"10[0-9]", self._zone))
+        self._is_source_event = bool(re.fullmatch(r"10[1-9]", self._zone))
         self._source_id = (
-            str(int(self._zone) - 100)
-            if self._is_source_event and not self._is_all_sources
-            else None
+            str(int(self._zone) - 100) if self._is_source_event else None
         )
         # `1ES` routes the amplifiers of environment E to matrix source S.
         # Environment 0 would be `10S`, the source itself, so E starts at 1.
@@ -141,17 +64,8 @@ class OWNSoundEvent(OWNEvent):
         self._frequency_step_backward: int | None = None
         self._is_seek_up: bool = False
         self._is_seek_down: bool = False
-        self._is_source_cycle: bool = False
-        self._is_sleep: bool = False
-        self._is_sleep_off: bool = False
-        self._is_follow_me: bool = False
-        self._is_rds_start: bool = False
-        self._is_rds_stop: bool = False
-        self._high_tone_step_delta: int | None = None
 
-        if self._is_all_sources:
-            subject = "All audio sources"
-        elif self._is_source_event:
+        if self._is_source_event:
             subject = f"Audio Source {self._source_id}"
         elif self._is_routing_event:
             subject = (
@@ -206,64 +120,13 @@ class OWNSoundEvent(OWNEvent):
             self._human_readable_log = (
                 f"{subject} decrease frequency by {self._frequency_step_backward} step(s)."
             )
-        # WHATs of the who-16-sound-system#what-values table that carry no
-        # magnitude: 20 / 23 source cycle, 30 / 33 sleep, 40 sleep off,
-        # 50 / 53 Follow Me, 101 / 102 RDS start / stop (base band / stereo
-        # channel as ``is_stereo_channel``). `*16*20*100##` / `*16*23*100##`
-        # cycle the sources on the plant of reverse-engineering
-        # sound-matrix-routing.md (ENCY_CONFIRM SD-S4). The log keeps the
-        # generic "received command: N" text these WHATs had before (MyHOME
-        # tests/test_message.py pins it for `*16*30*22##`) and adds the name.
-        elif self._state in (20, 23):
-            self._is_source_cycle = True
-            self._human_readable_log = (
-                f"{subject} received command: {self._state} (cycle to the next source)."
-            )
-        elif self._state in (30, 33):
-            self._is_sleep = True
-            self._human_readable_log = f"{subject} received command: {self._state} (sleep ON)."
-        elif self._state == 40:
-            self._is_sleep_off = True
-            self._human_readable_log = f"{subject} received command: {self._state} (sleep OFF)."
-        elif self._state in (50, 53):
-            self._is_follow_me = True
-            self._human_readable_log = (
-                f"{subject} received command: {self._state} (switched ON with Follow Me)."
-            )
-        elif self._state == 101:
-            self._is_rds_start = True
-            self._human_readable_log = (
-                f"{subject} received command: {self._state} (start RDS transmission)."
-            )
-        elif self._state == 102:
-            self._is_rds_stop = True
-            self._human_readable_log = (
-                f"{subject} received command: {self._state} (stop RDS transmission)."
-            )
-        elif self._state is not None and 2001 <= self._state <= 2015:
-            self._high_tone_step_delta = self._state - 2000
-            self._human_readable_log = (
-                f"{subject} increase high tones by {self._high_tone_step_delta} step(s)."
-            )
-        elif self._state is not None and 2101 <= self._state <= 2115:
-            self._high_tone_step_delta = -(self._state - 2100)
-            self._human_readable_log = (
-                f"{subject} decrease high tones by {abs(self._high_tone_step_delta)} step(s)."
-            )
         elif self._state is not None:
             self._human_readable_log = f"{subject} received command: {self._state}."
         elif self._dimension == 1 and self._dimension_value:
-            # Volume is 0..31 (who-16-sound-system#dimension-values); the
-            # firmware oracle NACKs a write of 50 on 12/12 gateways and
-            # forwards 31 (ORACLE_CONFIRM S1), so a report outside 0..31 is
-            # not a volume.
             try:
-                level = int(self._dimension_value[0])
+                self._volume = int(self._dimension_value[0])
             except ValueError:
                 return
-            if not 0 <= level <= 31:
-                return
-            self._volume = level
             self._human_readable_log = (
                 f"Audio zone {self._zone} volume is set to {self._volume}."
             )
@@ -319,61 +182,11 @@ class OWNSoundEvent(OWNEvent):
 
     @property
     def is_source_event(self) -> bool:
-        """True for a source address: ``101..109`` (source 1..9) or ``100`` (all sources)."""
         return self._is_source_event
-
-    @property
-    def is_all_sources(self) -> bool:
-        """True for WHERE ``100``, every source (who-16-sound-system#where); ``source_id`` is ``None``."""
-        return self._is_all_sources
 
     @property
     def source_id(self) -> str | None:
         return self._source_id
-
-    @property
-    def is_stereo_channel(self) -> bool | None:
-        """``True`` for the stereo-channel WHATs 3 / 13 / 23 / 33 / 53, ``False`` for the base-band 0 / 10 / 20 / 30 / 50, else ``None``."""
-        if self._state in (3, 13, 23, 33, 53):
-            return True
-        if self._state in (0, 10, 20, 30, 50):
-            return False
-        return None
-
-    @property
-    def is_source_cycle(self) -> bool:
-        """True for WHAT 20 / 23, cycle to the next source (``*16*23*100##``)."""
-        return self._is_source_cycle
-
-    @property
-    def is_sleep(self) -> bool:
-        """True for WHAT 30 / 33, sleep on the base band / stereo channel."""
-        return self._is_sleep
-
-    @property
-    def is_sleep_off(self) -> bool:
-        """True for WHAT 40, sleep OFF."""
-        return self._is_sleep_off
-
-    @property
-    def is_follow_me(self) -> bool:
-        """True for WHAT 50 / 53, Follow Me on the base band / stereo channel."""
-        return self._is_follow_me
-
-    @property
-    def is_rds_start(self) -> bool:
-        """True for WHAT 101, start RDS transmission."""
-        return self._is_rds_start
-
-    @property
-    def is_rds_stop(self) -> bool:
-        """True for WHAT 102, stop RDS transmission."""
-        return self._is_rds_stop
-
-    @property
-    def high_tone_step_delta(self) -> int | None:
-        """Signed high-tone step (+1..+15 for WHAT 2001..2015, -1..-15 for WHAT 2101..2115)."""
-        return self._high_tone_step_delta
 
     @property
     def is_routing_event(self) -> bool:
@@ -508,14 +321,11 @@ class OWNSoundCommand(OWNCommand):
         """Build the frames routing an amplifier zone to a source.
 
         `where` is the two-digit amplifier address `EA`, where `E` (1–9) is
-        the environment and `A` (0–9) the amplifier within it: the published
-        amplifier range is `01..99` (who-16-sound-system#where,
-        #amplifier-address-structure) and routing uses the environment digit
-        only (#matrix-source-routing). Single-digit, environment 0 and
-        non-numeric addresses cannot be routed to a matrix source and raise
-        ValueError: environment 0 would spell `10S`, the source address itself.
-        `*16*3*20##` is accepted by the six WHO 16-forwarding emulated
-        gateways (ORACLE_CONFIRM S2), so amplifier `20` routes like `21..29`.
+        the environment and `A` (1–9) the amplifier within it. Single-digit,
+        environment 0, amplifier 0, and non-numeric addresses cannot be routed
+        to a matrix source and raise ValueError. Only routing rejects
+        amplifier 0: the other builders pass any `WHERE` from the published
+        `01`-`99` range through.
 
         Two frames are returned:
 
@@ -531,9 +341,9 @@ class OWNSoundCommand(OWNCommand):
         zone = str(where).strip()
         if not zone:
             raise ValueError("where must identify an audio zone")
-        if not re.fullmatch(r"[1-9][0-9]", zone, re.ASCII):
+        if not re.fullmatch(r"[1-9]{2}", zone):
             raise ValueError(
-                f"where must be a two-digit amplifier address with environment 1-9 and amplifier 0-9, got '{where}'"
+                f"where must be a two-digit amplifier address with environment and amplifier 1-9, got '{where}'"
             )
 
         source_address = 100 + source
@@ -570,18 +380,10 @@ class OWNSoundCommand(OWNCommand):
 
     @classmethod
     def set_volume(cls, where: str | int, volume: int | str) -> OWNSoundCommand:
-        """Write the amplifier volume: ``*#16*WHERE*#1*VOLUME##``, VOLUME 0..31.
-
-        Dimension 1 is ``0..31`` (who-16-sound-system#dimension-values,
-        #volume). The firmware oracle refuses ``*#16*21*#1*50##`` on 12/12
-        emulated gateways and forwards ``*#16*21*#1*31##`` on the six WHO 16
-        gateways (ORACLE_CONFIRM S1); BtExperience writes ``P * 31 / 100``
-        (ENCY_CONFIRM SD-S1).
-        """
         target = _require_non_empty_where(where)
         level = int(volume)
-        if not 0 <= level <= 31:
-            raise ValueError("volume must be between 0 and 31")
+        if not 0 <= level <= 100:
+            raise ValueError("volume must be between 0 and 100")
         message = cls(f"*#16*{target}*#1*{level}##")
         message._human_readable_log = (
             f"Setting audio zone {target} volume to {level}."
@@ -792,27 +594,13 @@ class OWNSoundDiffusionEvent(OWNEvent):
         self._frequency_khz: int | None = None
         self._frequency_mhz: float | None = None
         self._frequency_band: int | None = None
-        self._station: int | None = None
-        self._is_station_cleared: bool = False
         self._preset: int | None = None
+        self._is_preset_cleared: bool = False
         self._frequency_step: int | None = None
         self._rds_text: str | None = None
         self._is_rds_blank: bool = False
         self._source_request: int | None = None
         self._matrix_area: int | None = None
-        self._what_area: int | None = None
-        self._high_tones: int | None = None
-        self._medium_tones: int | None = None
-        self._low_tones: int | None = None
-        self._play_status: int | None = None
-        self._balance: str | None = None
-        self._sound_3d: int | None = None
-        self._loudness: bool | None = None
-        self._equalizer_group: int | None = None
-        self._equalizer_values: list[int] | None = None
-        self._tone_band: str | None = None
-        self._tone_step: int | None = None
-        self._balance_step: int | None = None
 
         target = (
             f"{self._where}#{'#'.join(self._where_param)}"
@@ -821,30 +609,35 @@ class OWNSoundDiffusionEvent(OWNEvent):
         )
         self._target_address: str = target
 
-        # Decode structured target class from target address. The frame
-        # grammar admits only `#DIGITS` WHERE parameters, so every part after
-        # the tag converts.
+        # Decode structured target class from target address
         if target:
             parts = target.split("#")
             kind = parts[0]
             if kind == "3" and len(parts) >= 3:
                 self._target_type = "speaker"
-                self._area = int(parts[1])
-                self._point = int(parts[2])
+                if parts[1].isdigit():
+                    self._area = int(parts[1])
+                if parts[2].isdigit():
+                    self._point = int(parts[2])
             elif kind == "4" and len(parts) >= 2:
                 self._target_type = "area"
-                self._area = int(parts[1])
+                if parts[1].isdigit():
+                    self._area = int(parts[1])
             elif kind == "2" and len(parts) >= 2:
                 self._target_type = "source"
-                self._source_id = int(parts[1])
+                if parts[1].isdigit():
+                    self._source_id = int(parts[1])
             elif kind == "5" and len(parts) >= 3 and parts[1] == "2":
                 self._target_type = "source"
-                self._source_id = int(parts[2])
+                if parts[2].isdigit():
+                    self._source_id = int(parts[2])
             elif kind == "5" and len(parts) >= 4 and parts[1] == "3":
                 # 5#3#AREA#POINT: zone control of a wall unit; 5#3#0#0 is every zone.
                 self._target_type = "zone_control"
-                self._area = int(parts[2])
-                self._point = int(parts[3])
+                if parts[2].isdigit():
+                    self._area = int(parts[2])
+                if parts[3].isdigit():
+                    self._point = int(parts[3])
             elif kind == "6":
                 self._target_type = "all_sources"
 
@@ -855,44 +648,18 @@ class OWNSoundDiffusionEvent(OWNEvent):
             else:
                 self._volume_step = 1
 
-        # Power and activity carry ``WHAT#MULTIMEDIA_TYPE#AREA`` (Encyclopedia
-        # who-22-sound-diffusion#what "source power uses
-        # WHAT#MULTIMEDIA_TYPE#AREA", #historical-touchscreen-syntax-and-extensions
-        # `*22*0#4#AREA*3#AREA#POINT##` / `*22*34#4#AREA*3#AREA#POINT##`,
-        # #source-activity-and-rds `WHAT 2#4#AREA`): the second parameter is
-        # the AREA, never a source. Plant captures `*22*2#4#1*5#2#1##` (area 1,
-        # source 1 in WHERE) and `*22*2#4#2*5#2#1##` (area 2) confirm it
-        # (ENCY_CONFIRM SD-D1). The source is only in WHERE (`2#S`, `5#2#S`)
-        # or in the matrix route `35#TYPE#AREA#SOURCE`.
-        # The frame grammar admits only `#DIGITS` WHAT parameters, so each
-        # present parameter converts.
-        if self._what in (0, 1, 2, 34) and len(self._what_param) >= 2:
-            self._multimedia_type = int(self._what_param[0])
-            self._what_area = int(self._what_param[1])
+        # Source named by a power-on (1#TYPE#SOURCE) or a matrix route (35#TYPE#AREA#SOURCE)
+        if self._what == 1 and len(self._what_param) >= 2 and self._what_param[1].isdigit():
+            self._source_request = int(self._what_param[1])
         elif self._what == 35 and len(self._what_param) >= 3:
-            self._multimedia_type = int(self._what_param[0])
-            self._matrix_area = int(self._what_param[1])
-            self._what_area = self._matrix_area
-            self._source_request = int(self._what_param[2])
-        elif self._what == 33 and self._what_param:
-            # WHAT 33 stores the tuned frequency as a STATION (#what,
-            # `*22*33#STATION*2#SOURCE_ID##`), not an equalizer preset.
-            self._station = int(self._what_param[0])
-        elif self._what in (36, 37, 38, 39, 40, 41):
-            # Tone steps (#what 36..41): `36#1` increments the low tones by one.
-            self._tone_band = {36: "low", 37: "low", 38: "mid", 39: "mid", 40: "high", 41: "high"}[self._what]
-            tone_step = int(self._what_param[0]) if self._what_param else 1
-            self._tone_step = tone_step if self._what % 2 == 0 else -tone_step
-        elif self._what in (42, 43):
-            # Balance steps: the published labels say 42 right / 43 left; the
-            # page records the direction as unresolved between sources
-            # (#tone-balance-and-presets), so the sign follows the labels.
-            balance_step = int(self._what_param[0]) if self._what_param else 1
-            self._balance_step = balance_step if self._what == 42 else -balance_step
-        # A WHERE without an area (`2#S`, `5#2#S`, `6`) takes the area the
-        # WHAT carries; a speaker / area WHERE keeps its own.
-        if self._area is None and self._what_area is not None:
-            self._area = self._what_area
+            if self._what_param[0].isdigit():
+                self._multimedia_type = int(self._what_param[0])
+            if self._what_param[1].isdigit():
+                self._matrix_area = int(self._what_param[1])
+            if self._what_param[2].isdigit():
+                self._source_request = int(self._what_param[2])
+        elif self._what == 33 and self._what_param and self._what_param[0].isdigit():
+            self._preset = int(self._what_param[0])
 
         # Manual tuner steps: ``*22*5#STEP*2#S##`` up, ``*22*6#STEP*2#S##`` down,
         # STEP 1..15 (Encyclopedia ownkb:chunk:r000478-r000480,
@@ -913,78 +680,30 @@ class OWNSoundDiffusionEvent(OWNEvent):
             if len(self._dimension_value) > 1 and self._dimension_value[1].isdigit():
                 self._multimedia_type = int(self._dimension_value[1])
         elif self._dimension in (5, 11) and self._dimension_value:
-            # Dimension 5 is `MODULATION*FREQUENCY`, dimension 11
-            # `MODULATION*FREQUENCY*STATION_OR_TRACK` (Encyclopedia
-            # who-22-sound-diffusion#payloads-and-concrete-operations);
-            # modulation 1 FM, 2 AM-LW, 3 AM-MW, 4 AM-SW (#core-parameters).
-            # A trailing empty field is preserved by the frame (#published-
-            # inconsistencies) and ignored here. The FM unit is 10 kHz on an
-            # MH200N / F454 and 100 kHz on a MyHomeServer1; the FM ranges
-            # (8750..10800, 875..1080) do not overlap, so the value picks the
-            # unit. The AM value is taken as kHz (inference: the page gives no
-            # AM unit, D3 of the 2026-10-28 audit).
+            # Tuner frequency after one leading value (band ID: 1 = FM, 2 = AM-LW, 3 = AM-MW, 4 = AM-SW);
+            # dimension 11 adds the station preset.
+            # The unit is 10 kHz on an MH200N / F454 and 100 kHz on MyHomeServer1;
+            # the FM ranges (8750..10800, 875..1080) do not overlap.
             expected = 2 if self._dimension == 5 else 3
-            values = list(self._dimension_value)
-            if len(values) == expected + 1 and values[-1] == "":
-                values.pop()
+            values = self._dimension_value
             if len(values) == expected and values[1].isdigit():
                 if values[0].isdigit():
                     self._frequency_band = int(values[0])
-                khz = _who22_frequency_khz(self._frequency_band, int(values[1]))
+                khz = next((v for v in (int(values[1]) * 10, int(values[1]) * 100) if 87500 <= v <= 108000), 0)
                 if khz:
                     self._frequency_khz = khz
                     self._frequency_mhz = round(khz / 1000.0, 2)
                     if self._dimension == 11 and values[2].isdigit():
                         if int(values[2]) > 0:
-                            self._station = int(values[2])
+                            self._preset = int(values[2])
                         else:
-                            # An explicit station 0: the tuner is tuned off every
-                            # stored station. ``station`` stays None as for a frame
-                            # without a station field (dimension 5).
-                            self._is_station_cleared = True
+                            # An explicit preset 0: the tuner is tuned off every
+                            # stored station. ``preset`` stays None as for a frame
+                            # without a preset field (dimension 5).
+                            self._is_preset_cleared = True
         elif self._dimension == 6 and len(self._dimension_value) == 1:
-            # Dimension 6 is the stored station / track (#dimension), 1..5 on
-            # an F500, 1..15 on an F500N, 1..999 for a track (#core-parameters).
             if self._dimension_value[0].isdigit() and int(self._dimension_value[0]) >= 1:
-                self._station = int(self._dimension_value[0])
-        elif self._dimension in (2, 3, 4) and len(self._dimension_value) == 1:
-            # `TONE_VALUE` 1..63 (#core-parameters), kept raw: the touchscreen
-            # shows `raw / 3 - 10` (#tone-balance-and-presets).
-            if self._dimension_value[0].isdigit() and 1 <= int(self._dimension_value[0]) <= 63:
-                tone = int(self._dimension_value[0])
-                if self._dimension == 2:
-                    self._high_tones = tone
-                elif self._dimension == 3:
-                    self._medium_tones = tone
-                else:
-                    self._low_tones = tone
-        elif self._dimension == 7 and len(self._dimension_value) == 1:
-            # Play status: the page defines the dimension, not its domain; kept raw.
-            if self._dimension_value[0].isdigit():
-                self._play_status = int(self._dimension_value[0])
-        elif self._dimension == 17 and len(self._dimension_value) == 1:
-            # Balance is textual: `030` is left 10, `115` right 5; the leading
-            # zero is significant (#tone-balance-and-presets).
-            if self._dimension_value[0].isdigit():
-                self._balance = self._dimension_value[0]
-        elif self._dimension == 18 and len(self._dimension_value) == 1:
-            if self._dimension_value[0].isdigit() and 0 <= int(self._dimension_value[0]) <= 10:
-                self._sound_3d = int(self._dimension_value[0])
-        elif self._dimension == 19 and len(self._dimension_value) == 1:
-            # Preset 2..11 built-in, 16..25 user defined (#core-parameters);
-            # the gaps 12..15 are ignored by the tested decoder.
-            if self._dimension_value[0].isdigit() and _is_who22_preset(int(self._dimension_value[0])):
                 self._preset = int(self._dimension_value[0])
-        elif self._dimension == 20 and len(self._dimension_value) == 1:
-            if self._dimension_value[0] in ("0", "1"):
-                self._loudness = self._dimension_value[0] == "1"
-        elif self._dimension == 21 and len(self._dimension_param) == 1 and self._dimension_value:
-            # Equalizer reports `21#1`, `21#2`, `21#3` carry bands 1..3, 4..6
-            # and 7..8 (#payloads-and-concrete-operations); the band-value
-            # domain is not published, so the values are kept raw.
-            if self._dimension_param[0] in ("1", "2", "3") and all(v.isdigit() for v in self._dimension_value):
-                self._equalizer_group = int(self._dimension_param[0])
-                self._equalizer_values = [int(v) for v in self._dimension_value]
         elif self._dimension == 10 and 0 < len(self._dimension_value) <= 8:
             # RDS programme service: 1 to 8 decimal ASCII codes (F500 tuner continuous flux sends
             # 8 codes via 1+4+3 telegrams). Lengths outside 1..8 are bus glitches and are ignored.
@@ -1018,45 +737,22 @@ class OWNSoundDiffusionEvent(OWNEvent):
                 state_str = "ON" if self._device_state == 1 else "OFF"
                 self._human_readable_log = f"{subject} device state is {state_str}."
         elif self._dimension in (5, 11) and self._frequency_khz is not None:
-            station = (
-                f" (station {self._station})"
-                if self._station
-                else (" (no stored station)" if self._is_station_cleared else "")
+            preset = (
+                f" (station {self._preset})"
+                if self._preset
+                else (" (no stored station)" if self._is_preset_cleared else "")
             )
-            if self._frequency_band == 1:
-                tuned = f"{self._frequency_khz / 1000:.2f} MHz"
-            else:
-                tuned = f"{self._frequency_khz} kHz {self.frequency_band_name}"
-            self._human_readable_log = f"{subject} is tuned to {tuned}{station}."
-        elif self._dimension == 6 and self._station is not None:
-            self._human_readable_log = f"{subject} station is {self._station}."
+            self._human_readable_log = (
+                f"{subject} is tuned to {self._frequency_khz / 1000:.2f} MHz{preset}."
+            )
+        elif self._dimension == 6 and self._preset is not None:
+            self._human_readable_log = f"{subject} station is {self._preset}."
         elif self._dimension == 10 and (self._rds_text is not None or self._is_rds_blank):
             self._human_readable_log = f"{subject} RDS text: '{self._rds_text or ''}'."
-        elif self._dimension == 2 and self._high_tones is not None:
-            self._human_readable_log = f"{subject} high tones are {self._high_tones}."
-        elif self._dimension == 3 and self._medium_tones is not None:
-            self._human_readable_log = f"{subject} medium tones are {self._medium_tones}."
-        elif self._dimension == 4 and self._low_tones is not None:
-            self._human_readable_log = f"{subject} low tones are {self._low_tones}."
-        elif self._dimension == 7 and self._play_status is not None:
-            self._human_readable_log = f"{subject} play status is {self._play_status}."
-        elif self._dimension == 17 and self._balance is not None:
-            self._human_readable_log = f"{subject} balance is {self._balance} ({self.balance_side} {self.balance_level})."
-        elif self._dimension == 18 and self._sound_3d is not None:
-            self._human_readable_log = f"{subject} 3D level is {self._sound_3d}."
-        elif self._dimension == 19 and self._preset is not None:
-            self._human_readable_log = f"{subject} equalizer preset is {self._preset}."
-        elif self._dimension == 20 and self._loudness is not None:
-            self._human_readable_log = f"{subject} loudness is {'ON' if self._loudness else 'OFF'}."
-        elif self._dimension == 21 and self._equalizer_values is not None:
-            bands = ", ".join(str(v) for v in self._equalizer_values)
-            self._human_readable_log = f"{subject} equalizer group {self._equalizer_group} is {bands}."
         elif self._dimension is not None:
             self._human_readable_log = f"{subject} reported dimension {self._dimension}."
-        elif self._what == 1 and self._what_area is not None:
-            self._human_readable_log = f"{subject} is switched ON (area {self._what_area})."
-        elif self._what == 2 and self._what_area is not None:
-            self._human_readable_log = f"{subject} is active in area {self._what_area}."
+        elif self._what == 1 and self._source_request is not None:
+            self._human_readable_log = f"{subject} is switched ON with source {self._source_request}."
         elif self._what in (1, 2):
             self._human_readable_log = f"{subject} is switched ON."
         elif self.is_atomic_off:
@@ -1064,28 +760,16 @@ class OWNSoundDiffusionEvent(OWNEvent):
         elif self._what == 0:
             self._human_readable_log = f"{subject} is switched OFF."
         elif self._what == 35 and self._source_request is not None:
-            area_str = f" on matrix area {self._matrix_area}" if self._matrix_area is not None else ""
+            area_str = f" on matrix area {self._matrix_area}" if self._matrix_area is not None and self._matrix_area != 1 else ""
             self._human_readable_log = f"{subject} is routed to source {self._source_request}{area_str}."
         elif self._what == 31:
             self._human_readable_log = f"{subject} started RDS reporting."
         elif self._what == 32:
             self._human_readable_log = f"{subject} stopped RDS reporting."
-        elif self._what == 33 and self._station is not None:
-            self._human_readable_log = f"{subject} stored frequency to station {self._station}."
+        elif self._what == 33 and self._preset is not None:
+            self._human_readable_log = f"{subject} stored frequency to preset {self._preset}."
         elif self._what == 34:
             self._human_readable_log = f"{subject} follow-me."
-        elif self._what == 22:
-            self._human_readable_log = f"{subject} sliding request."
-        elif self._tone_step is not None:
-            verb = "increased" if self._tone_step > 0 else "decreased"
-            self._human_readable_log = f"{subject} {self._tone_band} tones {verb} by {abs(self._tone_step)}."
-        elif self._balance_step is not None:
-            side = "right" if self._balance_step > 0 else "left"
-            self._human_readable_log = f"{subject} balance moved {side} by {abs(self._balance_step)}."
-        elif self._what == 55:
-            self._human_readable_log = f"{subject} next preset."
-        elif self._what == 56:
-            self._human_readable_log = f"{subject} previous preset."
         elif self._what == 19:
             self._human_readable_log = f"{subject} opens paging channel {self.paging_channel}."
         elif self._what == 20:
@@ -1163,45 +847,12 @@ class OWNSoundDiffusionEvent(OWNEvent):
 
     @property
     def frequency_khz(self) -> int | None:
-        """Tuned frequency in kHz from dimension 5 or 11.
-
-        FM (``frequency_band`` 1) is reported in 10 kHz units on an MH200N
-        and 100 kHz units on a MyHomeServer1 and must fall in 87.5..108 MHz;
-        AM-LW / AM-MW / AM-SW (2 / 3 / 4) are taken as kHz (inference, see
-        ``_who22_frequency_khz``); any other modulation gives ``None``.
-        """
+        """FM frequency in kHz from dimension 5 or 11 (reported in 10 kHz units on an MH200N, 100 kHz on a MyHomeServer1), if in the FM band."""
         return self._frequency_khz
 
     @property
-    def station(self) -> int | None:
-        """Stored station / track: dimension 6, dimension 11 (``0`` means 'not stored') or WHAT ``33#STATION``.
-
-        Encyclopedia who-22-sound-diffusion#dimension (``6`` Track/station,
-        ``11`` Frequency and station) and #what (``33`` store tuned frequency
-        as a station); 1..5 on an F500, 1..15 on an F500N, 1..999 for a track.
-        """
-        return self._station
-
-    @property
     def preset(self) -> int | None:
-        """Equalizer preset of a dimension 19 report: 2..11 built in, 16..25 user defined.
-
-        Encyclopedia who-22-sound-diffusion#dimension (``19`` Preset),
-        #core-parameters (``2`` normal .. ``11`` full treble, ``16..25`` user
-        defined); the gaps ``12..15`` give ``None``.
-
-        Deprecated alias: for a dimension 6 / 11 or WHAT 33 frame this still
-        returns the stored station, as it did before 2.0.0b13 when OWNd called
-        the station "preset". Read ``station`` for those frames; this fallback
-        will be removed.
-        """
-        if self._dimension == 19:
-            return self._preset
-        return self._station
-
-    @property
-    def equalizer_preset(self) -> int | None:
-        """Equalizer preset of a dimension 19 report only (2..11, 16..25), else ``None``."""
+        """Stored tuner station (1..): dimension 6, or dimension 11 where 0 means 'not stored'."""
         return self._preset
 
     @property
@@ -1210,137 +861,16 @@ class OWNSoundDiffusionEvent(OWNEvent):
         return self._rds_text
 
     @property
-    def is_station_cleared(self) -> bool:
-        """True for a dimension 11 report with an explicit station ``0``: tuned off every stored station.
+    def is_preset_cleared(self) -> bool:
+        """True for a dimension 11 report with an explicit preset ``0``: tuned off every stored station.
 
         Defensive parsing of the spec-shaped ``*#22*WHERE*11*BAND*FREQ*0##``
         frame, against ``*#22*5#2#1*11*1*10530*5##`` once station 5 is
-        selected at the same frequency. ``station`` is ``None`` in both the
-        cleared case and a frame without a station field (dimension 5); this
+        selected at the same frequency. ``preset`` is ``None`` in both the
+        cleared case and a frame without a preset field (dimension 5); this
         flag tells them apart.
         """
-        return self._is_station_cleared
-
-    @property
-    def is_preset_cleared(self) -> bool:
-        """Deprecated alias of ``is_station_cleared`` (the dimension 11 field is the station, not the preset)."""
-        return self._is_station_cleared
-
-    @property
-    def what_area(self) -> int | None:
-        """Area carried by the WHAT of a power / activity / Follow Me / route frame.
-
-        ``WHAT#MULTIMEDIA_TYPE#AREA`` for WHAT 0 / 1 / 2 / 34 and
-        ``35#TYPE#AREA#SOURCE`` for WHAT 35 (Encyclopedia
-        who-22-sound-diffusion#what, #historical-touchscreen-syntax-and-extensions,
-        #source-activity-and-rds; plant captures ``*22*2#4#1*5#2#1##`` = area 1 /
-        source 1, ENCY_CONFIRM SD-D1). ``area`` reads the WHERE area first and
-        falls back to this one for a source / all-sources WHERE.
-        """
-        return self._what_area
-
-    @property
-    def frequency_band_name(self) -> str | None:
-        """``FM``, ``AM-LW``, ``AM-MW`` or ``AM-SW`` for modulation 1..4, else ``None``."""
-        return _WHO22_BAND_NAMES.get(self._frequency_band) if self._frequency_band is not None else None
-
-    @property
-    def high_tones(self) -> int | None:
-        """Dimension 2 ``TONE_VALUE`` (1..63, raw; the touchscreen shows ``raw / 3 - 10``)."""
-        return self._high_tones
-
-    @property
-    def medium_tones(self) -> int | None:
-        """Dimension 3 ``TONE_VALUE`` (1..63, raw)."""
-        return self._medium_tones
-
-    @property
-    def low_tones(self) -> int | None:
-        """Dimension 4 ``TONE_VALUE`` (1..63, raw)."""
-        return self._low_tones
-
-    @property
-    def play_status(self) -> int | None:
-        """Dimension 7 play status, raw (the page defines the dimension, not its values)."""
-        return self._play_status
-
-    @property
-    def balance(self) -> str | None:
-        """Dimension 17 balance as sent, leading zero kept: ``030`` is left 10, ``115`` right 5 (touchscreen reading)."""
-        return self._balance
-
-    @property
-    def balance_side(self) -> str | None:
-        """``left`` when the dimension 17 balance starts with ``0``, else ``right``; ``None`` without a balance."""
-        if self._balance is None:
-            return None
-        return "left" if self._balance.startswith("0") else "right"
-
-    @property
-    def balance_level(self) -> int | None:
-        """Balance magnitude as the touchscreen reads it: the digits after the side
-        divided by 3 (``030`` -> 10, ``115`` -> 5; Encyclopedia who-22
-        #tone-balance-and-presets). The touchscreen steps balance in threes, so
-        the division is exact for the values it emits; a stray non-multiple
-        floors. The raw string as sent is ``balance``."""
-        if self._balance is None:
-            return None
-        return int(self._balance[1:] or "0") // 3
-
-    @property
-    def sound_3d(self) -> int | None:
-        """Dimension 18 3D level (0..10)."""
-        return self._sound_3d
-
-    @property
-    def loudness(self) -> bool | None:
-        """Dimension 20 loudness: ``True`` for ``1``, ``False`` for ``0``."""
-        return self._loudness
-
-    @property
-    def equalizer_group(self) -> int | None:
-        """Equalizer selector of a ``21#1`` / ``21#2`` / ``21#3`` report (bands 1..3, 4..6, 7..8)."""
-        return self._equalizer_group
-
-    @property
-    def equalizer_values(self) -> list[int] | None:
-        """Band values of a ``21#G`` report, raw (the band-value domain is not published)."""
-        return list(self._equalizer_values) if self._equalizer_values is not None else None
-
-    @property
-    def tone_band(self) -> str | None:
-        """``low`` for WHAT 36 / 37, ``mid`` for 38 / 39, ``high`` for 40 / 41."""
-        return self._tone_band
-
-    @property
-    def tone_step(self) -> int | None:
-        """Signed tone step of WHAT 36..41 (``36#1`` -> +1, ``37#1`` -> -1; a bare WHAT counts as 1)."""
-        return self._tone_step
-
-    @property
-    def balance_step(self) -> int | None:
-        """Signed balance step of WHAT 42 (right, +) / 43 (left, -) by the published labels; the direction is unresolved on the page."""
-        return self._balance_step
-
-    @property
-    def is_sliding_request(self) -> bool:
-        """True for WHAT 22, the sliding request (the touchscreen treats ``22#4#AREA`` as a one-second temporary off)."""
-        return self._what == 22
-
-    @property
-    def is_next_preset(self) -> bool:
-        """True for WHAT 55, next equalizer preset."""
-        return self._what == 55
-
-    @property
-    def is_previous_preset(self) -> bool:
-        """True for WHAT 56, previous equalizer preset."""
-        return self._what == 56
-
-    @property
-    def is_source_active(self) -> bool:
-        """True for WHAT 2, a source-turned-on / activity notification (``2#4#AREA`` names the active area)."""
-        return self._what == 2
+        return self._is_preset_cleared
 
     @property
     def is_rds_blank(self) -> bool:
@@ -1361,7 +891,7 @@ class OWNSoundDiffusionEvent(OWNEvent):
 
     @property
     def matrix_area(self) -> int | None:
-        """Area of a WHAT 35 route (``35#TYPE#AREA#SOURCE``): the area being routed, the same as the WHERE area (``what_area`` for WHAT 35)."""
+        """Matrix audio distribution channel / area (e.g. 1 in 35#4#1#2)."""
         return self._matrix_area
 
     @property
@@ -1391,11 +921,7 @@ class OWNSoundDiffusionEvent(OWNEvent):
 
     @property
     def requested_source(self) -> int | None:
-        """Source of a WHAT 35 route (``35#TYPE#AREA#SOURCE``), else ``None``.
-
-        Until 2.0.0b13 a ``1#TYPE#X`` power-on also filled this with ``X``;
-        that field is the AREA (``what_area``), so WHAT 1 now gives ``None``.
-        """
+        """Source named by a command: ``1#TYPE#S`` (power on with source) or ``35#TYPE#AREA#S`` (route)."""
         return self._source_request
 
     @property
@@ -1405,7 +931,7 @@ class OWNSoundDiffusionEvent(OWNEvent):
 
     @property
     def is_atomic_off(self) -> bool:
-        """True for ``0#TYPE#AREA`` (``*22*0#4#AREA*3#AREA#POINT##``), the single-frame power off; a plain WHAT 0 carries no parameters."""
+        """True for ``0#4#0``, the single-frame power off (a plain WHAT 0 carries no parameters)."""
         return self._what == 0 and len(self._what_param) >= 1
 
     @property
@@ -1561,63 +1087,23 @@ class OWNSoundDiffusionCommand(OWNCommand):
         return message
 
     @classmethod
-    def turn_on_atomic(
-        cls,
-        where: str | int,
-        area: int | str | None = None,
-        multimedia_type: int | str = 4,
-    ) -> OWNSoundDiffusionCommand:
-        """Power a speaker on in one frame: ``*22*1#TYPE#AREA*WHERE##``.
-
-        The second WHAT parameter is the AREA of the target (Encyclopedia
-        who-22-sound-diffusion#what "source power uses
-        ``WHAT#MULTIMEDIA_TYPE#AREA``", the tested Speaker OFF / Follow Me
-        forms of #historical-touchscreen-syntax-and-extensions, plant
-        captures ``*22*2#4#1*5#2#1##`` = area 1 / source 1, ENCY_CONFIRM
-        SD-D1). It is derived from ``3#AREA#POINT``, ``4#AREA`` or
-        ``5#3#AREA#POINT``; a source (``2#S``) or general (``6``) target
-        carries no area, so ``0`` is sent for it unless ``area=`` is given
-        (the value the pre-2.0.0b13 builders used). The emulated gateways
-        copy the parameter verbatim onto the bus (``*22*1#4#2*3#2#1##`` ->
-        ``$0490018223``, ORACLE_CONFIRM D1), so a wrong value reaches the
-        plant. TYPE 4 (stereo) on the traced plant.
-        """
-        target = _require_non_empty_where(where)
-        a = _validate_area(area, str(where), target, default=0)
-        mm_type = int(multimedia_type)
-        if mm_type < 0:
-            raise ValueError("multimedia_type must be non-negative")
-        message = cls(f"*22*1#{mm_type}#{a}*{target}##")
-        message._human_readable_log = f"Turning ON sound diffusion device {target} (area {a})."
-        return message
-
-    @classmethod
     def turn_on_with_source(
         cls, where: str | int, source_id: int | str, multimedia_type: int | str = 4
     ) -> OWNSoundDiffusionCommand:
-        """Deprecated: builds ``*22*1#TYPE#SOURCE*WHERE##`` unchanged; use ``turn_on_atomic`` + ``route_source``.
+        """Power a zone on and play a source: ``*22*1#TYPE#SOURCE*WHERE##`` (TYPE 4 on the traced plant).
 
-        The frame is the pre-2.0.0b13 one, with ``source_id`` in the second
-        WHAT parameter, so existing callers' frames do not change silently;
-        a ``DeprecationWarning`` is emitted. The Encyclopedia reads that
-        parameter as the AREA of the target (who-22-sound-diffusion#what
-        "source power uses ``WHAT#MULTIMEDIA_TYPE#AREA``"; plant captures
-        ``*22*2#4#1*5#2#1##`` = area 1 / source 1, ENCY_CONFIRM SD-D1) and
-        a source is selected with WHAT 35 (``route_source``); the firmware
-        oracle could not distinguish the two readings (ORACLE_CONFIRM D1,
-        NOT DISTINGUISHED: the gateway copies ``WHAT#4#X`` verbatim into the
-        last bus byte, ``$0490018213`` / ``$0490018223``, and whether that
-        nibble is an area or a source cannot be settled without a device).
-        ``turn_on_atomic(where)`` sends the target's area; ``route_source``
-        selects the source.
+        Evidence boundary: the Encyclopedia reads the second WHAT parameter
+        of WHAT 0 / 1 / 2 / 34 as ``WHAT#MULTIMEDIA_TYPE#AREA`` (the AREA of
+        the target, who-22-sound-diffusion#what; plant captures such as
+        ``*22*2#4#1*5#2#1##`` read it as area 1 with the source in WHERE),
+        while this builder, derived from the traced plant, puts ``source_id``
+        there. The firmware oracle cannot settle it: the ``bt_multi``
+        gateways copy ``WHAT#4#X`` verbatim into the last bus byte
+        (``$0490018213`` / ``$0490018223``), so whether that nibble is an
+        area or a source needs a physical device. The frame is unchanged
+        until a committed on-wire trace shows which reading the hardware
+        follows; ``route_source`` (WHAT 35) names the source explicitly.
         """
-        warnings.warn(
-            "OWNSoundDiffusionCommand.turn_on_with_source() puts the source in the "
-            "AREA slot of WHAT 1 (*22*1#TYPE#SOURCE*WHERE##); use turn_on_atomic() and "
-            "route_source() instead",
-            DeprecationWarning,
-            stacklevel=2,
-        )
         target = _require_non_empty_where(where)
         source = int(source_id)
         if source < 1:
@@ -1630,31 +1116,13 @@ class OWNSoundDiffusionCommand(OWNCommand):
         return message
 
     @classmethod
-    def turn_off_atomic(
-        cls,
-        where: str | int,
-        multimedia_type: int | str = 4,
-        area: int | str | None = None,
-    ) -> OWNSoundDiffusionCommand:
-        """Power a speaker off in one frame: ``*22*0#TYPE#AREA*WHERE##``.
-
-        Tested touchscreen emission ``*22*0#4#AREA*3#AREA#POINT##``
-        (Encyclopedia who-22-sound-diffusion#historical-touchscreen-syntax-and-extensions);
-        the area is derived from the target as in ``turn_on_atomic``; for a
-        source (``2#S``) or general (``6``) target no area can be derived and
-        the pre-2.0.0b13 ``0`` is kept unless ``area=`` is given. Until
-        2.0.0b13 the area slot was a constant ``0`` (audit 2026-10-28 D1);
-        ``*22*0#4#0*3#2#1##`` and ``*22*0#4#2*3#2#1##`` both reach the bus
-        with the parameter copied verbatim (``$0491018203`` / ``$0491018223``,
-        ORACLE_CONFIRM D1). ``*22*0#4#0*3#0#6##`` and ``*22*0#4#0*5#3#0#0##``
-        (area 0 targets) are in the firmware oracle (``sound-who22``).
-        """
+    def turn_off_atomic(cls, where: str | int, multimedia_type: int | str = 4) -> OWNSoundDiffusionCommand:
+        """Power a zone off in one frame: ``*22*0#TYPE#0*WHERE##``."""
         target = _require_non_empty_where(where)
-        a = _validate_area(area, str(where), target, default=0)
         mm_type = int(multimedia_type)
         if mm_type < 0:
             raise ValueError("multimedia_type must be non-negative")
-        message = cls(f"*22*0#{mm_type}#{a}*{target}##")
+        message = cls(f"*22*0#{mm_type}#0*{target}##")
         message._human_readable_log = f"Turning OFF sound diffusion device {target} (atomic)."
         return message
 
@@ -1663,50 +1131,30 @@ class OWNSoundDiffusionCommand(OWNCommand):
         cls,
         where: str | int,
         source_id: int | str,
-        matrix_area: int | str | None = None,
+        matrix_area: int | str = 1,
         multimedia_type: int | str = 4,
-        area: int | str | None = None,
     ) -> OWNSoundDiffusionCommand:
-        """Turn a speaker on with a source: ``*22*35#TYPE#AREA#SOURCE*WHERE##``.
-
-        The third WHAT parameter is the AREA being routed, the same area as
-        in WHERE (Encyclopedia who-22-sound-diffusion#payloads-and-concrete-operations
-        ``*22*35#4#AREA#SOURCE_ID*3#AREA#POINT##``,
-        #historical-touchscreen-syntax-and-extensions "sends eight commands,
-        one for each area 1..8"; ENCY_CONFIRM SD-D2). The emulated gateways
-        address the bus from that parameter, not from WHERE:
-        ``*22*35#4#1#7*3#2#1##`` goes to area 1 and ``*22*35#4#2#7*3#2#1##``
-        to area 2 (ORACLE_CONFIRM D2), so until 2.0.0b13 the ``matrix_area=1``
-        default routed area 1 for every target (audit 2026-10-28 D2). The
-        area is now derived from ``3#AREA#POINT``, ``4#AREA`` or
-        ``5#3#AREA#POINT``; ``area=`` (or the older ``matrix_area=``) sets
-        it explicitly, and a source or ``6`` target requires it.
-
-        The page's source ID domain is ``1..4`` (#core-parameters); ``7``
-        is the FM tuner of the traced MH200N / F441 plant and is forwarded
-        by nine emulated gateways (``*22*35#4#2#7*3#2#0##``, firmware oracle
-        ``sound-who22``), so 1..9 (the single-digit ``2#S`` WHERE) is
-        accepted.
+        """Route a zone to a source on the matrix: ``*22*35#TYPE#AREA#SOURCE*WHERE##``.
 
         Parameters:
-            where: Target address (``3#1#1``, ``4#2``, ``5#3#0#0``).
-            source_id: Source 1..9.
-            matrix_area: Older spelling of ``area``.
-            multimedia_type: Audio routing mode (default 4 = stereo).
-            area: Area 0..9 to route; defaults to the target's area.
+            where: Target zone address (e.g. 3#1#1).
+            source_id: Source ID (e.g. 1, 2, 7 for FM Tuner).
+            matrix_area: Matrix distribution channel/area (default 1; area 0 on plant broadcast).
+            multimedia_type: Audio routing mode (default 4 = Stereo).
         """
         target = _require_non_empty_where(where)
         source = int(source_id)
-        if not 1 <= source <= 9:
-            raise ValueError("source must be between 1 and 9")
-        if area is None:
-            area = matrix_area
-        a = _validate_area(area, str(where), target)
+        if source < 1:
+            raise ValueError("source must be positive")
+        area = int(matrix_area)
+        if area < 0:
+            raise ValueError("matrix_area must be non-negative")
         mm_type = int(multimedia_type)
         if mm_type < 0:
             raise ValueError("multimedia_type must be non-negative")
-        message = cls(f"*22*35#{mm_type}#{a}#{source}*{target}##")
-        message._human_readable_log = f"Routing sound diffusion device {target} to source {source} on matrix area {a}."
+        message = cls(f"*22*35#{mm_type}#{area}#{source}*{target}##")
+        area_str = f" on matrix area {area}" if area != 1 else ""
+        message._human_readable_log = f"Routing sound diffusion device {target} to source {source}{area_str}."
         return message
 
     @classmethod
@@ -1747,32 +1195,6 @@ class OWNSoundDiffusionCommand(OWNCommand):
         return message
 
     @classmethod
-    def select_station(cls, where: str | int, station: int | str) -> OWNSoundDiffusionCommand:
-        """Select a stored station: ``*#22*WHERE*#6*STATION##``.
-
-        Tested touchscreen emission ``*#22*2#SOURCE*#6*STATION##``
-        (Encyclopedia who-22-sound-diffusion#historical-touchscreen-syntax-and-extensions);
-        dimension 6 is the track / station (#dimension), 1..5 on an F500,
-        1..15 on an F500N, 1..999 for a track (#core-parameters).
-        ``*#22*2#1*#6*7##`` is in the firmware oracle (``sound-who22``).
-        """
-        target = _require_non_empty_where(where)
-        st = int(station)
-        if not 1 <= st <= 999:
-            raise ValueError("station must be between 1 and 999")
-        message = cls(f"*#22*{target}*#6*{st}##")
-        message._human_readable_log = f"Selecting station {st} on sound diffusion device {target}."
-        return message
-
-    @classmethod
-    def request_station(cls, where: str | int) -> OWNSoundDiffusionCommand:
-        """Request the stored station / track: ``*#22*WHERE*6##`` (``*#22*2#1*6##`` is in the firmware oracle)."""
-        target = _require_non_empty_where(where)
-        message = cls(f"*#22*{target}*6##")
-        message._human_readable_log = f"Requesting station for sound diffusion device {target}."
-        return message
-
-    @classmethod
     def set_preset(
         cls,
         where: str | int,
@@ -1780,18 +1202,7 @@ class OWNSoundDiffusionCommand(OWNCommand):
         frequency_khz: int | float | None = None,
         band: int = 1,
     ) -> OWNSoundDiffusionCommand:
-        """Deprecated: ``select_station`` under its pre-2.0.0b13 name (dimension 6 is the station, not the preset).
-
-        Without ``frequency_khz`` this is ``select_station``:
-        ``*#22*WHERE*#6*STATION##``. With ``frequency_khz`` it writes
-        ``*#22*WHERE*#11*BAND*FREQ*STATION##``, the published dimension 11
-        "state memorized station" write (Legrand WHO 22 v1.1 §3.4.1.1
-        "State Memorized Station - Dimension = 11", ``*#22*5#2#S*#11*MOD*FREQ*ST##``
-        answered with Ack). The emulated gateways forward
-        ``*#22*2#1*#11*1*10150*3##`` (``$06D101F83202031FB8``, ORACLE_CONFIRM D7);
-        the effect on a physical tuner is not yet confirmed (D50).
-        The equalizer preset of dimension 19 is ``set_equalizer_preset``.
-        """
+        """Select or store a preset station: ``*#22*WHERE*#6*PRESET##`` or ``*#22*WHERE*#11*BAND*FREQ*PRESET##``."""
         target = _require_non_empty_where(where)
         p = int(preset)
         if p < 1:
@@ -1818,50 +1229,10 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def request_preset(cls, where: str | int) -> OWNSoundDiffusionCommand:
-        """Deprecated: ``request_station`` under its pre-2.0.0b13 name (``*#22*WHERE*6##`` reads the station; the preset is dimension 19, ``request_equalizer_preset``)."""
-        return cls.request_station(where)
-
-    @classmethod
-    def set_equalizer_preset(cls, where: str | int, preset: int | str) -> OWNSoundDiffusionCommand:
-        """Select an equalizer preset: ``*#22*WHERE*#19*PRESET##``.
-
-        Encyclopedia who-22-sound-diffusion#payloads-and-concrete-operations
-        ("Set speaker preset ``*#22*3#AREA#POINT*#19*PRESET##``");
-        preset ``2`` normal, ``3`` dance, ``4`` pop, ``5`` rock, ``6`` classic,
-        ``7`` techno, ``8`` party, ``9`` soft, ``10`` full bass, ``11`` full
-        treble, ``16..25`` user defined (#core-parameters; ENCY_CONFIRM
-        SD-D4). Not in the firmware oracle.
-        """
+        """Request active preset: ``*#22*WHERE*6##``."""
         target = _require_non_empty_where(where)
-        p = int(preset)
-        if not _is_who22_preset(p):
-            raise ValueError(f"preset must be 2..11 or 16..25, got {preset}")
-        message = cls(f"*#22*{target}*#19*{p}##")
-        message._human_readable_log = f"Selecting equalizer preset {p} on sound diffusion device {target}."
-        return message
-
-    @classmethod
-    def request_equalizer_preset(cls, where: str | int) -> OWNSoundDiffusionCommand:
-        """Request the equalizer preset: ``*#22*WHERE*19##`` (the touchscreen reads ``19`` at initialisation, #tone-balance-and-presets)."""
-        target = _require_non_empty_where(where)
-        message = cls(f"*#22*{target}*19##")
-        message._human_readable_log = f"Requesting equalizer preset for sound diffusion device {target}."
-        return message
-
-    @classmethod
-    def next_preset(cls, where: str | int) -> OWNSoundDiffusionCommand:
-        """Next equalizer preset: ``*22*55*WHERE##`` (tested touchscreen emission ``*22*55*3#AREA#POINT##``)."""
-        target = _require_non_empty_where(where)
-        message = cls(f"*22*55*{target}##")
-        message._human_readable_log = f"Next equalizer preset on sound diffusion device {target}."
-        return message
-
-    @classmethod
-    def previous_preset(cls, where: str | int) -> OWNSoundDiffusionCommand:
-        """Previous equalizer preset: ``*22*56*WHERE##`` (tested touchscreen emission ``*22*56*3#AREA#POINT##``)."""
-        target = _require_non_empty_where(where)
-        message = cls(f"*22*56*{target}##")
-        message._human_readable_log = f"Previous equalizer preset on sound diffusion device {target}."
+        message = cls(f"*#22*{target}*6##")
+        message._human_readable_log = f"Requesting preset for sound diffusion device {target}."
         return message
 
     @classmethod
@@ -1881,40 +1252,29 @@ class OWNSoundDiffusionCommand(OWNCommand):
         return message
 
     @classmethod
-    def store_station(cls, where: str | int, station: int | str) -> OWNSoundDiffusionCommand:
-        """Store the tuned frequency as a station: ``*22*33#STATION*WHERE##``.
-
-        Encyclopedia who-22-sound-diffusion#what (``33`` store tuned frequency
-        as a station), #payloads-and-concrete-operations
-        (``*22*33#STATION*2#SOURCE_ID##``); stored station 1..5 on an F500,
-        1..15 on an F500N (#core-parameters). ``*22*33#3*2#1##`` is in the
-        firmware oracle (``sound-who22``).
-        """
-        target = _require_non_empty_where(where)
-        st = int(station)
-        if st < 1:
-            raise ValueError("station must be positive")
-        message = cls(f"*22*33#{st}*{target}##")
-        message._human_readable_log = f"Storing current frequency into station {st} on {target}."
-        return message
-
-    @classmethod
     def store_preset(cls, where: str | int, preset: int | str) -> OWNSoundDiffusionCommand:
-        """Deprecated: ``store_station`` under its pre-2.0.0b13 name (WHAT 33 stores a station, not an equalizer preset)."""
-        return cls.store_station(where, preset)
+        """Store current tuned frequency into preset: ``*22*33#PRESET*WHERE##``."""
+        target = _require_non_empty_where(where)
+        p = int(preset)
+        if p < 1:
+            raise ValueError("preset must be positive")
+        message = cls(f"*22*33#{p}*{target}##")
+        message._human_readable_log = f"Storing current frequency into preset {p} on {target}."
+        return message
 
     @classmethod
     def send_rds_text(cls, where: str | int, text: str) -> OWNSoundDiffusionCommand:
         """Format an 8-character RDS Program Service frame: ``*#22*WHERE*#10*c0*...*c7##``.
 
-        Not in the published grammar: dimension 10 is a report payload carrying
-        the tuner's RDS text (Encyclopedia who-22-sound-diffusion#payloads-and-concrete-operations,
-        #source-activity-and-rds), RDS is controlled by WHAT 31 / 32 and no
-        client write of dimension 10 is documented (ENCY_CONFIRM SD-D7). In
-        the ``bt_multi`` gateway firmwares (F453AV, F454, F459, F460, F461,
-        MH200N, MH202, MyHomeServer1) a client ``*#22*WHERE*#10*...##`` is
-        NACKed with no SCS bus output. Use ``start_rds``, ``stop_rds`` and
-        ``request_rds``; kept for callers that already build it.
+        Note: In ``bt_multi`` gateway firmwares (F453AV, F454, F459, F460, F461,
+        MH200N, MH202, MyHomeServer1), ``DIMENSION 10`` is an upward tuner-to-gateway
+        report and client-originated ``*#22*WHERE*#10*...##`` writes are NACKed with
+        no SCS bus output. Use ``start_rds``, ``stop_rds``, and ``request_rds`` for
+        client-to-gateway RDS control. The published grammar has no client write
+        of dimension 10 either (Encyclopedia who-22-sound-diffusion
+        #payloads-and-concrete-operations, #source-activity-and-rds: dimension 10
+        is a report payload, RDS is controlled by WHAT 31 / 32); the builder is
+        kept for callers that already build it.
         """
         target = _require_non_empty_where(where)
         formatted = text[:8].ljust(8)
@@ -1935,11 +1295,10 @@ class OWNSoundDiffusionCommand(OWNCommand):
     def open_paging(cls, where: str | int = "5#3#0#0", channel: int | str = 1) -> OWNSoundDiffusionCommand:
         """Open a paging channel: ``*22*19#CHANNEL*WHERE##`` (``5#3#0#0`` is the whole house).
 
-        Not in the published grammar: the WHO 22 WHAT table has no ``19`` or
-        ``20`` (Encyclopedia who-22-sound-diffusion#what; ENCY_CONFIRM SD-D7).
-        Trace-derived from a plant with a paging unit; nine emulated gateways
-        forward ``*22*19#1*5#3#0#0##`` (``$04B7008010``, ORACLE_CONFIRM D7)
-        without a documented counterpart.
+        Provenance: trace-derived from a plant with a paging unit. The WHO 22
+        WHAT table of the Encyclopedia (who-22-sound-diffusion#what) has no
+        ``19`` or ``20``; nine emulated gateways forward ``*22*19#1*5#3#0#0##``
+        (``$04B7008010``) without a documented counterpart.
         """
         target = _require_non_empty_where(where)
         ch = int(channel)
@@ -1951,7 +1310,7 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def start_paging_voice(cls, where: str | int = "5#3#0#0", channel: int | str = 1) -> OWNSoundDiffusionCommand:
-        """Start the paging voice transmission: ``*22*20#CHANNEL*WHERE##`` (not in the published grammar, as ``open_paging``)."""
+        """Start the paging voice transmission: ``*22*20#CHANNEL*WHERE##`` (trace-derived, not in the published WHAT table; see ``open_paging``)."""
         target = _require_non_empty_where(where)
         ch = int(channel)
         if ch < 1:
@@ -1965,16 +1324,16 @@ class OWNSoundDiffusionCommand(OWNCommand):
         """Increase the volume by ``step`` (1..31): ``*22*3*WHERE##`` / ``*22*3#STEP*WHERE##``.
 
         A step of 1 is sent as the bare ``*22*3*WHERE##`` and a larger step as
-        ``*22*3#STEP*WHERE##``: both forms are preserved on purpose (#127,
-        maintainer decision D19; #128 bounds ``step`` to ``1..31``). The page
-        defines only ``*22*3#VOLUME_STEP*3#AREA#POINT##`` (Encyclopedia
-        who-22-sound-diffusion#payloads-and-concrete-operations,
-        #core-parameters step ``1..31``). Oracle note (ORACLE_CONFIRM D5,
-        audit 2026-10-28): F454, F459 and MyHomeServer1 put the bare form on
-        the bus with step ``00`` (``$0494018100``) where ``3#1`` gives ``01``;
-        F453, F453AV, F460, F461, MH200N and MH202 send the same bytes for
-        both. ``*22*3#1*3#1#1##`` is in the firmware oracle (``sound-who22``);
-        the bare form is not. Changing the step-1 form needs a #127 reopen.
+        ``*22*3#STEP*WHERE##``: both forms are preserved on purpose (#127;
+        #128 bounds ``step`` to ``1..31``). The Encyclopedia defines only
+        ``*22*3#VOLUME_STEP*3#AREA#POINT##`` (who-22-sound-diffusion
+        #payloads-and-concrete-operations, step ``1..31``). Firmware oracle
+        note: F454, F459 and MyHomeServer1 put the bare form on the bus with
+        step ``00`` (``$0494018100``) where ``3#1`` gives ``01``; F453, F453AV,
+        F460, F461, MH200N and MH202 send the same bytes for both.
+        ``*22*3#1*3#1#1##`` is in the oracle index (``sound-who22``); the bare
+        form is not. Changing the step-1 form needs a #127 reopen and an
+        on-wire trace.
         """
         s = int(step)
         if not 1 <= s <= 31:
@@ -1987,7 +1346,7 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def volume_down(cls, where: str | int, step: int = 1) -> OWNSoundDiffusionCommand:
-        """Decrease the volume by ``step`` (1..31): bare ``*22*4*WHERE##`` for step 1, ``*22*4#STEP*WHERE##`` above (both kept on purpose, #127 / D19; see ``volume_up`` for the oracle note)."""
+        """Decrease the volume by ``step`` (1..31): bare ``*22*4*WHERE##`` for step 1, ``*22*4#STEP*WHERE##`` above (both kept on purpose, #127; see ``volume_up`` for the oracle note)."""
         s = int(step)
         if not 1 <= s <= 31:
             raise ValueError("step must be positive and between 1 and 31")
@@ -2115,20 +1474,10 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def source_address(cls, source_id: int | str) -> str:
-        """Format structured source target: ``2#SOURCE_ID``, source 1..9.
-
-        The published Source ID domain is ``1..4`` (Encyclopedia
-        who-22-sound-diffusion#core-parameters; the historical touchscreen
-        matrix model admits sources 1..4 as well); ``5..9`` is plant
-        evidence: ``7`` is the FM tuner of the traced MH200N / F441 plant
-        (MyHOME#839) and ``*22*35#4#2#7*3#2#0##`` is forwarded by nine
-        emulated gateways (firmware oracle ``sound-who22``), the same domain
-        ``route_source`` accepts. Until 2.0.0b13 any positive value was
-        accepted (``2#10``, audit 2026-10-28 D7).
-        """
+        """Format structured source target: 2#SOURCE_ID (source_id >= 1)."""
         s = int(source_id)
-        if not 1 <= s <= 9:
-            raise ValueError(f"Source ID ({s}) must be between 1 and 9 (published 1..4, plant 5..9)")
+        if s < 1:
+            raise ValueError(f"Source ID ({s}) must be positive per WHO 22 specification")
         return f"2#{s}"
 
     @classmethod

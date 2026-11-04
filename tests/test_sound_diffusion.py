@@ -192,7 +192,7 @@ def test_who22_command_builders() -> None:
         OWNSoundDiffusionCommand.area_address(0)
     with pytest.raises(ValueError, match="Area .* must be between 1 and 9"):
         OWNSoundDiffusionCommand.area_address(10)
-    with pytest.raises(ValueError, match="Source ID .* must be between 1 and 9"):
+    with pytest.raises(ValueError, match="Source ID .* must be positive"):
         OWNSoundDiffusionCommand.source_address(0)
 
     # Power and status
@@ -370,22 +370,14 @@ def test_dimension_12_state_0_type_10_is_standby() -> None:
     assert plain.human_readable_log == "Speaker 3#1#1 (Zone 11) device state is OFF."
 
 
-def test_power_on_with_area() -> None:
-    # `1#TYPE#AREA`: the second parameter is the area, not a source
-    # (who-22-sound-diffusion#what; ENCY_CONFIRM SD-D1).
-    event = OWNMessage.parse("*22*1#4#7*3#7#5##")
+def test_power_on_with_source() -> None:
+    event = OWNMessage.parse("*22*1#4#1*3#7#5##")
     assert isinstance(event, OWNSoundDiffusionEvent)
     assert event.is_on is True
-    assert event.requested_source is None
-    assert event.what_area == 7
-    assert event.area == 7
-    assert event.multimedia_type == 4
+    assert event.requested_source == 1
     assert event.is_atomic_off is False
-    assert event.human_readable_log == "Speaker 3#7#5 (Zone 75) is switched ON (area 7)."
-    plain = OWNMessage.parse("*22*1*3#7#5##")
-    assert plain.requested_source is None
-    assert plain.what_area is None
-    assert plain.human_readable_log == "Speaker 3#7#5 (Zone 75) is switched ON."
+    assert event.human_readable_log == "Speaker 3#7#5 (Zone 75) is switched ON with source 1."
+    assert OWNMessage.parse("*22*1*3#7#5##").requested_source is None
 
 
 def test_atomic_off() -> None:
@@ -400,15 +392,13 @@ def test_atomic_off() -> None:
 
 
 def test_matrix_route_to_source() -> None:
-    event = OWNMessage.parse("*22*35#4#7#2*3#7#5##")
+    event = OWNMessage.parse("*22*35#4#1#2*3#7#5##")
     assert isinstance(event, OWNSoundDiffusionEvent)
     assert event.is_route_source is True
     assert event.requested_source == 2
-    assert event.matrix_area == 7
-    assert event.what_area == 7
     assert event.target_type == "speaker"
-    assert event.human_readable_log == "Speaker 3#7#5 (Zone 75) is routed to source 2 on matrix area 7."
-    assert OWNMessage.parse("*22*35#4#7#1*3#7#6##").requested_source == 1
+    assert event.human_readable_log == "Speaker 3#7#5 (Zone 75) is routed to source 2."
+    assert OWNMessage.parse("*22*35#4#1#1*3#7#6##").requested_source == 1
     # Too few parameters name no source.
     assert OWNMessage.parse("*22*35*3#7#6##").requested_source is None
 
@@ -456,23 +446,18 @@ def test_paging_ducking_and_volume_restore_replay() -> None:
 
 
 def test_new_command_builders_match_the_traces() -> None:
-    # The area slot of WHAT 1 / 0 / 35 carries the target's area (audit D1 / D2).
-    assert str(OWNSoundDiffusionCommand.turn_on_atomic("3#7#5")) == "*22*1#4#7*3#7#5##"
-    # Deprecated spelling: its frame is unchanged (source in the second slot).
-    with pytest.deprecated_call():
-        assert str(OWNSoundDiffusionCommand.turn_on_with_source("3#7#5", 1)) == "*22*1#4#1*3#7#5##"
-    with pytest.deprecated_call():
-        assert str(OWNSoundDiffusionCommand.turn_on_with_source("3#7#6", 2, multimedia_type=4)) == "*22*1#4#2*3#7#6##"
-    assert str(OWNSoundDiffusionCommand.turn_off_atomic("3#7#5")) == "*22*0#4#7*3#7#5##"
-    assert str(OWNSoundDiffusionCommand.route_source("3#7#5", 2)) == "*22*35#4#7#2*3#7#5##"
+    assert str(OWNSoundDiffusionCommand.turn_on_with_source("3#7#5", 1)) == "*22*1#4#1*3#7#5##"
+    assert str(OWNSoundDiffusionCommand.turn_on_with_source("3#7#6", 2, multimedia_type=4)) == "*22*1#4#2*3#7#6##"
+    assert str(OWNSoundDiffusionCommand.turn_off_atomic("3#7#5")) == "*22*0#4#0*3#7#5##"
+    assert str(OWNSoundDiffusionCommand.route_source("3#7#5", 2)) == "*22*35#4#1#2*3#7#5##"
     assert str(OWNSoundDiffusionCommand.open_paging()) == "*22*19#1*5#3#0#0##"
     assert str(OWNSoundDiffusionCommand.start_paging_voice()) == "*22*20#1*5#3#0#0##"
     assert str(OWNSoundDiffusionCommand.open_paging("5#3#7#6", 2)) == "*22*19#2*5#3#7#6##"
     assert str(OWNSoundDiffusionCommand.start_paging_voice("5#3#7#6", 2)) == "*22*20#2*5#3#7#6##"
     cmd = OWNSoundDiffusionCommand.route_source("3#7#5", 2)
-    assert cmd.human_readable_log == "Routing sound diffusion device 3#7#5 to source 2 on matrix area 7."
-    assert OWNSoundDiffusionCommand.turn_on_atomic("3#7#5").human_readable_log == (
-        "Turning ON sound diffusion device 3#7#5 (area 7)."
+    assert cmd.human_readable_log == "Routing sound diffusion device 3#7#5 to source 2."
+    assert OWNSoundDiffusionCommand.turn_on_with_source("3#7#5", 1).human_readable_log == (
+        "Turning ON sound diffusion device 3#7#5 with source 1."
     )
     assert OWNSoundDiffusionCommand.turn_off_atomic("3#7#5").human_readable_log == (
         "Turning OFF sound diffusion device 3#7#5 (atomic)."
@@ -484,7 +469,7 @@ def test_new_command_builders_match_the_traces() -> None:
 
 
 def test_builder_inputs_are_validated() -> None:
-    with pytest.deprecated_call(), pytest.raises(ValueError):
+    with pytest.raises(ValueError):
         OWNSoundDiffusionCommand.turn_on_with_source("3#7#5", 0)
     with pytest.raises(ValueError):
         OWNSoundDiffusionCommand.route_source("3#7#5", 0)
@@ -587,9 +572,8 @@ def test_who22_rds_reporting() -> None:
     # Store preset (WHAT 33)
     store = OWNMessage.parse("*22*33#4*2#1##")
     assert isinstance(store, OWNSoundDiffusionEvent)
-    assert store.station == 4
-    assert store.preset == 4  # deprecated alias of ``station`` on a WHAT 33 frame
-    assert "stored frequency to station 4" in store.human_readable_log
+    assert store.preset == 4
+    assert "stored frequency to preset 4" in store.human_readable_log
 
     # Follow-me (WHAT 34)
     follow_me = OWNMessage.parse("*22*34*3#1#1##")
@@ -649,7 +633,7 @@ def _decoded_bus_frames(row: dict[str, object]) -> list[str]:
     ("builder", "expected_frame", "expected_bus"),
     [
         (
-            OWNSoundDiffusionCommand.turn_on_atomic("3#1#1"),
+            OWNSoundDiffusionCommand.turn_on_with_source("3#1#1", 1),
             "*22*1#4#1*3#1#1##",
             ["$0490018113"],
         ),
@@ -783,10 +767,10 @@ def test_who22_firmware_oracle_conformance(
 def test_who22_infeasible_input_validation() -> None:
     """Verify WHO 22 command builders reject infeasible parameters."""
     with pytest.raises(ValueError, match="multimedia_type must be non-negative"):
-        OWNSoundDiffusionCommand.turn_on_atomic("3#1#1", multimedia_type=-1)
+        OWNSoundDiffusionCommand.turn_on_with_source("3#1#1", 1, multimedia_type=-1)
     with pytest.raises(ValueError, match="multimedia_type must be non-negative"):
         OWNSoundDiffusionCommand.turn_off_atomic("3#1#1", multimedia_type=-1)
-    with pytest.raises(ValueError, match="area must be between 0 and 9"):
+    with pytest.raises(ValueError, match="matrix_area must be non-negative"):
         OWNSoundDiffusionCommand.route_source("3#1#1", 1, matrix_area=-1)
     with pytest.raises(ValueError, match="multimedia_type must be non-negative"):
         OWNSoundDiffusionCommand.route_source("3#1#1", 1, multimedia_type=-1)
@@ -809,7 +793,7 @@ def test_who22_infeasible_input_validation() -> None:
     with pytest.raises(ValueError, match="band must be between 1 and 4"):
         OWNSoundDiffusionCommand.set_preset("2#1", 1, frequency_khz=101500, band=0)
 
-    with pytest.raises(ValueError, match="station must be positive"):
+    with pytest.raises(ValueError, match="preset must be positive"):
         OWNSoundDiffusionCommand.store_preset("2#1", 0)
     with pytest.raises(ValueError, match="channel must be positive"):
         OWNSoundDiffusionCommand.open_paging("5#3#0#0", channel=0)

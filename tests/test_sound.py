@@ -11,7 +11,7 @@ from OWNd.message import OWNCommand, OWNEvent, OWNMessage, OWNSoundCommand, OWNS
 def test_sound_source_and_zone_events_are_distinct() -> None:
     source = OWNMessage.parse("*16*3*102##")
     zone = OWNMessage.parse("*16*13*21##")
-    volume = OWNMessage.parse("*#16*21*1*27##")
+    volume = OWNMessage.parse("*#16*21*1*37##")
 
     assert isinstance(source, OWNSoundEvent)
     assert source.is_source_event
@@ -24,25 +24,25 @@ def test_sound_source_and_zone_events_are_distinct() -> None:
     assert not zone.is_routing_event
     assert "Audio Zone 21 is switched OFF" in zone.human_readable_log
     assert isinstance(volume, OWNSoundEvent)
-    assert volume.volume == 27
+    assert volume.volume == 37
 
 
 def test_unknown_sound_command_has_diagnostic_log() -> None:
-    message = OWNMessage.parse("*16*60*22##")
+    message = OWNMessage.parse("*16*30*22##")
 
     assert isinstance(message, OWNSoundEvent)
-    assert "received command: 60" in message.human_readable_log
+    assert "received command: 30" in message.human_readable_log
 
 
 def test_sound_commands_validate_ranges() -> None:
-    assert str(OWNSoundCommand.set_volume("21", 31)) == "*#16*21*#1*31##"
+    assert str(OWNSoundCommand.set_volume("21", 40)) == "*#16*21*#1*40##"
     assert [str(command) for command in OWNSoundCommand.select_source("21", 2)] == [
         "*16*3*102##",
         "*16*3*122##",
     ]
 
     with pytest.raises(ValueError):
-        OWNSoundCommand.set_volume("21", 32)
+        OWNSoundCommand.set_volume("21", 101)
     with pytest.raises(ValueError):
         OWNSoundCommand.select_source("21", 0)
 
@@ -66,13 +66,6 @@ def test_select_source_uses_environment_of_the_amplifier_address() -> None:
         "*16*3*103##",
         "*16*3*143##",
     ]
-    # Amplifier `20` is a published `01..99` address (who-16-sound-system#where)
-    # and routes through environment 2 (ORACLE_CONFIRM S2: `*16*3*20##` accepted
-    # by the six WHO 16 gateways).
-    assert [str(command) for command in OWNSoundCommand.select_source("20", 2)] == [
-        "*16*3*102##",
-        "*16*3*122##",
-    ]
     # Single-digit, environment 0, and non-numeric addresses cannot be routed to a matrix source.
     with pytest.raises(ValueError, match="two-digit amplifier address"):
         OWNSoundCommand.select_source("2", 2)
@@ -80,6 +73,8 @@ def test_select_source_uses_environment_of_the_amplifier_address() -> None:
         OWNSoundCommand.select_source("01", 2)
     with pytest.raises(ValueError, match="two-digit amplifier address"):
         OWNSoundCommand.select_source("#1", 2)
+    with pytest.raises(ValueError, match="two-digit amplifier address"):
+        OWNSoundCommand.select_source("20", 2)
     # Non-ASCII digits pass str.isdigit() but are not an address
     with pytest.raises(ValueError, match="two-digit amplifier address"):
         OWNSoundCommand.select_source("٢٣", 2)
