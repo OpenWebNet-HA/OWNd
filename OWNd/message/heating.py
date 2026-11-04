@@ -313,6 +313,24 @@ def _zone_address_and_name(
 
 
 class OWNHeatingEvent(OWNEvent):
+    """A WHO 4 thermoregulation event or dimension reply.
+
+    Documentation context only (the decoding below is unchanged; no committed
+    plant trace exercises the other address classes): the WHO 4 WHERE table
+    (Encyclopedia who-4-temperature-control/addressing.md) distinguishes the
+    central unit ``#0`` and ``#0#C`` (central unit ``C`` of a multi-central
+    plant), a zone addressed through the central unit ``#Z`` / ``#Z#C``, a
+    stand-alone zone probe ``Z`` (``1..99``), a slave probe ``NZZ``
+    (``101..899``), an external probe ``N00`` and an actuator ``Z#N``; a
+    ``0#N`` is actuator ``N`` of zone 0 (a pump the zones share), not zone
+    ``N``. ``zone``, ``unique_id`` and ``actuator`` keep their long-standing
+    values for every form, and the WHAT mode tables of this module (the
+    hundreds digit selecting heating / conditioning / generic, the last two
+    the manual / automatic / off / holiday / program variants) are read as
+    before; a dimension write frame keeps the same ``message_type`` as the
+    matching read.
+    """
+
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
