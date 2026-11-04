@@ -72,7 +72,39 @@ class OWNScenarioEvent(OWNEvent):
 
 
 
+#: WHAT names the Encyclopedia establishes for WHO 9 (``who-9-auxiliaries/README.md#corpus-status``):
+#: ``*9*1*WHERE##`` ON and ``*9*0*WHERE##`` OFF only.
+AUX_WHAT_NAMES: dict[int, str] = {0: "OFF", 1: "ON"}
+
+#: Names for WHAT 2..10 as used by openwebnet4j and by the log lines below.
+#: They are NOT established by the Encyclopedia ("Unknown values remain
+#: unspecified rather than inferred"; the TS10 decoder "rejects other WHAT
+#: cases") and no committed plant trace carries them: provenance caveat only,
+#: the log strings are unchanged.
+AUX_WHAT_NAMES_UNVERIFIED: dict[int, str] = {
+    2: "TOGGLE",
+    3: "STOP",
+    4: "UP",
+    5: "DOWN",
+    6: "ENABLED",
+    7: "DISABLED",
+    8: "RESET_GEN",
+    9: "RESET_BI",
+    10: "RESET_TRI",
+}
+
+
 class OWNAuxEvent(OWNEvent):
+    """WHO 9 auxiliary channel indication, ``*9*WHAT*WHERE##``.
+
+    Encyclopedia ``who-9-auxiliaries/README.md#corpus-status`` establishes only
+    ``*#9*WHERE##`` (status request), ``*9*1*WHERE##`` (ON) and ``*9*0*WHERE##``
+    (OFF), and "does not establish an auxiliary-address range": ``channel`` is
+    the WHERE as sent, not a 1..9 number. The WHAT 2..10 names in the log
+    lines come from openwebnet4j and are unverified
+    (``AUX_WHAT_NAMES_UNVERIFIED``); they are kept as they were.
+    """
+
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
@@ -133,6 +165,7 @@ class OWNAuxEvent(OWNEvent):
 
     @property
     def channel(self) -> str | None:
+        """The WHERE as sent; the Encyclopedia establishes no auxiliary-address range."""
         return self._channel
 
     @property

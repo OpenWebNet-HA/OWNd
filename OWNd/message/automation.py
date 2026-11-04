@@ -1,4 +1,30 @@
-"""WHO 2: Automation subsystem events and commands."""
+"""WHO 2: Automation subsystem events and commands.
+
+Specification caveats (documentation context only; the decoding below is the
+long-standing behaviour and is not changed on the strength of these notes, as
+no committed on-wire plant trace exercises the advanced forms):
+
+- ``WHO_2.pdf`` / Encyclopedia ``who-2-automation/what.md``: WHAT 0 Stop, 1 Up
+  and 2 Down are the base command WHATs; ``*2*10#PRIORITY*WHERE##``,
+  ``*2*11#STEP#PRIORITY*WHERE##`` and ``*2*12#STEP#PRIORITY*WHERE##`` are the
+  published Advanced Stop / Up / Down forms (STEP ``1..99`` relative, ``100``
+  or omitted end point; PRIORITY a 3-digit ``p1p2p3`` bit field), and ``13`` /
+  ``14`` are listed only as DIMENSION 10 state values. ``OWNAutomationEvent``
+  keeps reading any command WHAT into ``state`` as before.
+- ``dimensions.md``: DIMENSION 10 is ``STATUS*LEVEL*PRIORITY*INFO`` (level
+  ``255`` = unknown position; info ``0`` normal, ``12`` PUL + disabled, ``13``
+  disabled, ``14`` command not executed, ``15`` PUL); DIMENSION 11 is the
+  go-to-level write ``*#2*WHERE*#11#PRIORITY*LEVEL##``. The published
+  event-session form is ``*#2*WHERE*#11#PRIORITY#LEVEL*SELECTOR##`` (LEVEL as
+  the second ``#`` parameter), while an F461 2.0.11 echoes the write form
+  ``*#2*25*#11#001#1*50##`` on the event session (golden fixture
+  ``cover.evt.level.50.virtual.25.f461``); both shapes parse as
+  ``OWNAutomationCommand`` and are not decoded further.
+- ``addressing.md#where-forms``: WHERE is ``0``, ``A``, ``APL``, ``#GR`` or
+  ``APL#4#INTERFACE``; an empty WHERE is not a WHO 2 address, and the firmware
+  oracle NACKs ``*2*1*##`` / ``*#2**10##`` on all twelve emulated gateways, so
+  the builders reject an empty or ``*`` WHERE (``require_non_empty_where``).
+"""
 
 from __future__ import annotations
 
@@ -14,6 +40,15 @@ from .base import (
 
 
 class OWNAutomationEvent(OWNEvent):
+    """A WHO 2 movement event or DIMENSION 10 status reply.
+
+    ``state`` is the command WHAT of a command frame, or the DIMENSION 10
+    ``shutterStatus`` of a status reply, with ``current_position`` from the
+    DIMENSION 10 level; the priority and info fields are read into private
+    attributes only. The advanced-command parameters (STEP, PRIORITY,
+    SELECTOR) stay in ``what_param`` undecoded: see the module docstring.
+    """
+
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
@@ -135,9 +170,20 @@ class OWNAutomationEvent(OWNEvent):
 
 
 class OWNAutomationCommand(OWNCommand):
+    """WHO 2 builders and parsed command frames.
+
+    Every builder passes its WHERE through ``require_non_empty_where``: an
+    empty, blank or ``*`` WHERE is not a WHO 2 address
+    (``addressing.md#where-forms``) and the resulting ``*2*1*##`` /
+    ``*#2**10##`` are NACKed by every emulated gateway in the firmware oracle.
+    A DIMENSION 11 go-to-level frame (the write or the F461 event-session echo,
+    see the module docstring) stays a plain command object.
+    """
+
     @classmethod
     def status(cls, where: str | int) -> OWNAutomationCommand:
-        message = cls(f"*#2*{where}##")
+        target = require_non_empty_where(where)
+        message = cls(f"*#2*{target}##")
         message._human_readable_log = (
             f"Requesting shutter {message._where}{message._interface_log_text} status."
         )
@@ -145,13 +191,15 @@ class OWNAutomationCommand(OWNCommand):
 
     @classmethod
     def get_shutter_status(cls, where: str | int) -> OWNAutomationCommand:
-        message = cls(f"*#2*{where}*10##")
+        target = require_non_empty_where(where)
+        message = cls(f"*#2*{target}*10##")
         message._human_readable_log = f"Requesting shutter {message._where}{message._interface_log_text} advanced status (dimension 10)."
         return message
 
     @classmethod
     def raise_shutter(cls, where: str | int) -> OWNAutomationCommand:
-        message = cls(f"*2*1*{where}##")
+        target = require_non_empty_where(where)
+        message = cls(f"*2*1*{target}##")
         message._human_readable_log = (
             f"Raising shutter {message._where}{message._interface_log_text}."
         )
@@ -159,7 +207,8 @@ class OWNAutomationCommand(OWNCommand):
 
     @classmethod
     def lower_shutter(cls, where: str | int) -> OWNAutomationCommand:
-        message = cls(f"*2*2*{where}##")
+        target = require_non_empty_where(where)
+        message = cls(f"*2*2*{target}##")
         message._human_readable_log = (
             f"Lowering shutter {message._where}{message._interface_log_text}."
         )
@@ -167,7 +216,8 @@ class OWNAutomationCommand(OWNCommand):
 
     @classmethod
     def stop_shutter(cls, where: str | int) -> OWNAutomationCommand:
-        message = cls(f"*2*0*{where}##")
+        target = require_non_empty_where(where)
+        message = cls(f"*2*0*{target}##")
         message._human_readable_log = (
             f"Stopping shutter {message._where}{message._interface_log_text}."
         )

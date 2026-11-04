@@ -4,6 +4,11 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **WHO 2 (`OWNAutomationCommand.status`, `get_shutter_status`, `raise_shutter`, `lower_shutter`, `stop_shutter`)**: an empty, blank or `*` WHERE raises `ValueError` as `set_shutter_level` and `report_shutter_level` already did; `*2*1*##` and `*#2**10##` are NACKed by all twelve emulated gateways in the firmware oracle, so the builders no longer emit them. `OWNCommand.parse` stays permissive and no decoded value changes.
+- **WHO 2 / WHO 9 documentation**: `OWNd/message/automation.py` and `OWNAuxEvent` carry docstring notes on the WHO 2 advanced-command, Dimension 10 / 11 and WHERE grammar of WHO_2.pdf / the Encyclopedia (including the F461 2.0.11 echoing the Dimension 11 write form `*#2*25*#11#001#1*50##` where the PDF publishes `*#2*WHERE*#11#PRIORITY#LEVEL*SELECTOR##`) and on the WHO 9 WHAT 2..10 names being openwebnet4j names that no committed plant trace verifies (`AUX_WHAT_NAMES`, `AUX_WHAT_NAMES_UNVERIFIED`). Decoding and log strings are unchanged.
+- **Golden corpus (WHO 2)**: `cover.dim.write.pos.75` (`*#2*93*#10*75##`) is relabelled `source: conflict` with notes explaining that WHO_2.pdf / Encyclopedia `who-2-automation/dimensions.md` define no Dimension 10 write (the position write is Dimension 11) and that no committed plant trace carries the frame; it keeps pinning parser shape only. `cover.dim.write.tilt.30` is relabelled `cover.dim.write.level.30.no_priority` (Dimension 11 is absolute position; no slat-angle dimension exists in WHO 2), and the README, `docs/protocol_conformance_matrix.md` and `tests/golden/README.md` no longer advertise "tilt angles" / "Slat Tilt". Documentation only: parsing is unchanged.
+
 ## [2.0.0b13] - 2026-11-02
 
 ### Added
