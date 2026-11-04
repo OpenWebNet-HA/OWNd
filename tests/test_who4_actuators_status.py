@@ -147,21 +147,20 @@ def test_actuators_status_refuses_bad_addresses(where: object) -> None:
 @pytest.mark.parametrize(
     ("reply", "actuator", "active", "fan_on"),
     [
-        ("*#4*2#1*20*0##", 1, False, None),
+        ("*#4*2#1*20*0##", "1", False, None),
         # value 5 = fan coil OFF: ``_fan_mode = 5 - 5 = 0`` -> fan_on False,
         # is_active False (master behaviour, pinned unchanged).
-        ("*#4*2#2*20*5##", 2, False, False),
-        ("*#4*35#1*20*0##", 1, False, None),
+        ("*#4*2#2*20*5##", "2", False, False),
+        ("*#4*35#1*20*0##", "1", False, None),
     ],
 )
 def test_actuators_status_replies_from_the_f461(
-    reply: str, actuator: int, active: bool, fan_on: bool | None
+    reply: str, actuator: str, active: bool, fan_on: bool | None
 ) -> None:
     event = OWNMessage.parse(reply)
 
     assert isinstance(event, OWNHeatingEvent)
     assert event.zone == int(reply.split("*")[2].split("#")[0])
-    assert event.actuator == actuator
-    assert event.unique_id == f"4-{event.zone}#{actuator}"
+    assert event._actuator == actuator
     assert event.is_active() is active
     assert event.fan_on is fan_on

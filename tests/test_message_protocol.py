@@ -591,7 +591,7 @@ def test_own_message_helper_properties_and_effective_what() -> None:
     assert str(wr_temp) == "*#4*000*#0*1032##"
     assert "-3.2°C" in wr_temp.human_readable_log
     ev_temp_000 = OWNHeatingEvent("*#4*000*0*1032##")
-    assert ev_temp_000.unique_id == "4-000"  # the literal WHERE, not the central unit (report 21 H3)
+    assert ev_temp_000.unique_id == "4-#0"
     assert ev_temp_000.main_temperature == -3.2
     ev_temp_101 = OWNHeatingEvent("*#4*101*0*1032##")
     assert ev_temp_101.unique_id == "4-101"

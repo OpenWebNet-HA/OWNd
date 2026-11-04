@@ -43,8 +43,6 @@ from OWNd.message import (
     MESSAGE_TYPE_MODE,
     MESSAGE_TYPE_ACTION,
     CLIMATE_MODE_OFF,
-    SEASON_HEATING,
-    SEASON_CONDITIONING,
     CLIMATE_MODE_HEAT,
     CLIMATE_MODE_COOL,
     CLIMATE_MODE_AUTO,
@@ -130,19 +128,16 @@ class TestHeatingEdgeCases:
         msg = OWNEvent.parse("*4*102*1##")
         assert isinstance(msg, OWNHeatingEvent)
         assert msg.mode == CLIMATE_MODE_OFF
-        assert msg.operating_mode == "antifreeze"
 
     def test_mode_off_variant_202(self):
         msg = OWNEvent.parse("*4*202*1##")
         assert isinstance(msg, OWNHeatingEvent)
         assert msg.mode == CLIMATE_MODE_OFF
-        assert msg.operating_mode == "thermal_protection"
 
     def test_mode_off_variant_302(self):
         msg = OWNEvent.parse("*4*302*1##")
         assert isinstance(msg, OWNHeatingEvent)
         assert msg.mode == CLIMATE_MODE_OFF
-        assert msg.operating_mode == "protection"
 
     def test_mode_cool_variant_210(self):
         msg = OWNEvent.parse("*4*210*1##")
@@ -158,7 +153,6 @@ class TestHeatingEdgeCases:
         msg = OWNEvent.parse("*4*215*1##")
         assert isinstance(msg, OWNHeatingEvent)
         assert msg.mode == CLIMATE_MODE_COOL
-        assert msg.season == SEASON_CONDITIONING
 
     def test_mode_cool_weekly_2101(self):
         msg = OWNEvent.parse("*4*2101*1##")
@@ -184,7 +178,6 @@ class TestHeatingEdgeCases:
         msg = OWNEvent.parse("*4*115*1##")
         assert isinstance(msg, OWNHeatingEvent)
         assert msg.mode == CLIMATE_MODE_HEAT
-        assert msg.season == SEASON_HEATING
 
     def test_mode_heat_weekly_1101(self):
         msg = OWNEvent.parse("*4*1101*1##")
@@ -205,7 +198,6 @@ class TestHeatingEdgeCases:
         msg = OWNEvent.parse("*4*315*1##")
         assert isinstance(msg, OWNHeatingEvent)
         assert msg.mode == CLIMATE_MODE_AUTO
-        assert msg.season is None
 
     def test_mode_holiday_23001_is_conditioning(self):
         # Legrand WHO 4 p. 5 and p. 64: 23xxx = holiday days in conditioning
@@ -214,7 +206,6 @@ class TestHeatingEdgeCases:
         msg = OWNEvent.parse("*4*23001*1##")
         assert isinstance(msg, OWNHeatingEvent)
         assert msg.mode == CLIMATE_MODE_COOL
-        assert msg.season == SEASON_CONDITIONING
         assert msg.holiday_days == 1
 
     def test_mode_holiday_13001_is_heating(self):
@@ -224,13 +215,11 @@ class TestHeatingEdgeCases:
         msg = OWNEvent.parse("*4*13001*1##")
         assert isinstance(msg, OWNHeatingEvent)
         assert msg.mode == CLIMATE_MODE_HEAT
-        assert msg.season == SEASON_HEATING
         assert msg.holiday_days == 1
 
     def test_mode_holiday_33004_is_generic(self):
         msg = OWNEvent.parse("*4*33004*#0##")
         assert msg.mode == CLIMATE_MODE_AUTO
-        assert msg.season is None
         assert msg.holiday_days == 4
 
     def test_holiday_days_is_none_for_other_modes(self):
@@ -375,11 +364,10 @@ class TestHeatingEdgeCases:
         assert cmd is not None
 
     def test_heating_zone_from_param(self):
-        """``#0#N`` is the 4-zone central unit N (``zone`` keeps N for routing); ``0#N`` is actuator N of zone 0."""
+        """``#0#N`` (4-zone central unit) names zone N; ``0#N`` is actuator N of zone 0."""
         msg = OWNEvent.parse("*4*101*#0#5##")
         assert isinstance(msg, OWNHeatingEvent)
         assert msg.zone == 5
-        assert msg.central_unit == 5
         pump = OWNEvent.parse("*#4*0#5*20*1##")
         assert isinstance(pump, OWNHeatingEvent)
         assert pump.zone == 0

@@ -24,7 +24,6 @@ def test_holiday_plan_parameter_is_a_program_not_a_temperature():
     msg = OWNEvent.parse("*4*115#1102*#0##")
     assert isinstance(msg, OWNHeatingEvent)
     assert msg.mode == CLIMATE_MODE_HEAT
-    assert msg.season == SEASON_HEATING
     assert msg.program == 2
     assert msg.set_temperature is None
     assert msg.message_type == "hvac_mode"
@@ -33,7 +32,6 @@ def test_holiday_plan_parameter_is_a_program_not_a_temperature():
 def test_cooling_holiday_plan_parameter():
     msg = OWNEvent.parse("*4*215#2102*#0##")
     assert msg.mode == CLIMATE_MODE_COOL
-    assert msg.season == SEASON_CONDITIONING
     assert msg.program == 2
     assert msg.set_temperature is None
 
@@ -65,7 +63,6 @@ def test_holiday_days_parameter_is_a_program_not_a_temperature():
     # holiday, exactly like 115#P; 13005#1102 used to read as -10.2 degrees.
     heat = OWNEvent.parse("*4*13005#1102*#0##")
     assert heat.mode == CLIMATE_MODE_HEAT
-    assert heat.season == SEASON_HEATING
     assert heat.holiday_days == 5
     assert heat.program == 2
     assert heat.set_temperature is None
@@ -73,7 +70,6 @@ def test_holiday_days_parameter_is_a_program_not_a_temperature():
 
     cool = OWNEvent.parse("*4*23005#2102*#0##")
     assert cool.mode == CLIMATE_MODE_COOL
-    assert cool.season == SEASON_CONDITIONING
     assert cool.holiday_days == 5
     assert cool.program == 2
     assert cool.set_temperature is None
@@ -81,7 +77,6 @@ def test_holiday_days_parameter_is_a_program_not_a_temperature():
 
     auto = OWNEvent.parse("*4*33005#3102*#0##")
     assert auto.mode == CLIMATE_MODE_AUTO
-    assert auto.season is None
     assert auto.holiday_days == 5
     assert auto.program == 2
     assert auto.set_temperature is None

@@ -85,7 +85,7 @@ def test_fix1_central_mode_uses_the_who4_what_table(
     Not verified: how a physical central unit reacts to them.
 
     OWNd's own parser must read each frame back as the mode that was asked for
-    (antifreeze and protection are shown as off; ``operating_mode`` tells them apart, report 21 H5). WHAT 1 / 0 are the season
+    (antifreeze and protection are shown as off). WHAT 1 / 0 are the season
     frames: they come back as ``season`` heating / conditioning with no
     operating mode (Legrand WHO 4 v2.0.0 p. 5, 13, 63).
     """
@@ -271,8 +271,7 @@ def test_fix4_actuator_status_without_actuator_falls_back_to_actuator_1(
     event = OWNEvent.parse(frame)
 
     assert isinstance(event, OWNHeatingEvent)
-    # A reply without ``#N`` names no actuator (report 21 H13).
-    assert event.actuator is None
+    assert event._actuator == "1"
     assert event.is_active() is False
 
 
@@ -280,7 +279,7 @@ def test_fix4_captured_actuator_status_keeps_its_actuator() -> None:
     """Capture: ``*#4*1#1*20*1##`` (MyHOME#466 MH200N sweep and others) names actuator 1."""
     event = OWNHeatingEvent("*#4*1#1*20*1##")
 
-    assert event.actuator == 1
+    assert event._actuator == "1"
     assert event.is_active() is True
 
 

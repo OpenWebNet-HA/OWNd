@@ -66,16 +66,13 @@ def test_central_switching_to_summer_reports_thermal_protection():
     # thermal protection (*4*202*#0##), which is "off" in the conditioning season.
     msg = _parse("*4*202*#0##")
     assert msg.mode == CLIMATE_MODE_OFF
-    assert msg.operating_mode == "thermal_protection"
     assert msg.season == SEASON_CONDITIONING
 
 
-@pytest.mark.parametrize(
-    ("raw", "mode"), [("*4*102*#0##", CLIMATE_MODE_OFF), ("*4*103*#0##", CLIMATE_MODE_OFF)]
-)
-def test_central_antifreeze_and_off_in_winter(raw, mode):
+@pytest.mark.parametrize("raw", ["*4*102*#0##", "*4*103*#0##"])
+def test_central_antifreeze_and_off_in_winter(raw):
     msg = _parse(raw)
-    assert msg.mode == mode
+    assert msg.mode == CLIMATE_MODE_OFF
     assert msg.season == SEASON_HEATING
 
 

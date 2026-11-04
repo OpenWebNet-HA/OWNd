@@ -32,7 +32,7 @@ from OWNd.message import (
         ("*4*1*23##", SEASON_HEATING, 23),
         ("*4*0*23##", SEASON_CONDITIONING, 23),
         ("*4*1*#0##", SEASON_HEATING, 0),
-        ("*4*0*#0#1##", SEASON_CONDITIONING, 1),  # the 4-zone central unit 1; ``zone`` keeps 1
+        ("*4*0*#0#1##", SEASON_CONDITIONING, 1),
     ],
 )
 def test_bare_what_0_and_1_are_season_frames(frame: str, season: str, zone: int) -> None:
@@ -42,8 +42,7 @@ def test_bare_what_0_and_1_are_season_frames(frame: str, season: str, zone: int)
     assert event.season == season
     assert event.mode is None
     assert event.zone == zone
-    subject = f"Central unit {event.address}" if event.scope == "central" else f"Zone {zone}"
-    assert event.human_readable_log == f"{subject}'s season is {season}."
+    assert event.human_readable_log == f"Zone {zone}'s season is {season}."
 
 
 @pytest.mark.parametrize(

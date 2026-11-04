@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import datetime
 from decimal import Decimal, ROUND_HALF_UP
 import math
 import re
@@ -29,86 +28,11 @@ MESSAGE_TYPE_SEASON = "hvac_season"
 
 MESSAGE_TYPE_FAN_SPEED = "fan_speed"
 MESSAGE_TYPE_ZONE_STATE = "zone_state"
-MESSAGE_TYPE_SPLIT_CONTROL = "split_control"
-# Firmware-observed zone setpoints (Dimensions 2 and 3 are not in the
-# published WHO 4 document; live F461 2.0.11, lab audit 2026-11-03).
-MESSAGE_TYPE_PROTECTION_SETPOINT = "protection_setpoint"
-MESSAGE_TYPE_ANTIFREEZE_SETPOINT = "antifreeze_setpoint"
 
-# ``OWNHeatingEvent.mode``: the coarse climate mode of a WHAT, the four
-# historical values plus two the Encyclopedia keeps apart from them
-# (``what.md`` "Protection and OFF states": antifreeze 102, thermal
-# protection 202 and generic protection 302 are protection states, not OFF;
-# "Manual and programmed operation": 115 / 215 / 315 daily holiday plan and
-# "Vacation, program and scenario forms": ``13DDD`` / ``23DDD`` / ``33DDD``
-# vacation are neither manual nor automatic). ``operating_mode`` carries the
-# fine-grained state.
 CLIMATE_MODE_OFF = "off"
 CLIMATE_MODE_HEAT = "heat"
 CLIMATE_MODE_COOL = "cool"
 CLIMATE_MODE_AUTO = "auto"
-
-# ``OWNHeatingEvent.operating_mode``: one value per published WHAT family
-# (Encyclopedia ``who-4-temperature-control/what.md``). The protection
-# values are the ``mode`` strings ``OWNHeatingCommand.set_mode`` takes.
-OPERATING_MODE_OFF = "off"  # 103 / 203 / 303
-OPERATING_MODE_ANTIFREEZE = "antifreeze"  # 102
-OPERATING_MODE_THERMAL_PROTECTION = "thermal_protection"  # 202
-OPERATING_MODE_PROTECTION = "protection"  # 302, generic protection
-OPERATING_MODE_MANUAL = "manual"  # 110 / 210 / 310 (optionally #T)
-OPERATING_MODE_AUTOMATIC = "automatic"  # 111 / 211 / 311
-OPERATING_MODE_TIMED_MANUAL = "timed_manual"  # 112 / 212 / 312 (undocumented)
-OPERATING_MODE_HOLIDAY = "holiday"  # 115 / 215 / 315, daily holiday plan
-OPERATING_MODE_VACATION = "vacation"  # 13DDD / 23DDD / 33DDD
-OPERATING_MODE_PROGRAM = "program"  # 11PP / 21PP / 31PP
-OPERATING_MODE_SCENARIO = "scenario"  # 12SS / 22SS / 32SS
-OPERATING_MODE_CANCEL_VACATION = "cancel_vacation"  # 3000, 3000#PROGRAM
-OPERATING_MODE_RESTORE_LAST_PROGRAM = "restore_last_program"  # 3100
-OPERATING_MODE_RESTORE_LAST_SCENARIO = "restore_last_scenario"  # 3200
-
-# ``OWNHeatingEvent.scope``: the address class of the WHERE (Encyclopedia
-# ``who-4-temperature-control/addressing.md``, "Published functional WHERE
-# forms", "MyHOME_Suite address rules", "Actuator addressing" and
-# "Historical central-unit variants"; the classes are not interchangeable,
-# "clients must not normalize all Temperature Control WHERE values to one
-# integer zone identifier").
-SCOPE_CENTRAL = "central"  # #0 (3550), #0#C (4695 central unit C)
-SCOPE_ZONE_VIA_CENTRAL = "zone_via_central"  # #Z, #Z#C
-SCOPE_MASTER_PROBE = "master_probe"  # Z, 1..99
-SCOPE_ALL_PROBES = "all_probes"  # 0 (every probe), 0ZZ (every probe of zone ZZ)
-SCOPE_SLAVE_PROBE = "slave_probe"  # PZZ, probe P 1..8 of zone ZZ
-SCOPE_EXTERNAL_PROBE = "external_probe"  # P00 (historical external-probe rule)
-SCOPE_ACTUATOR = "actuator"  # Z#N (N 0 for all actuators of the zone)
-SCOPE_SPLIT_UNIT = "split_unit"  # 3#Z#N under DIMENSION 22
-
-# DIMENSION 22 split-unit fields (Encyclopedia ``dimensions.md`` "DIMENSION
-# 22 - split control"): ``MOD`` and ``VEL``.
-SPLIT_MODE_OFF = "off"
-SPLIT_MODE_WINTER = "winter"
-SPLIT_MODE_SUMMER = "summer"
-SPLIT_MODE_FAN = "fan"
-SPLIT_MODE_DEHUMIDIFICATION = "dehumidification"
-SPLIT_MODE_AUTOMATIC = "automatic"
-SPLIT_FAN_AUTOMATIC = "automatic"
-SPLIT_FAN_MINIMUM = "minimum"
-SPLIT_FAN_MEDIUM = "medium"
-SPLIT_FAN_MAXIMUM = "maximum"
-SPLIT_FAN_SILENT = "silent"
-_SPLIT_MODES = {
-    "0": SPLIT_MODE_OFF,
-    "1": SPLIT_MODE_WINTER,
-    "2": SPLIT_MODE_SUMMER,
-    "3": SPLIT_MODE_FAN,
-    "4": SPLIT_MODE_DEHUMIDIFICATION,
-    "5": SPLIT_MODE_AUTOMATIC,
-}
-_SPLIT_FAN_SPEEDS = {
-    "0": SPLIT_FAN_AUTOMATIC,
-    "1": SPLIT_FAN_MINIMUM,
-    "2": SPLIT_FAN_MEDIUM,
-    "3": SPLIT_FAN_MAXIMUM,
-    "4": SPLIT_FAN_SILENT,
-}
 
 SEASON_HEATING = "heating"
 SEASON_CONDITIONING = "conditioning"
@@ -149,20 +73,9 @@ _ZONE_STATES = {
 
 
 _WHO4_TEMP_REGEX = re.compile(r"^[01][0-9]{3}$")
-# A three-digit DIMENSION 15 value (``*#4*11*15*1*123*1111##``), unsigned tenths.
-_WHO4_SHORT_TEMP_REGEX = re.compile(r"[0-9]{3}", re.ASCII)
-# DIMENSION 22 ``SP``: tenths of a degree, three or four digits, unsigned.
-_WHO4_SPLIT_SETPOINT_REGEX = re.compile(r"[0-9]{3,4}", re.ASCII)
+# DIMENSION 60 humidity value: digits with an optional decimal part. An empty
+# value (``*#4*1*60*##``) is no reading and must not raise out of the parser.
 _WHO4_HUMIDITY_REGEX = re.compile(r"[0-9]+(?:\.[0-9]+)?", re.ASCII)
-# DIMENSION 19 fan-coil OFF states beyond the published 0..8 table.
-_FAN_COIL_OFF_STATES = (14, 15, 16)
-# DIMENSION 19 published valve / fan-coil values (dimensions.md "DIMENSION 19"):
-# 0 off, 1 on, 2 opened, 3 closed, 4 stop, 5 fan-coil off, 6..8 fan-coil on.
-_VALVE_PUBLISHED_STATES = range(0, 9)
-# DIMENSION 14 published setpoint range ``0050..0400`` (dimensions.md
-# "DIMENSION 14", page 18); a reply outside it is kept and flagged in the log.
-_WHO4_SETPOINT_MIN = 5.0
-_WHO4_SETPOINT_MAX = 40.0
 
 # WHO 4 DIMENSION 22 is the published split-unit (air conditioning) IR
 # control: ``*#4*3#Z#N*22##`` requests the current setting and
@@ -347,191 +260,19 @@ def _zone_state_text(values: list[str]) -> str | None:
     return f"{context} {state}"
 
 
-# The WHERE of a WHO 4 event, by address class (Encyclopedia
-# ``who-4-temperature-control/addressing.md``). Leading zeros and the ``#``
-# prefix are significant: ``1`` (master probe of zone 1), ``001`` (all probes
-# of zone 1), ``#1`` (zone 1 through the central unit) and ``101`` (probe 1 of
-# zone 1) are four addresses; ``0`` (all probes) is not ``#0`` (the central
-# unit) and ``#0#C`` is the 4-zone central unit ``C``, not zone ``C``
-# ("MyHOME_Suite address rules" ``#0#[ZA][ZB]``; "Historical central-unit
-# variants": central-unit command ``#0#C``, zone command ``#Z#C``; ENCY_CONFIRM
-# TC-H1 OPEN.db rule ``1004 four-zone control unit #0#[ZA][ZB]``; firmware
-# oracle ``*4*303*#0#1##`` -> central-unit telegram with selector byte ``01``
-# on ten of twelve gateways, ORACLE_CONFIRM H1). A trailing ``#4#NN`` is a
-# bus-interface qualifier (``protocol/addressing.md`` routing qualifiers), not
-# actuator 4. ASCII digits only.
-_WHO4_INTERFACE_SUFFIX_REGEX = re.compile(r"(?P<base>.+)#4#(?P<interface>[0-9]{2})", re.ASCII)
-_WHO4_ZONE_VIA_CENTRAL_REGEX = re.compile(
-    r"#(?P<zone>[1-9][0-9]?)(?:#(?P<unit>0[1-9]|[1-9][0-9]?))?", re.ASCII
-)
-_WHO4_MASTER_PROBE_REGEX = re.compile(r"[1-9][0-9]?", re.ASCII)
-_WHO4_ALL_PROBES_REGEX = re.compile(r"0|0(?P<zone>[0-9]{2})", re.ASCII)
-_WHO4_SLAVE_PROBE_REGEX = re.compile(r"(?P<probe>[1-8])(?P<zone>0[1-9]|[1-9][0-9])", re.ASCII)
-_WHO4_EXTERNAL_PROBE_REGEX = re.compile(r"(?P<probe>[1-9])00", re.ASCII)
-_WHO4_ACTUATOR_REGEX = re.compile(r"(?P<zone>0|[1-9][0-9]?)#(?P<actuator>[0-9])", re.ASCII)
-_WHO4_SPLIT_UNIT_REGEX = re.compile(r"3#(?P<zone>0|[1-9][0-9]?)#(?P<actuator>[1-9])", re.ASCII)
-_WHO4_LEGACY_ZONE_REGEX = re.compile(r"#?(?P<zone>[0-9]+)(?:#[0-9]+)*", re.ASCII)
-
-
-class _Who4Address:
-    """The decoded WHERE of a WHO 4 event (see ``OWNHeatingEvent.scope``)."""
-
-    __slots__ = (
-        "address",
-        "scope",
-        "zone",
-        "zone_number",
-        "central_unit",
-        "probe_number",
-        "actuator",
-        "interface",
-        "base",
-    )
-
-    def __init__(self, where: str | None, where_param: list[str], dimension: int | None) -> None:
-        self.address = "#".join([where or "", *where_param])
-        self.scope: str | None = None
-        # The legacy integer zone: 0 for ``#0`` and the general address, ``C``
-        # for the 4-zone central unit ``#0#C`` (MyHOME routes ``#0#C`` frames
-        # on ``zone == C``; ``scope`` / ``central_unit`` / ``unique_id`` carry
-        # the central-unit identity).
-        self.zone = 0
-        self.zone_number: int | None = None
-        self.central_unit: int | None = None
-        self.probe_number: int | None = None
-        self.actuator: int | None = None
-        self.interface: str | None = None
-        base = self.address
-        if suffix := _WHO4_INTERFACE_SUFFIX_REGEX.fullmatch(base):
-            base = suffix.group("base")
-            self.interface = suffix.group("interface")
-        self.base = base  # the address without its ``#4#NN`` interface qualifier
-        if _WHO4_CENTRAL_WHERE_REGEX.fullmatch(base):
-            self.scope = SCOPE_CENTRAL
-            self.central_unit = int(base[3:]) if len(base) > 2 else None
-            if self.central_unit is not None:
-                self.zone = self.central_unit
-        elif match := _WHO4_ZONE_VIA_CENTRAL_REGEX.fullmatch(base):
-            self.scope = SCOPE_ZONE_VIA_CENTRAL
-            self.zone = self.zone_number = int(match.group("zone"))
-            self.central_unit = int(match.group("unit")) if match.group("unit") else None
-        elif _WHO4_MASTER_PROBE_REGEX.fullmatch(base):
-            self.scope = SCOPE_MASTER_PROBE
-            self.zone = self.zone_number = int(base)
-        elif match := _WHO4_ALL_PROBES_REGEX.fullmatch(base):
-            self.scope = SCOPE_ALL_PROBES
-            if match.group("zone") and int(match.group("zone")):
-                self.zone = self.zone_number = int(match.group("zone"))
-        elif match := _WHO4_SLAVE_PROBE_REGEX.fullmatch(base):
-            self.scope = SCOPE_SLAVE_PROBE
-            self.zone = self.zone_number = int(match.group("zone"))
-            self.probe_number = int(match.group("probe"))
-        elif match := _WHO4_EXTERNAL_PROBE_REGEX.fullmatch(base):
-            self.scope = SCOPE_EXTERNAL_PROBE
-            self.probe_number = int(match.group("probe"))
-        elif dimension == 22 and (match := _WHO4_SPLIT_UNIT_REGEX.fullmatch(base)):
-            self.scope = SCOPE_SPLIT_UNIT
-            self.zone = self.zone_number = int(match.group("zone"))
-            self.actuator = int(match.group("actuator"))
-        elif match := _WHO4_ACTUATOR_REGEX.fullmatch(base):
-            self.scope = SCOPE_ACTUATOR
-            self.zone = self.zone_number = int(match.group("zone"))
-            self.actuator = int(match.group("actuator"))
-        elif match := _WHO4_LEGACY_ZONE_REGEX.fullmatch(base):
-            # Not a published class (``#105``, ``2#10``, ``#0#0``, ``901``):
-            # no scope; the legacy integer zone keeps the old reading.
-            self.zone = int(match.group("zone"))
-            if self.zone > 99:
-                self.probe_number = int(str(self.zone)[:1])
-                self.zone = int(str(self.zone)[1:])
-
-    @property
-    def unique_id(self) -> str:
-        """``4-<WHERE>`` (``4-001`` is not ``4-1``, ``4-0`` is not ``4-#0``), one id per zone.
-
-        ``#Z`` and ``#Z#C`` share the ``4-Z`` of the master probe ``Z`` (the
-        Encyclopedia calls ``#N`` "zone N through the central unit"; MyHOME
-        routes a zone on that id), with any ``#4#NN`` interface appended.
-        """
-        subject = str(self.zone_number) if self.scope == SCOPE_ZONE_VIA_CENTRAL else self.base
-        if self.interface is not None:
-            return f"4-{subject}#4#{self.interface}"
-        return f"4-{subject}"
-
-    @property
-    def subject(self) -> str:
-        """The subject of a log line: 'Zone 2', 'Central unit #0#1', 'Zone 1 (all probes)', ..."""
-        if self.scope == SCOPE_CENTRAL:
-            return f"Central unit {self.address}"
-        if self.scope == SCOPE_ALL_PROBES and self.zone_number is None:
-            return "Every probe"
-        if self.scope == SCOPE_ALL_PROBES:
-            return f"Every probe of zone {self.zone_number}"
-        if self.scope == SCOPE_EXTERNAL_PROBE:
-            return f"External probe {self.address}"
-        if self.scope == SCOPE_SPLIT_UNIT:
-            return f"Zone {self.zone_number}'s split unit {self.actuator}"
-        return f"Zone {self.zone}"
-
-
-# A builder WHERE: a zone ``Z`` (0..99) or ``#Z``, the central unit ``#0`` or
-# ``#0#C``, a zone under a 4-zone central unit ``Z#C`` / ``#Z#C``. Exactly one
-# or two digits per field: a three-digit ``001`` (all probes of zone 1) or
-# ``105`` (probe 1 of zone 5) is a probe-class address the zone-setup forms
-# ``#1..#99`` do not take (Encyclopedia ``what.md`` "Zone setup commands";
-# ORACLE_CONFIRM H19: ``*#4*#105*#14*0200*1##`` is refused or forwarded with
-# a zone byte 0x69 no documented zone has), so it is refused instead of being
-# rewritten to ``#1`` / ``#105``.
-_WHO4_BUILDER_ZONE_REGEX = re.compile(
-    r"#?(?P<zone>[0-9]{1,2})(?:#(?P<unit>[0-9]{1,2}))?", re.ASCII
-)
-
-
-def _builder_zone_parts(where: str | int) -> tuple[str, int, int | None]:
-    """Split a builder WHERE into (text without ``#``, zone, central selector), else raise ``ValueError``."""
-    where_str = str(where).strip() if where is not None else ""
-    match = _WHO4_BUILDER_ZONE_REGEX.fullmatch(where_str)
-    if match is None:
-        raise ValueError(
-            f"Invalid zone address: {where!r} (a zone is 0..99, '#Z', '#0', '#0#C' or '#Z#C'; "
-            "three-digit probe addresses such as '001' or '105' are not zones)"
-        )
-    zone = int(match.group("zone"))
-    unit = int(match.group("unit")) if match.group("unit") is not None else None
-    if zone == 0 and unit is not None and not where_str.startswith("#"):
-        # ``0#N`` is actuator N of zone 0 in the Dimension 20 actuator
-        # grammar (Encyclopedia addressing.md "Actuator addressing"; the event
-        # classifier labels it SCOPE_ACTUATOR), not a spelling of the
-        # 4-zone central unit ``#0#N``: refuse it instead of retargeting.
-        raise ValueError(
-            f"Invalid zone address: {where!r} ('0#N' is actuator N of zone 0, "
-            "not the 4-zone central unit; pass '#0#N' for the central unit)"
-        )
-    clean = where_str[1:] if where_str.startswith("#") else where_str
-    return clean, zone, unit
-
-
 def _zone_number(where: str | int) -> int:
     """Zone of a WHO 4 address: the first field, so ``#23#1`` and ``23#1`` are zone 23.
 
     libqtdevices TS10_1_0_23 addresses a probe ``#23#1`` and writes the plain
     zone for fan speed (``*#4*23*#11*3##``, test_probe_device.cpp line 139).
-    A non-numeric shape raises ``ValueError("Invalid zone address ...")``;
-    a zone above 99 or a three-digit probe-class address (``001``, ``105``)
-    raises ``ValueError("Invalid zone number ...")``.
     """
-    where_str = str(where).strip() if where is not None else ""
+    where_str = str(where)
     if where_str.startswith("##"):
         raise ValueError(f"Invalid zone address: {where}")
     clean = where_str[1:] if where_str.startswith("#") else where_str
     parts = clean.split("#")
     if not parts or any(not p.isdigit() for p in parts) or len(parts) > 2:
         raise ValueError(f"Invalid zone address: {where}")
-    if len(parts[0]) > 2 or int(parts[0]) > 99:
-        raise ValueError(
-            f"Invalid zone number: {parts[0]}. Zone must be 1..99 "
-            "(three-digit addresses such as '001' or '105' are probes)"
-        )
     return int(parts[0])
 
 
@@ -541,80 +282,55 @@ def _zone_address_and_name(
     """Parse a WHO 4 WHERE address into (zone_str, zone_name).
 
     Preserves full compound addresses for central-unit controlled devices
-    (``#23#1`` / ``23#1`` -> ``#23#1``, "zone 23") as expected by central
-    units and libqtdevices TS10_1_0_23 (test_probe_device.cpp line 111,
-    automatic ``*4*311*#23#1##`` and setpoint ``*#4*#23#1*#14*0250*3##``),
-    and the central unit itself: ``#0`` ("the central unit") and ``#0#C``
-    (the 4-zone central unit ``C``, Encyclopedia ``addressing.md``
-    "Historical central-unit variants"; ``#0#1`` is the central unit with
-    selector 1, not zone 1). The general address ``0`` is the central unit
-    ``#0`` unless ``standalone`` is set, in which case the frame keeps the
-    literal ``0`` (Encyclopedia "Published functional WHERE forms": ``0`` is
-    every probe, ``#0`` the central unit; the firmware oracle NACKs
-    ``*4*303*0##`` on all twelve gateways, ORACLE_CONFIRM H3, so a caller
-    who wants the central unit passes ``#0``). Three-digit probe-class
-    addresses (``001``, ``105``, ``#105``) and the actuator form ``0#N``
-    (actuator N of zone 0, not the central unit ``#0#N``) raise
-    ``ValueError``.
+    (e.g. ``#0#1`` -> ``#0#1``, ``#23#1`` / ``23#1`` -> ``#23#1``) as expected
+    by central units and libqtdevices TS10_1_0_23 (test_probe_device.cpp line 111,
+    automatic ``*4*311*#23#1##`` and setpoint ``*#4*#23#1*#14*0250*3##``).
     """
-    clean, zone_number, unit = _builder_zone_parts(where)
-    if unit is not None:
-        # Compound address: 4-zone central unit (#0#C) or zone under it (#Z#C / Z#C)
+    where_str = str(where)
+    if where_str.startswith("##"):
+        raise ValueError(f"Invalid zone address: {where}")
+    clean = where_str[1:] if where_str.startswith("#") else where_str
+    parts = clean.split("#")
+    if not parts or any(not p.isdigit() for p in parts) or len(parts) > 2:
+        raise ValueError(f"Invalid zone address: {where}")
+
+    zone_number = int(parts[0])
+    if len(parts) > 1:
+        # Compound address: 4-zone central (#0#N) or probe under central (#Z#C / Z#C)
         zone_str = f"#{clean}"
         if zone_number == 0:
-            zone_name = f"central unit {zone_str}"
+            zone_name = f"zone {int(parts[1])}"
         else:
             zone_name = f"zone {zone_number}"
-    elif zone_number == 0:
-        zone_str = "0" if standalone and not str(where).strip().startswith("#") else "#0"
-        zone_name = "general" if zone_str == "0" else "central unit #0"
     else:
-        zone_name = f"zone {zone_number}"
-        zone_str = str(zone_number) if standalone else f"#{zone_number}"
+        zone_name = f"zone {zone_number}" if zone_number > 0 else "general"
+        if standalone:
+            zone_str = f"#{zone_number}" if zone_number == 0 else str(zone_number)
+        else:
+            zone_str = f"#{zone_number}"
 
     return zone_str, zone_name
 
 
 class OWNHeatingEvent(OWNEvent):
-    """A WHO 4 event or reply.
-
-    The WHERE is kept in its address class (``scope``; Encyclopedia
-    ``who-4-temperature-control/addressing.md``): ``zone`` is the legacy
-    integer zone (0 for the central unit, the general address and an
-    external probe), ``zone_number`` the zone of a zone-class address,
-    ``central_unit`` the 4-zone central-unit selector ``C`` of ``#0#C`` /
-    ``#Z#C``, ``probe_number`` the probe ``P`` of ``PZZ`` / ``P00``,
-    ``actuator`` the ``N`` of ``Z#N`` / ``3#Z#N``, ``interface`` a trailing
-    ``#4#NN`` bus-interface qualifier and ``address`` the whole WHERE.
-    ``unique_id`` tells the probe-, actuator- and central-unit classes apart
-    (``4-1`` master probe, ``4-001`` all probes of zone 1, ``4-0`` all
-    probes, ``4-#0`` / ``4-#0#2`` central units, ``4-2#1`` actuator,
-    ``4-3#2#1`` split unit, ``4-105`` slave probe) but keeps one id per
-    zone for the zone forms MyHOME routes on: ``#Z`` and ``#Z#C`` share
-    ``4-Z`` with the master probe ``Z`` (``4-1#4#01`` likewise for ``1#4#01``
-    and ``#1#4#01``).
-
-    A WHAT sets ``mode`` (coarse: heat / cool / auto / off / protection /
-    holiday, see ``CLIMATE_MODE_*``), ``season`` and ``operating_mode``
-    (``OPERATING_MODE_*``, one value per WHAT family of ``what.md``).
-    """
-
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._type = None
 
-        self._address = _Who4Address(self._where, self._where_param, self._dimension)
-        self._zone = self._address.zone
-        # ``_sensor`` is the probe number of a ``PZZ`` / ``P00`` WHERE (the
-        # legacy name of ``probe_number``); DIMENSION 15 overrides it.
-        self._sensor: int | None = self._address.probe_number
-        self._actuator: int | None = self._address.actuator
-        self._operating_mode: str | None = None
-        self._split_mode: str | None = None
-        self._split_setpoint: float | None = None
-        self._split_fan_speed: str | None = None
-        self._split_swing: bool | None = None
+        where = self._where or "0"
+        self._zone = (
+            int(where[1:]) if where.startswith("#") else int(where)
+        )
+        # ``#0#N`` is zone N of a 4-zone central unit; ``0#N`` is actuator N
+        # of zone 0 (a pump the zones share), not zone N.
+        if self._zone == 0 and self._where_param and where.startswith("#"):
+            self._zone = int(self._where_param[0])
+        self._sensor = None
+        if self._zone > 99:
+            self._sensor = int(str(self._zone)[:1])
+            self._zone = int(str(self._zone)[1:])
+        self._actuator = None
 
         self._mode = None
         self._mode_name = None
@@ -626,8 +342,6 @@ class OWNHeatingEvent(OWNEvent):
         self._local_offset_raw = None
         self._local_control_state = None
         self._local_set_temperature = None
-        self._protection_setpoint: float | None = None
-        self._antifreeze_setpoint: float | None = None
         self._measured_temperature = None
         self._secondary_temperature = None
         self._measured_humidity = None
@@ -649,25 +363,9 @@ class OWNHeatingEvent(OWNEvent):
 
         _valve_active_states = ["1", "2", "6", "7", "8"]
         _actuator_active_states = ["1", "2", "6", "7", "8", "9"]
-        subject = self._address.subject
-        is_write = self._message_type == "DIMENSION_WRITING"
 
         if self._what is not None:
             self._mode = int(self._what)
-            # Season of a season-specific WHAT: 1xx / 11xx / 12xx / 13xxx
-            # heating, 2xx / 21xx / 22xx / 23xxx conditioning (Encyclopedia
-            # what.md); generic 3xx forms have none.
-            _family = str(self._what)[0] if 100 <= self._mode <= 39999 else ""
-            _season = {"1": SEASON_HEATING, "2": SEASON_CONDITIONING}.get(_family)
-            # The last two digits of a 3- or 4-digit WHAT name the operating
-            # state (02 protection, 03 off, 10 manual, 11 automatic, 12 timed
-            # manual, 15 daily holiday) or the program / scenario family
-            # (x1PP, x2SS); five digits are the vacation days x3DDD.
-            _coarse = {
-                "1": CLIMATE_MODE_HEAT,
-                "2": CLIMATE_MODE_COOL,
-                "3": CLIMATE_MODE_AUTO,
-            }.get(_family)
 
             if self._mode in (0, 1) and not self._what_param:
                 # Zone operation mode frame: the zone (or the central unit)
@@ -686,137 +384,73 @@ class OWNHeatingEvent(OWNEvent):
                 self._season = (
                     SEASON_HEATING if self._mode == 1 else SEASON_CONDITIONING
                 )
-                self._human_readable_log = f"{subject}'s season is {self._season}."
-            elif self._mode in (102, 202, 302):
-                # Protection states (Encyclopedia what.md "Protection and OFF
-                # states": 102 antifreeze, 202 thermal protection, 302 generic
-                # protection). ``mode`` stays ``off`` (MyHOME turns the zone
-                # OFF on them and pins the log line); the finer state is
-                # ``operating_mode`` (ENCY_CONFIRM TC-H5: the touchscreen
-                # client keeps "local protection" and "local OFF" apart).
+                self._human_readable_log = (
+                    f"Zone {self._zone}'s season is {self._season}."
+                )
+            elif self._mode in [103, 203, 303, 102, 202, 302]:
                 self._type = MESSAGE_TYPE_MODE
                 self._mode_name = CLIMATE_MODE_OFF
-                self._season = _season
-                self._operating_mode = {
-                    102: OPERATING_MODE_ANTIFREEZE,
-                    202: OPERATING_MODE_THERMAL_PROTECTION,
-                    302: OPERATING_MODE_PROTECTION,
-                }[self._mode]
+                if self._mode in (102, 103):
+                    self._season = SEASON_HEATING
+                elif self._mode in (202, 203):
+                    self._season = SEASON_CONDITIONING
                 self._human_readable_log = (
-                    f"{subject}'s mode is set to '{self._mode_name}'"
-                )
-            elif self._mode in (103, 203, 303):
-                self._type = MESSAGE_TYPE_MODE
-                self._mode_name = CLIMATE_MODE_OFF
-                self._season = _season
-                self._operating_mode = OPERATING_MODE_OFF
-                self._human_readable_log = (
-                    f"{subject}'s mode is set to '{self._mode_name}'"
-                )
-            elif self._mode in (110, 210, 310, 111, 211, 311, 112, 212, 312):
-                # Manual (x10), automatic (x11; Encyclopedia what.md "Manual
-                # and programmed operation") and timed manual (x12: not in
-                # the published table, the 312#TTTT#H form of libqtdevices
-                # ThermalDevice4Zones::setManualTempTimed and the Encyclopedia
-                # "Historical timed-manual DIMENSION 32"). ``mode`` keeps the
-                # season-coloured heat / cool / auto values.
-                self._type = MESSAGE_TYPE_MODE
-                self._mode_name = _coarse
-                self._season = _season
-                self._operating_mode = {
-                    0: OPERATING_MODE_MANUAL,
-                    1: OPERATING_MODE_AUTOMATIC,
-                    2: OPERATING_MODE_TIMED_MANUAL,
-                }[self._mode % 10]
-                self._human_readable_log = (
-                    f"{subject}'s mode is set to '{self._mode_name}' ({self._operating_mode.replace('_', ' ')})"
-                )
-            elif self._mode in (115, 215, 315):
-                # Daily holiday plan (Encyclopedia what.md "Manual and
-                # programmed operation"): neither manual nor automatic;
-                # ``mode`` keeps the season-coloured heat / cool / auto value
-                # MyHOME pins, ``operating_mode`` says ``holiday``.
-                self._type = MESSAGE_TYPE_MODE
-                self._mode_name = _coarse
-                self._season = _season
-                self._operating_mode = OPERATING_MODE_HOLIDAY
-                self._human_readable_log = (
-                    f"{subject}'s mode is set to '{self._mode_name}' (daily holiday plan)"
+                    f"Zone {self._zone}'s mode is set to '{self._mode_name}'"
                 )
             elif (
-                13001 <= self._mode <= 13255
-                or 23001 <= self._mode <= 23255
-                or 33001 <= self._mode <= 33255
+                self._mode in [210, 211, 212, 215]
+                or (self._mode >= 2101 and self._mode <= 2103)
+                or (self._mode >= 2201 and self._mode <= 2216)
+                or (self._mode >= 23001 and self._mode <= 23255)
             ):
-                # Vacation for DDD days (Encyclopedia what.md "Vacation,
-                # program and scenario forms", 001..255; Legrand WHO 4 p. 5 /
-                # p. 64; libqtdevices thermal_device.cpp:58, 258-262, 303-307).
+                # 23xxx: holiday days in conditioning mode (Legrand WHO 4
+                # p. 5 / p. 64; libqtdevices thermal_device.cpp:58, 258-262).
                 self._type = MESSAGE_TYPE_MODE
-                self._mode_name = _coarse
-                self._season = _season
-                self._operating_mode = OPERATING_MODE_VACATION
-                self._holiday_days = self._mode % 1000
+                self._mode_name = CLIMATE_MODE_COOL
+                self._season = SEASON_CONDITIONING
+                if self._mode >= 23001:
+                    self._holiday_days = self._mode % 1000
                 self._human_readable_log = (
-                    f"{subject}'s mode is set to '{self._mode_name}' (vacation for {self._holiday_days} days)"
+                    f"Zone {self._zone}'s mode is set to '{self._mode_name}'"
                 )
             elif (
-                1101 <= self._mode <= 1103
-                or 2101 <= self._mode <= 2103
-                or 3101 <= self._mode <= 3116
+                self._mode in [110, 111, 112, 115]
+                or (self._mode >= 1101 and self._mode <= 1103)
+                or (self._mode >= 1201 and self._mode <= 1216)
+                or (self._mode >= 13001 and self._mode <= 13255)
             ):
-                # Weekly program (Encyclopedia what.md: 1..3; 3104..3116 are
-                # beyond the public domain but BTicino's own client serialises
-                # program 12 and 15, ENCY_CONFIRM TC-H10, so they stay
-                # accepted). Legrand WHO 4 p. 5 and p. 64; libqtdevices
-                # thermal_device.cpp:209-211, 246-256, 291-301.
+                # 13xxx: holiday days in heating mode (Legrand WHO 4 p. 5 /
+                # p. 64; libqtdevices thermal_device.cpp:68, 303-307).
                 self._type = MESSAGE_TYPE_MODE
-                self._mode_name = _coarse
-                self._season = _season
-                self._operating_mode = OPERATING_MODE_PROGRAM
-                self._program = self._mode % 100
+                self._mode_name = CLIMATE_MODE_HEAT
+                self._season = SEASON_HEATING
+                if self._mode >= 13001:
+                    self._holiday_days = self._mode % 1000
                 self._human_readable_log = (
-                    f"{subject}'s mode is set to '{self._mode_name}' (weekly program {self._program})"
+                    f"Zone {self._zone}'s mode is set to '{self._mode_name}'"
                 )
             elif (
-                1201 <= self._mode <= 1216
-                or 2201 <= self._mode <= 2216
-                or 3201 <= self._mode <= 3216
+                self._mode in [310, 311, 312, 315]
+                or (self._mode >= 3101 and self._mode <= 3116)
+                or (self._mode >= 3201 and self._mode <= 3216)
+                or (self._mode >= 33001 and self._mode <= 33255)
             ):
                 self._type = MESSAGE_TYPE_MODE
-                self._mode_name = _coarse
-                self._season = _season
-                self._operating_mode = OPERATING_MODE_SCENARIO
-                self._scenario = self._mode % 100
+                self._mode_name = CLIMATE_MODE_AUTO
+                if self._mode >= 33001:
+                    self._holiday_days = self._mode % 1000
                 self._human_readable_log = (
-                    f"{subject}'s mode is set to '{self._mode_name}' (scenario {self._scenario})"
+                    f"Zone {self._zone}'s mode is set to '{self._mode_name}'"
                 )
-            elif self._mode == 3000:
-                # Cancel vacation, restore the last weekly program (3000) or
-                # choose one (3000#PROGRAM; Encyclopedia what.md "Vacation,
-                # program and scenario forms").
-                self._type = MESSAGE_TYPE_MODE
-                self._mode_name = CLIMATE_MODE_AUTO
-                self._operating_mode = OPERATING_MODE_CANCEL_VACATION
-                self._human_readable_log = f"{subject} cancels its vacation"
-            elif self._mode == 3100:
-                self._type = MESSAGE_TYPE_MODE
-                self._mode_name = CLIMATE_MODE_AUTO
-                self._operating_mode = OPERATING_MODE_RESTORE_LAST_PROGRAM
-                self._human_readable_log = f"{subject} restores its last weekly program"
-            elif self._mode == 3200:
-                self._type = MESSAGE_TYPE_MODE
-                self._mode_name = CLIMATE_MODE_AUTO
-                self._operating_mode = OPERATING_MODE_RESTORE_LAST_SCENARIO
-                self._human_readable_log = f"{subject} restores its last scenario"
             elif self._mode == 20:
                 self._mode_name = None
                 self._human_readable_log = (
-                    f"{subject}'s remote control is disabled"
+                    f"Zone {self._zone}'s remote control is disabled"
                 )
             elif self._mode == 21:
                 self._mode_name = None
                 self._human_readable_log = (
-                    f"{subject}'s remote control is enabled"
+                    f"Zone {self._zone}'s remote control is enabled"
                 )
             elif self._mode in (22, 23, 24, 30, 31):
                 # Central unit system status (Legrand WHO 4 p. 5, p. 64):
@@ -832,27 +466,43 @@ class OWNHeatingEvent(OWNEvent):
                     31: "the central unit battery is KO",
                 }[self._mode]
                 self._human_readable_log = (
-                    f"{subject}'s central unit reports {_status_text}"
+                    f"Zone {self._zone}'s central unit reports {_status_text}"
                 )
-            elif self._mode == 40:
-                # Release local probe adjustment (Encyclopedia what.md "Basic
-                # operating states").
-                self._mode_name = None
-                self._human_readable_log = f"{subject} releases its local probe adjustment"
             else:
                 self._mode_name = None
-                self._human_readable_log = f"{subject}'s mode is unknown"
+                self._human_readable_log = f"Zone {self._zone}'s mode is unknown"
+
+            # Program / scenario numbers carried in the WHAT (Legrand WHO 4
+            # p. 5 and p. 64; libqtdevices thermal_device.cpp:209-211, 246-256,
+            # 291-301): 11xx/21xx/31xx program, 12xx/22xx/32xx scenario.
+            if self._type == MESSAGE_TYPE_MODE:
+                if (
+                    1101 <= self._mode <= 1103
+                    or 2101 <= self._mode <= 2103
+                    or 3101 <= self._mode <= 3116
+                ):
+                    self._program = self._mode % 100
+                elif (
+                    1201 <= self._mode <= 1216
+                    or 2201 <= self._mode <= 2216
+                    or 3201 <= self._mode <= 3216
+                ):
+                    self._scenario = self._mode % 100
 
             if (
-                self._operating_mode in (OPERATING_MODE_HOLIDAY, OPERATING_MODE_VACATION, OPERATING_MODE_CANCEL_VACATION)
+                (
+                    self._mode in (115, 215, 315)
+                    or 13001 <= self._mode <= 13255
+                    or 23001 <= self._mode <= 23255
+                    or 33001 <= self._mode <= 33255
+                )
                 and self._what_param
                 and self._what_param[0]
             ):
-                # Holiday daily plan (115#P), holiday days (13DDD#P, 23DDD#P,
-                # 33DDD#P, as sent by set_central_holiday) and cancel vacation
-                # (3000#P): the parameter is the weekly program the central
-                # unit resumes afterwards, 1101-1103 / 2101-2103 / 31PP
-                # (Encyclopedia what.md; Legrand WHO 4 p. 56 and p. 64,
+                # Holiday daily plan (115#P) and holiday days (13DDD#P, 23DDD#P,
+                # 33DDD#P, as sent by set_central_holiday): the parameter is the
+                # weekly program the central unit resumes afterwards, 1101-1103 /
+                # 2101-2103 / 31PP (Legrand WHO 4 p. 56 and p. 64,
                 # "115#parameterH"); libqtdevices reads it as whatArgN(0) % 100
                 # (thermal_device.cpp:241, 286). It is not a temperature. The
                 # grammar only admits digits in a WHAT parameter (base.py
@@ -875,7 +525,7 @@ class OWNHeatingEvent(OWNEvent):
             elif self._type != MESSAGE_TYPE_SEASON:
                 self._human_readable_log += "."
 
-        if self._dimension == 0 and not is_write:  # Temperature
+        if self._dimension == 0:  # Temperature
             temp = (
                 who4_temperature(self._dimension_value[0])
                 if self._dimension_value
@@ -885,52 +535,23 @@ class OWNHeatingEvent(OWNEvent):
                 self._type = MESSAGE_TYPE_MAIN_TEMPERATURE
                 self._measured_temperature = temp
                 if self._measured_temperature is not None:
-                    self._human_readable_log = f"{subject}'s main sensor is reporting a temperature of {self._measured_temperature}°C."  # pylint: disable=line-too-long
+                    self._human_readable_log = f"Zone {self._zone}'s main sensor is reporting a temperature of {self._measured_temperature}°C."  # pylint: disable=line-too-long
             else:
                 self._type = MESSAGE_TYPE_SECONDARY_TEMPERATURE
                 self._secondary_temperature = temp
                 if self._secondary_temperature is not None:
-                    self._human_readable_log = f"{subject}'s secondary sensor {self._sensor} is reporting a temperature of {self._secondary_temperature}°C."  # pylint: disable=line-too-long
-
-        elif self._dimension in (2, 3) and not is_write:  # Protection / antifreeze setpoints
-            # ``*#4*Z*2*T##`` and ``*#4*Z*3*T##`` are not in the published
-            # WHO 4 document (Encyclopedia dimensions.md has no Dimension 2
-            # or 3; Dimension 7 carries the protection *mode*). They were
-            # observed on a live F461 2.0.11: zone 2 (a KW4691) answered
-            # ``*#4*2*2##`` with ``*#4*2*2*0350##`` and ``*#4*2*3##`` with
-            # ``*#4*2*3*0070##``, the BTicino factory defaults of the thermal
-            # protection setpoint (cooling side, 35.0 °C) and the antifreeze
-            # setpoint (heating side, 7.0 °C), so the value is decoded as the
-            # ``SXXX`` tenths of Dimension 14 (lab audit 2026-11-03, L-A1).
-            # The same plant also applied the writes ``*#4*2*#2*0340##`` and
-            # ``*#4*2*#3*0060##`` (ACK, read back as ``0340`` / ``0060``) and
-            # NACKed ``*#4*2*#3*0999##`` (read back unchanged). In the
-            # ``lab-2026-11-03`` firmware-oracle suite the reads are
-            # forwarded to the bus (dimension bytes ``0C`` / ``0F``) by 10 of
-            # the 12 emulated gateways (refused on 2). Reads and writes stay
-            # raw: there is no builder for them.
-            temperature = (
-                who4_temperature(self._dimension_value[0])
-                if self._dimension_value
-                else None
-            )
-            if self._dimension == 2:
-                self._type = MESSAGE_TYPE_PROTECTION_SETPOINT
-                self._protection_setpoint = temperature
-                if temperature is not None:
-                    self._human_readable_log = f"{subject}'s thermal protection setpoint is {temperature}°C."  # pylint: disable=line-too-long
-            else:
-                self._type = MESSAGE_TYPE_ANTIFREEZE_SETPOINT
-                self._antifreeze_setpoint = temperature
-                if temperature is not None:
-                    self._human_readable_log = f"{subject}'s antifreeze setpoint is {temperature}°C."
+                    self._human_readable_log = f"Zone {self._zone}'s secondary sensor {self._sensor} is reporting a temperature of {self._secondary_temperature}°C."  # pylint: disable=line-too-long
 
         elif self._dimension == 5 and self._dimension_value:  # Local control
             # MyHOME_Suite writes *#4*Z*#5*val##; the meaning of val is not
             # published, so only log it.
-            self._human_readable_log = f"{subject}'s local control (dimension 5) is {self._dimension_value[0]}."  # pylint: disable=line-too-long
+            self._human_readable_log = f"Zone {self._zone}'s local control (dimension 5) is {self._dimension_value[0]}."  # pylint: disable=line-too-long
 
-        elif self._dimension == 7 and self._dimension_value and not is_write:  # Zone state
+        elif (
+            self._dimension == 7
+            and self._dimension_value
+            and self._message_type != "DIMENSION_WRITING"
+        ):  # Zone state
             # MyHomeServer1 / Home+Control plants carry the zone's operating
             # state and setpoint here, and never in the reply to *#4*Z##.
             # The zone_* properties are only set with the message type, so a
@@ -941,27 +562,24 @@ class OWNHeatingEvent(OWNEvent):
             context, state, temperature = _zone_state(self._dimension_value)
             text = _zone_state_text(self._dimension_value)
             if text is None:
-                self._human_readable_log = f"{subject} reports an unknown zone state {'*'.join(self._dimension_value)}."  # pylint: disable=line-too-long
+                self._human_readable_log = f"Zone {self._zone} reports an unknown zone state {'*'.join(self._dimension_value)}."  # pylint: disable=line-too-long
             else:
                 self._type = MESSAGE_TYPE_ZONE_STATE
                 self._zone_context = context
                 self._zone_state = state
                 self._set_temperature = temperature
-                self._human_readable_log = f"{subject} is in {text}."
+                self._human_readable_log = f"Zone {self._zone} is in {text}."
 
         elif (
             self._dimension == 11
             and self._dimension_value
             and self._dimension_value[0].isdigit()
         ):  # Fan speed
-            # ``*#4*WHERE*11*SPEED*##``: SPEED 0 automatic, 1..3, 15 OFF
-            # (Encyclopedia dimensions.md "DIMENSION 11"); the trailing
-            # field is empty. An empty SPEED (``*#4*1*11*##``) is no reading:
-            # the frame stays untyped with every property ``None``. A write
-            # (``*#4*1*#11*2##``) keeps the written speed in ``fan_speed``
-            # but is a command, not a state: it stays untyped.
-            if not is_write:
-                self._type = MESSAGE_TYPE_FAN_SPEED
+            # ``*#4*WHERE*11*SPEED*##``; an empty or missing SPEED
+            # (``*#4*1*11*##``, ``*#4*1*11##``) used to raise ValueError /
+            # IndexError out of the parser: the frame now stays untyped with
+            # ``fan_speed`` / ``fan_on`` ``None`` (crash guard only).
+            self._type = MESSAGE_TYPE_FAN_SPEED
             _fan_mode = int(self._dimension_value[0])
             if _fan_mode < 4:
                 self._fan_on = True
@@ -969,18 +587,18 @@ class OWNHeatingEvent(OWNEvent):
                 self._fan_speed = _fan_mode
                 if _fan_mode > 0:
                     self._human_readable_log = (
-                        f"{subject}'s fan is on at speed {self._fan_speed}."
+                        f"Zone {self._zone}'s fan is on at speed {self._fan_speed}."
                     )
                 else:
                     self._human_readable_log = (
-                        f"{subject}'s fan is on at 'Auto' speed."
+                        f"Zone {self._zone}'s fan is on at 'Auto' speed."
                     )
             else:
                 self._fan_on = False
                 self._is_active = False
-                self._human_readable_log = f"{subject}'s fan is off."
+                self._human_readable_log = f"Zone {self._zone}'s fan is off."
 
-        elif self._dimension == 12 and not is_write:  # Local set temperature (set+offset)
+        elif self._dimension == 12:  # Local set temperature (set+offset)
             self._type = MESSAGE_TYPE_LOCAL_TARGET_TEMPERATURE
             self._local_set_temperature = (
                 who4_temperature(self._dimension_value[0])
@@ -988,9 +606,11 @@ class OWNHeatingEvent(OWNEvent):
                 else None
             )
             if self._local_set_temperature is not None:
-                self._human_readable_log = f"{subject}'s local target temperature is set to {self._local_set_temperature}°C."  # pylint: disable=line-too-long
+                self._human_readable_log = f"Zone {self._zone}'s local target temperature is set to {self._local_set_temperature}°C."  # pylint: disable=line-too-long
 
-        elif self._dimension == 13 and self._dimension_value and not is_write:  # Local offset
+        elif self._dimension == 13 and self._dimension_value:  # Local offset
+            # A missing value (``*#4*1*13##``) used to raise IndexError out of
+            # the parser; the frame now stays untyped (crash guard only).
             self._type = MESSAGE_TYPE_LOCAL_OFFSET
             self._local_offset_raw = self._dimension_value[0]
             if self._local_offset_raw in ("0", "00"):
@@ -1013,16 +633,11 @@ class OWNHeatingEvent(OWNEvent):
                 self._local_control_state = LOCAL_CONTROL_UNKNOWN
 
             if self._local_offset is not None:
-                self._human_readable_log = f"{subject}'s local offset is set to {self._local_offset}°C."
+                self._human_readable_log = f"Zone {self._zone}'s local offset is set to {self._local_offset}°C."
             else:
-                self._human_readable_log = f"{subject}'s local control state is '{self._local_control_state}' (raw value {self._local_offset_raw})."
+                self._human_readable_log = f"Zone {self._zone}'s local control state is '{self._local_control_state}' (raw value {self._local_offset_raw})."
 
         elif self._dimension == 14:  # Set temperature
-            # A write (``*#4*#1*#14*0205*1##``) is a command, not a state
-            # (Encyclopedia dimensions.md "DIMENSION 14"), but a write echo
-            # on the event path keeps its ``target_temperature`` type: MyHOME
-            # updates the entity's target from it (its legacy-platform test
-            # replays ``*#4*01*#14*0220*1##`` through ``OWNEvent.parse``).
             self._type = MESSAGE_TYPE_TARGET_TEMPERATURE
             # Some central units prefix the value with '#'
             # (*#4*#1*14*#0230*1##, MyHOME#139); the value is the same.
@@ -1032,121 +647,63 @@ class OWNHeatingEvent(OWNEvent):
                 else None
             )
             if self._set_temperature is not None:
-                self._human_readable_log = f"{subject}'s target temperature is set to {self._set_temperature}°C."  # pylint: disable=line-too-long
-                if not _WHO4_SETPOINT_MIN <= self._set_temperature <= _WHO4_SETPOINT_MAX:
-                    # ``T`` is published as ``0050..0400`` (Encyclopedia
-                    # dimensions.md "DIMENSION 14", page 18). The value is
-                    # kept (the parser stays permissive) but the log no
-                    # longer presents ``*#4*1*14*0999*3##`` as a plain
-                    # 99.9 °C setpoint (lab audit 2026-11-03, L-A2). A live
-                    # F461 2.0.11 NACKs the write ``*#4*2*#14*0999*3##`` but
-                    # accepts ``*#4*2*#14*0049*3##`` and reads back ``0045``
-                    # (4.5 °C, below the published lower bound), so such a
-                    # reply is a real stored value, not a decoding error.
-                    self._human_readable_log = (
-                        f"{subject}'s target temperature is set to {self._set_temperature}°C "
-                        f"(outside the published {_WHO4_SETPOINT_MIN}..{_WHO4_SETPOINT_MAX} °C range)."
-                    )
+                self._human_readable_log = f"Zone {self._zone}'s target temperature is set to {self._set_temperature}°C."  # pylint: disable=line-too-long
 
-        elif self._dimension == 15 and not is_write:  # Probe temperature reading
-            # ``*#4*WHERE*15*P*T[*...]##``. The touchscreen test report
-            # ``*#4*11*15*1*123*1111##`` carries a three-digit value
-            # (Encyclopedia dimensions.md "Historical external-probe
-            # DIMENSION 15": "yields temperature value 123"); it is read as
-            # unsigned tenths of a degree (12.3 °C), an inference from the
-            # four-digit SXXX form, since the page does not spell the unit.
+        elif self._dimension == 15:  # Probe temperature reading
             self._type = MESSAGE_TYPE_SECONDARY_TEMPERATURE
             if self._dimension_value:
                 if len(self._dimension_value) >= 2:
-                    self._sensor = (
-                        int(self._dimension_value[0])
-                        if self._dimension_value[0].isdigit()
-                        else None
-                    )
+                    self._sensor = int(self._dimension_value[0])
                     temp_raw = self._dimension_value[1]
                 else:
                     temp_raw = self._dimension_value[0]
 
                 self._secondary_temperature = who4_temperature(temp_raw)
-                if self._secondary_temperature is None and _WHO4_SHORT_TEMP_REGEX.fullmatch(temp_raw):
-                    self._secondary_temperature = int(temp_raw) / 10.0
 
             if self._secondary_temperature is not None:
                 if self._sensor is not None:
-                    self._human_readable_log = f"{subject}'s secondary probe {self._sensor} is reporting a temperature of {self._secondary_temperature}°C."
+                    self._human_readable_log = f"Zone {self._zone}'s secondary probe {self._sensor} is reporting a temperature of {self._secondary_temperature}°C."
                 else:
-                    self._human_readable_log = f"{subject}'s temperature probe is reporting a temperature of {self._secondary_temperature}°C."
+                    self._human_readable_log = f"Zone {self._zone}'s temperature probe is reporting a temperature of {self._secondary_temperature}°C."
 
         elif (
             self._dimension == 19
             and len(self._dimension_value) >= 2
-            and all(v.isdigit() for v in self._dimension_value[:2])
-            and not is_write
+            and all(self._dimension_value[:2])
         ):  # Valves status
-            # ``*#4*WHERE*19*CV*HV##`` (Encyclopedia dimensions.md "DIMENSION
-            # 19"): 0 off, 1 on, 2 opened, 3 closed, 4 stop, 5 fan-coil off,
-            # 6..8 fan-coil on at speed 1..3; 14, 15 and 16 are the fan-coil
-            # OFF states "later information supplied by the MyHOME team"
-            # documents (the page's only source, ENCY_CONFIRM TC-H8:
-            # functional-only), not fan speeds 9..11.
             self._type = MESSAGE_TYPE_ACTION
-            _cooling_value = int(self._dimension_value[0])
-            _heating_value = int(self._dimension_value[1])
-            # A ``CV`` / ``HV`` outside the published ``0..8`` and the
-            # MyHOME-team ``14..16`` is not a fan speed: ``*#4*1*19*9*0##``
-            # was decoded as "cooling fan is on at speed 4" (lab audit
-            # 2026-11-03, L-A3). Such a side is logged as an unpublished
-            # valve value and left undecided: ``is_cooling`` / ``is_heating``
-            # ``None``, no fan state, ``is_active`` ``None`` unless the other
-            # side is active. The live F461 2.0.11 answers ``*#4*2*19##``
-            # with ``*#4*2*19*5*0##`` (published values only).
-            _cooling_published = (
-                _cooling_value in _VALVE_PUBLISHED_STATES
-                or _cooling_value in _FAN_COIL_OFF_STATES
-            )
-            _heating_published = (
-                _heating_value in _VALVE_PUBLISHED_STATES
-                or _heating_value in _FAN_COIL_OFF_STATES
-            )
-            if _cooling_published:
-                self._is_cooling = self._dimension_value[0] in _valve_active_states
-            if _heating_published:
-                self._is_heating = self._dimension_value[1] in _valve_active_states
+            self._is_cooling = self._dimension_value[0] in _valve_active_states
+            self._is_heating = self._dimension_value[1] in _valve_active_states
             # Handle cooling valve status relative to fan speed/status
-            if not _cooling_published:
-                self._human_readable_log = f"{subject}'s cooling valve reports the unpublished valve value {_cooling_value}"  # pylint: disable=line-too-long
-            elif _cooling_value == 0:
-                self._human_readable_log = f"{subject}'s cooling valve is off"
+            _cooling_value = int(self._dimension_value[0])
+            if _cooling_value == 0:
+                self._human_readable_log = f"Zone {self._zone}'s cooling valve is off"
             elif _cooling_value == 1:
-                self._human_readable_log = f"{subject}'s cooling valve is on"
+                self._human_readable_log = f"Zone {self._zone}'s cooling valve is on"
             elif _cooling_value == 2:
                 self._human_readable_log = (
-                    f"{subject}'s cooling valve is opened"
+                    f"Zone {self._zone}'s cooling valve is opened"
                 )
             elif _cooling_value == 3:
                 self._human_readable_log = (
-                    f"{subject}'s cooling valve is closed"
+                    f"Zone {self._zone}'s cooling valve is closed"
                 )
             elif _cooling_value == 4:
                 self._human_readable_log = (
-                    f"{subject}'s cooling valve is stopped"
+                    f"Zone {self._zone}'s cooling valve is stopped"
                 )
-            elif _cooling_value in _FAN_COIL_OFF_STATES:
-                self._cooling_fan_on = False
-                self._human_readable_log = (
-                    f"{subject}'s cooling fan-coil is off (state {_cooling_value})"
-                )
-            elif _cooling_value == 5:
-                self._cooling_fan_on = False
-                self._human_readable_log = f"{subject}'s cooling fan is off"
-            else:  # 6..8
-                self._cooling_fan_on = True
-                self._cooling_fan_speed = _cooling_value - 5
-                self._human_readable_log = f"{subject}'s cooling fan is on at speed {self._cooling_fan_speed}"  # pylint: disable=line-too-long
+            else:
+                _fan_mode = _cooling_value - 5
+                if _fan_mode > 0:
+                    self._cooling_fan_on = True
+                    self._cooling_fan_speed = _fan_mode
+                    self._human_readable_log = f"Zone {self._zone}'s cooling fan is on at speed {self._cooling_fan_speed}"  # pylint: disable=line-too-long
+                else:
+                    self._cooling_fan_on = False
+                    self._human_readable_log = f"Zone {self._zone}'s cooling fan is off"
             # Handle heating valve status relative to fan speed/status
-            if not _heating_published:
-                self._human_readable_log += f"; heating valve reports the unpublished valve value {_heating_value}."  # pylint: disable=line-too-long
-            elif _heating_value == 0:
+            _heating_value = int(self._dimension_value[1])
+            if _heating_value == 0:
                 self._human_readable_log += "; heating valve is off."
             elif _heating_value == 1:
                 self._human_readable_log += "; heating valve is on."
@@ -1156,69 +713,57 @@ class OWNHeatingEvent(OWNEvent):
                 self._human_readable_log += "; heating valve is closed."
             elif _heating_value == 4:
                 self._human_readable_log += "; heating valve is stopped."
-            elif _heating_value in _FAN_COIL_OFF_STATES:
-                self._fan_on = False
-                self._human_readable_log += f"; heating fan-coil is off (state {_heating_value})."
-            elif _heating_value == 5:
-                self._fan_on = False
-                self._human_readable_log += "; heating fan is off."
-            else:  # 6..8
-                self._fan_on = True
-                self._fan_speed = _heating_value - 5
-                self._human_readable_log += (
-                    f"; heating fan is on at speed {self._fan_speed}."
-                )
+            else:
+                _fan_mode = _heating_value - 5
+                if _fan_mode > 0:
+                    self._fan_on = True
+                    self._fan_speed = _fan_mode
+                    self._human_readable_log += (
+                        f"; heating fan is on at speed {self._fan_speed}."
+                    )
+                else:
+                    self._fan_on = False
+                    self._human_readable_log += "; heating fan is off."
             # A fan-coil value on one side must not hide an open valve or a running fan
             # on the other side: *#4*2*19*5*1## (cooling fan off, heating valve on) is an
             # active zone (F461 plant capture, tests/test_f461_live_plant.py).
-            if (
+            self._is_active = bool(
                 self._is_cooling
                 or self._is_heating
                 or self._cooling_fan_on
                 or self._fan_on
-            ):
-                self._is_active = True
-            elif _cooling_published and _heating_published:
-                self._is_active = False
-            # else: an unpublished side with nothing active on the other
-            # side leaves is_active() None.
+            )
 
         elif (
             self._dimension == 20
             and self._dimension_value
-            and self._dimension_value[0].isdigit()
-            and not is_write
+            and self._dimension_value[0]
         ):  # Actuator status
-            # ``*#4*Z#N*20*VALUE##`` (Encyclopedia dimensions.md "DIMENSION
-            # 20"): one reply per actuator N, ``actuator`` names it (``None``
-            # on a reply without ``#N``); a trailing ``#4#NN`` is the bus
-            # interface, not actuator 4. VALUE 0..8 as DIMENSION 19, 9 =
-            # fan-coil ON (no speed is published for it).
             self._type = MESSAGE_TYPE_ACTION
             self._is_active = self._dimension_value[0] in _actuator_active_states
-            _actuator_text = (
-                f"actuator {self._actuator}" if self._actuator is not None else "actuator"
+            self._actuator = (
+                self._where_param[0] if self._where_param else "1"
             )
             _value = int(self._dimension_value[0])
             if _value == 0:
                 self._human_readable_log = (
-                    f"{subject}'s {_actuator_text} is off."
+                    f"Zone {self._zone}'s actuator {self._actuator} is off."
                 )
             elif _value == 1:
                 self._human_readable_log = (
-                    f"{subject}'s {_actuator_text} is on."
+                    f"Zone {self._zone}'s actuator {self._actuator} is on."
                 )
             elif _value == 2:
                 self._human_readable_log = (
-                    f"{subject}'s {_actuator_text} is opened."
+                    f"Zone {self._zone}'s actuator {self._actuator} is opened."
                 )
             elif _value == 3:
                 self._human_readable_log = (
-                    f"{subject}'s {_actuator_text} is closed."
+                    f"Zone {self._zone}'s actuator {self._actuator} is closed."
                 )
             elif _value == 4:
                 self._human_readable_log = (
-                    f"{subject}'s {_actuator_text} is stopped."
+                    f"Zone {self._zone}'s actuator {self._actuator} is stopped."
                 )
             else:
                 _fan_mode = _value - 5
@@ -1228,50 +773,23 @@ class OWNHeatingEvent(OWNEvent):
                     if _fan_mode < 4:
                         self._fan_speed = _fan_mode
                         self._human_readable_log = (
-                            f"{subject}'s fan is on at speed {self._fan_speed}."
+                            f"Zone {self._zone}'s fan is on at speed {self._fan_speed}."
                         )
                     else:
                         self._human_readable_log = (
-                            f"{subject}'s fan-coil is on."
+                            f"Zone {self._zone}'s fan is on at 'Auto' speed."
                         )
                 else:
                     self._fan_on = False
                     self._is_active = False
-                    self._human_readable_log = f"{subject}'s fan is off."
-
-        elif self._dimension == 22 and self._dimension_value and not is_write:  # Split control
-            # ``*#4*3#Z#N*22*MOD*SP*VEL*SWING##`` (Encyclopedia dimensions.md
-            # "DIMENSION 22 - split control"): MOD 0 off, 1 winter, 2 summer,
-            # 3 fan, 4 dehumidification, 5 automatic; SP tenths of a degree
-            # (``000``..``1270``, unsigned); VEL 0 automatic, 1 minimum, 2
-            # medium, 3 maximum, 4 silent; SWING 0 / 1. An empty field is a
-            # value the unit does not report ("Historical partial split
-            # writes"): the property stays ``None``. Parse only: the send
-            # paths keep refusing every DIMENSION 22 spelling but the split
-            # forms (``is_who4_dimension_22_crash_form``).
-            values = self._dimension_value + [""] * (4 - len(self._dimension_value))
-            self._type = MESSAGE_TYPE_SPLIT_CONTROL
-            self._split_mode = _SPLIT_MODES.get(values[0])
-            if _WHO4_SPLIT_SETPOINT_REGEX.fullmatch(values[1]):
-                self._split_setpoint = int(values[1]) / 10.0
-            self._split_fan_speed = _SPLIT_FAN_SPEEDS.get(values[2])
-            if values[3] in ("0", "1"):
-                self._split_swing = values[3] == "1"
-            _parts = [
-                f"mode {self._split_mode}" if self._split_mode is not None else None,
-                f"setpoint {self._split_setpoint}°C" if self._split_setpoint is not None else None,
-                f"fan {self._split_fan_speed}" if self._split_fan_speed is not None else None,
-                f"swing {'on' if self._split_swing else 'off'}" if self._split_swing is not None else None,
-            ]
-            _text = ", ".join(part for part in _parts if part is not None) or "no values"
-            self._human_readable_log = f"{subject} reports {_text}."
+                    self._human_readable_log = f"Zone {self._zone}'s fan is off."
 
         elif (
             self._dimension == 30
             and self._dimension_value
             and len(self._dimension_value) >= 3
             and all(v.isdigit() for v in self._dimension_value[:3])
-            and not is_write
+            and self._message_type != "DIMENSION_WRITING"
         ):  # Holiday / weekend end date (DD*MM*YYYY)
             d, m, y = (
                 int(self._dimension_value[0]),
@@ -1280,7 +798,7 @@ class OWNHeatingEvent(OWNEvent):
             )
             self._holiday_end_date = (d, m, y)
             self._human_readable_log = (
-                f"{subject}'s holiday end date is {d:02d}/{m:02d}/{y:04d}."
+                f"Zone {self._zone}'s holiday end date is {d:02d}/{m:02d}/{y:04d}."
             )
 
         elif (
@@ -1288,12 +806,12 @@ class OWNHeatingEvent(OWNEvent):
             and self._dimension_value
             and len(self._dimension_value) >= 2
             and all(v.isdigit() for v in self._dimension_value[:2])
-            and not is_write
+            and self._message_type != "DIMENSION_WRITING"
         ):  # Holiday / weekend end time (HH*MM)
             h, m = int(self._dimension_value[0]), int(self._dimension_value[1])
             self._holiday_end_time = (h, m)
             self._human_readable_log = (
-                f"{subject}'s holiday end time is {h:02d}:{m:02d}."
+                f"Zone {self._zone}'s holiday end time is {h:02d}:{m:02d}."
             )
 
         elif (
@@ -1301,40 +819,34 @@ class OWNHeatingEvent(OWNEvent):
             and self._dimension_value
             and len(self._dimension_value) >= 2
             and all(v.isdigit() for v in self._dimension_value[:2])
-            and not is_write
+            and self._message_type != "DIMENSION_WRITING"
         ):  # Timed manual duration (HH*MM)
             h, m = int(self._dimension_value[0]), int(self._dimension_value[1])
             self._manual_timed_duration = (h, m)
             self._human_readable_log = (
-                f"{subject}'s timed manual duration is {h:02d}h {m:02d}m."
+                f"Zone {self._zone}'s timed manual duration is {h:02d}h {m:02d}m."
             )
 
         elif (
             self._dimension == 60
             and self._dimension_value
             and _WHO4_HUMIDITY_REGEX.fullmatch(self._dimension_value[0])
-            and not is_write
         ):  # Humidity
-            # An empty value (``*#4*1*60*##``) is no reading: untyped, ``None``.
+            # An empty or missing value (``*#4*1*60*##``, ``*#4*1*60##``) used
+            # to raise ValueError / IndexError out of the parser; the frame now
+            # stays untyped with ``main_humidity`` ``None`` (crash guard only).
             self._type = MESSAGE_TYPE_MAIN_HUMIDITY
             self._measured_humidity = float(self._dimension_value[0])
-            self._human_readable_log = f"{subject}'s main sensor is reporting a humidity of {self._measured_humidity}%."  # pylint: disable=line-too-long
+            self._human_readable_log = f"Zone {self._zone}'s main sensor is reporting a humidity of {self._measured_humidity}%."  # pylint: disable=line-too-long
 
     @property
     def unique_id(self) -> str:
-        """``4-<WHERE>``, distinct per probe / actuator / central-unit class, shared per zone.
-
-        Distinct: ``4-1`` (master probe of zone 1) is not ``4-001`` (all
-        probes of zone 1), ``4-0`` (all probes) is not ``4-#0`` (the
-        central unit), ``4-#0#1`` / ``4-#0#2`` are the 4-zone central units
-        1 and 2, ``4-2#1`` / ``4-2#2`` the actuators of zone 2, ``4-3#2#1``
-        a split unit, ``4-105`` probe 1 of zone 5; a bus interface is
-        appended (``4-2#4#01``). Shared: ``#Z`` and ``#Z#C`` give the ``4-Z``
-        of the master probe ``Z`` (``*4*311*#1##`` and ``*4*311*1##`` are
-        both ``4-1``, ``#1#4#01`` and ``1#4#01`` both ``4-1#4#01``), the
-        legacy id MyHOME routes a zone on.
-        """
-        return self._address.unique_id
+        """The ID of the subject of this message"""
+        if self._zone == 0:
+            return f"{self._who}-#0"
+        if self._sensor is not None:
+            return f"{self._who}-{self._where}"
+        return f"{self._who}-{self._zone}"
 
     @property
     def message_type(self) -> str | None:
@@ -1342,102 +854,11 @@ class OWNHeatingEvent(OWNEvent):
 
     @property
     def zone(self) -> int:
-        """The legacy integer zone.
-
-        0 for the central unit ``#0``, the general address and an external
-        probe; the selector ``C`` for the 4-zone central unit ``#0#C`` (MyHOME
-        routes those frames on it; ``scope`` / ``central_unit`` / ``unique_id``
-        carry the central-unit identity).
-        """
         return self._zone
 
     @property
-    def address(self) -> str:
-        """The whole WHERE as sent (``#0#2``, ``001``, ``2#1#4#01``, ``3#2#1``)."""
-        return self._address.address
-
-    @property
-    def scope(self) -> str | None:
-        """The address class of the WHERE (``SCOPE_*``), or ``None`` for an unpublished form.
-
-        ``SCOPE_CENTRAL`` (``#0``, ``#0#C``), ``SCOPE_ZONE_VIA_CENTRAL``
-        (``#Z``, ``#Z#C``), ``SCOPE_MASTER_PROBE`` (``Z``),
-        ``SCOPE_ALL_PROBES`` (``0``, ``0ZZ``), ``SCOPE_SLAVE_PROBE`` (``PZZ``),
-        ``SCOPE_EXTERNAL_PROBE`` (``P00``), ``SCOPE_ACTUATOR`` (``Z#N``) and
-        ``SCOPE_SPLIT_UNIT`` (``3#Z#N`` under DIMENSION 22); Encyclopedia
-        ``who-4-temperature-control/addressing.md``.
-        """
-        return self._address.scope
-
-    @property
-    def zone_number(self) -> int | None:
-        """Zone 1..99 named by the WHERE, else ``None`` (central unit, all probes ``0``, external probe)."""
-        return self._address.zone_number
-
-    @property
-    def central_unit(self) -> int | None:
-        """The 4-zone central-unit selector ``C`` of ``#0#C`` / ``#Z#C``, else ``None`` (``#0`` is the 3550)."""
-        return self._address.central_unit
-
-    @property
-    def probe_number(self) -> int | None:
-        """Probe ``P`` of a ``PZZ`` slave probe or ``P00`` external probe, or the probe of a DIMENSION 15 report."""
-        return self._sensor
-
-    @property
-    def actuator(self) -> int | None:
-        """Actuator ``N`` of a ``Z#N`` (DIMENSION 20) or ``3#Z#N`` (DIMENSION 22) WHERE, else ``None``."""
-        return self._actuator
-
-    @property
-    def interface(self) -> str | None:
-        """The bus interface ``NN`` of a trailing ``#4#NN`` WHERE qualifier, else ``None``."""
-        return self._address.interface
-
-    @property
     def mode(self) -> str | None:
-        """The coarse climate mode of the WHAT (``CLIMATE_MODE_*``), else ``None``.
-
-        ``heat`` / ``cool`` / ``auto`` for manual, automatic, timed manual,
-        daily holiday plan (x15), vacation (x3DDD), program and scenario WHATs
-        in the heating / conditioning / generic context, ``off`` for 103 /
-        203 / 303 and the protection WHATs 102 / 202 / 302 (MyHOME routes on
-        these values); ``operating_mode`` tells the families apart.
-        """
         return self._mode_name
-
-    @property
-    def operating_mode(self) -> str | None:
-        """The WHAT family (``OPERATING_MODE_*``), else ``None``.
-
-        ``antifreeze`` (102), ``thermal_protection`` (202), ``protection``
-        (302), ``off`` (x03), ``manual`` (x10), ``automatic`` (x11),
-        ``timed_manual`` (x12), ``holiday`` (x15), ``vacation`` (x3DDD),
-        ``program`` (x1PP), ``scenario`` (x2SS), ``cancel_vacation`` (3000),
-        ``restore_last_program`` (3100), ``restore_last_scenario`` (3200);
-        Encyclopedia ``who-4-temperature-control/what.md``.
-        """
-        return self._operating_mode
-
-    @property
-    def split_mode(self) -> str | None:
-        """DIMENSION 22 ``MOD`` (``SPLIT_MODE_*``), else ``None``."""
-        return self._split_mode
-
-    @property
-    def split_setpoint(self) -> float | None:
-        """DIMENSION 22 ``SP`` in °C, else ``None``."""
-        return self._split_setpoint
-
-    @property
-    def split_fan_speed(self) -> str | None:
-        """DIMENSION 22 ``VEL`` (``SPLIT_FAN_*``), else ``None``."""
-        return self._split_fan_speed
-
-    @property
-    def split_swing(self) -> bool | None:
-        """DIMENSION 22 ``SWING``, else ``None``."""
-        return self._split_swing
 
     @property
     def season(self) -> str | None:
@@ -1512,28 +933,6 @@ class OWNHeatingEvent(OWNEvent):
         return self._local_set_temperature
 
     @property
-    def protection_setpoint(self) -> float | None:
-        """Thermal protection setpoint (cooling side) of a Dimension 2 reply, else None.
-
-        ``*#4*Z*2*T##`` is not in the published WHO 4 document; it was
-        observed on a live F461 2.0.11 (zone 2 KW4691: ``*#4*2*2*0350##``,
-        the BTicino factory default 35.0 °C). ``T`` is decoded like
-        Dimension 14 (``who4_temperature``).
-        """
-        return self._protection_setpoint
-
-    @property
-    def antifreeze_setpoint(self) -> float | None:
-        """Antifreeze setpoint (heating side) of a Dimension 3 reply, else None.
-
-        ``*#4*Z*3*T##`` is not in the published WHO 4 document; it was
-        observed on a live F461 2.0.11 (zone 2 KW4691: ``*#4*2*3*0070##``,
-        the BTicino factory default 7.0 °C). ``T`` is decoded like
-        Dimension 14 (``who4_temperature``).
-        """
-        return self._antifreeze_setpoint
-
-    @property
     def fan_speed(self) -> int | None:
         return self._fan_speed
 
@@ -1551,14 +950,7 @@ class OWNHeatingEvent(OWNEvent):
 
     @property
     def program(self) -> int | None:
-        """Weekly program number named by the WHAT, else None.
-
-        The Encyclopedia (``what.md`` "Vacation, program and scenario forms")
-        publishes programs 1..3 (``1101..1103``, ``2101..2103``,
-        ``3101..3103``); ``3104..3116`` are beyond that public domain but
-        BTicino's own touchscreen client serialises program 12 and 15
-        (ENCY_CONFIRM TC-H10), so they are decoded as well.
-        """
+        """Weekly program number (1..3 for seasonal, 1..16 for generic) named by the WHAT, else None."""
         return self._program
 
     @property
@@ -1722,8 +1114,11 @@ class OWNHeatingCommand(OWNCommand):
             raise ValueError(
                 f"Fan speed cannot be requested on central unit or general zone: {where}"
             )
-        zone_number = _zone_number(where_str)
-        if zone_number < 1:
+        try:
+            zone_number = _zone_number(where_str)
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid zone address: {where}")
+        if not (1 <= zone_number <= 99):
             raise ValueError(f"Invalid zone number: {zone_number}. Zone must be 1..99")
 
         message = cls(f"*#4*{zone_number}*11##")
@@ -1793,36 +1188,16 @@ class OWNHeatingCommand(OWNCommand):
     def set_temperature(
         cls, where: str | int, temperature: float, mode: str, standalone: bool = False
     ) -> OWNHeatingCommand:
-        """Manual setpoint ``*#4*#WHERE*#14*TTTT*M##`` (Encyclopedia what.md "Zone setup commands").
-
-        ``where`` is a zone (``1``..``99``, sent as ``#Z``, or the plain
-        ``Z`` with ``standalone``) or ``#Z#C`` / ``Z#C`` under a 4-zone
-        central unit (what.md "Zone setup commands" defines the write for
-        ``#1..#99``). ``#0`` / ``#0#C`` (and the legacy ``0``, sent as
-        ``#0``) are accepted as before and build the central-unit setpoint
-        ``*#4*#0*#14*TTTT*M##`` that ``set_central_temperature`` builds; a
-        three-digit probe-class address (``001`` all probes of zone 1,
-        ``105`` probe 1 of zone 5, ``#105``) or the actuator form ``0#N``
-        raises ``ValueError`` instead of being rewritten to ``#1`` /
-        ``#105`` / ``#0#N`` (ORACLE_CONFIRM H2, H19). The temperature is
-        clamped to ``5.0..40.0`` (``T`` is ``0050..0400``; MyHOME relies on
-        the clamp) and rounded to 0.5 °C; only a non-finite value raises.
-        The published bound is the one to keep: a live F461 2.0.11 NACKed
-        ``*#4*2*#14*0999*3##`` (zone 2 read back ``0230``, unchanged),
-        applied ``*#4*2*#14*0400*3##`` (read back ``0400``) and accepted
-        ``*#4*2*#14*0049*3##`` as ``0045`` (4.5 °C, below the published
-        lower bound; the zone is a KW4691 standalone thermostat), so a
-        value below 5.0 is not refused by every gateway but is not a
-        published setpoint either (lab audit 2026-11-03, L-A2).
-        """
         zone, zone_name = _zone_address_and_name(where, standalone=standalone)
 
         temp_val = float(temperature)
         if not math.isfinite(temp_val):
             raise ValueError("temperature must be finite")
-        # ``T`` is ``0050..0400`` in 0.5 °C steps (Encyclopedia what.md
-        # "Zone setup commands"): clamp, as ``set_central_temperature`` does.
-        temperature = round(max(5.0, min(40.0, temp_val)) * 2) / 2
+        temperature = round(temp_val * 2) / 2
+        if temperature < 5.0:
+            temperature = 5.0
+        elif temperature > 40.0:
+            temperature = 40.0
         temperature_print = f"{temperature}"
         temperature_code = int(temperature * 10)
 
@@ -1854,8 +1229,11 @@ class OWNHeatingCommand(OWNCommand):
             raise ValueError(
                 f"Fan speed cannot be set on central unit or general zone: {where}"
             )
-        zone_number = _zone_number(where_str)
-        if zone_number < 1:
+        try:
+            zone_number = _zone_number(where_str)
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid zone address: {where}")
+        if not (1 <= zone_number <= 99):
             raise ValueError(f"Invalid zone number: {zone_number}. Zone must be 1..99")
         try:
             speed_code = int(speed)
@@ -2103,14 +1481,6 @@ class OWNHeatingCommand(OWNCommand):
             raise ValueError(f"Invalid date: {day}/{month}/{year}")
         if not (1 <= d <= 31 and 1 <= m <= 12 and 2000 <= y <= 2099):
             raise ValueError(f"Invalid date values: {d}/{m}/{y}")
-        try:
-            # A real calendar date (Encyclopedia dimensions.md "DIMENSION 30 -
-            # holiday end": "Validate the actual calendar date as well as
-            # individual field ranges"; the firmware oracle NACKs 31 February
-            # on all twelve gateways, ORACLE_CONFIRM H18).
-            datetime.date(y, m, d)
-        except ValueError:
-            raise ValueError(f"Invalid calendar date: {d:02d}/{m:02d}/{y:04d}") from None
         message = cls(f"*#4*{where}*#30*{d:02d}*{m:02d}*{y:04d}##")
         message._human_readable_log = (
             f"Setting Central Unit {where} holiday end date to {d:02d}/{m:02d}/{y:04d}."

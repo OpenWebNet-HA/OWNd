@@ -511,7 +511,7 @@ class TestMessageExhaustiveCoverage:
         ev_act_fan1 = OWNHeatingEvent("*#4*1#1*20*6##")
         assert ev_act_fan1.fan_on is True
         ev_act_fan_auto = OWNHeatingEvent("*#4*1#1*20*9##")
-        assert "fan-coil is on" in ev_act_fan_auto.human_readable_log  # value 9 = fan-coil ON, no speed
+        assert "Auto" in ev_act_fan_auto.human_readable_log
 
         # Secondary temperature
         ev_sec = OWNHeatingEvent("*#4*101*0*0220##")

@@ -172,8 +172,7 @@ def test_capture_shows_only_the_plain_protection_form_acts() -> None:
     assert "*4*311*2##" in NACKED_FRAMES
     # the way out of OFF / protection on a standalone thermostat is a setpoint write
     assert "*4*0*2##" in EVENTS_AFTER["*#4*2*#14*0200*3##"]
-    assert OWNEvent.parse("*4*202*2##").mode == "off"  # OWNd still folds protection into ``mode`` off
-    assert OWNEvent.parse("*4*202*2##").operating_mode == "thermal_protection"
+    assert OWNEvent.parse("*4*202*2##").mode == "off"  # OWNd still folds protection into off
 
 
 # ---------------------------------------------------------------------- 3. WHO 13 device type 200

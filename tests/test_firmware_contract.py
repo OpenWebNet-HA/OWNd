@@ -142,22 +142,13 @@ def check(fact: dict[str, Any]) -> None:
     if cls in NOT_DECODED:
         return
     if cls == "C1":
-        # Central-unit telegram. Sent to the central unit (#0, #0#C) addr is
-        # the 4-zone selector (02 for #0#2, 00 for #0), which OWNd keeps as
-        # the legacy ``zone`` and exposes as ``central_unit`` (report 21 H1);
-        # sent to a plain zone (the season frames *4*1*Z##) addr is that zone.
         if not _waived(frame, "zone"):
             assert event.zone == int(addr, 16), "zone"
-            if event.scope == "central":
-                assert (event.central_unit or 0) == int(addr, 16), "central unit"
         _check_operation(frame, event, int(b1, 16), int(b2, 16), int(b3, 16))
     elif cls == "C2":
-        # Zone b1, central-unit selector addr: #0#N goes out as zone 0 of the
-        # 4-zone central unit N (addr N; OWNd's legacy ``zone`` is N), #23#1
-        # as zone 23 of central unit 1.
+        # Zone b1; zone N of a 4-zone central (#0#N) goes out as zone 0, addr N.
         zone = int(addr, 16) if b1 == "00" and "#0#" in frame else int(b1, 16)
         assert event.zone == zone, "zone"
-        assert (event.central_unit or 0) == int(addr, 16), "central unit"
         _check_operation(frame, event, int(b2, 16), int(b3, 16), 0)
     elif cls == "0B":
         # Written through the central (*#4*#Z*#11*S##) the telegram goes to the
