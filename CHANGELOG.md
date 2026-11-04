@@ -4,6 +4,10 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **WHO 4 empty Dimension 11 / 60 values no longer raise** (`OWNMessage.parse("*#4*1*11*##")` raised `ValueError` out of the parser, `*#4*1*60*##` likewise, `*#4*1*13##` / `*#4*1*11##` / `*#4*1*60##` raised `IndexError`; report 21 H9): such a frame now stays untyped with `fan_speed` / `fan_on` / `main_humidity` `None`. Crash guard only: every well-formed frame decodes exactly as before (same `message_type`, property values and log lines).
+- **README**: the WHO 4 quick-start used `mode="heating"` / `"cooling"`, which `set_central_mode` refuses (`CLIMATE_MODE_HEAT` / `CLIMATE_MODE_COOL`), and the feature list named three builders that do not exist (`set_central_antifreeze`, `set_central_thermal_protection`, `set_central_off`; report 21 H11). `docs/protocol_conformance_matrix.md` described Dimension 12 as a measured temperature stored in `_measured_temperature`; it is the setpoint after the local offset, stored in `local_set_temperature` (Encyclopedia `dimensions.md` "DIMENSION 12"; report 21 H12). The golden fixture note of `thermo.resp.probe.status.neg_temp` says the same (frame unchanged). Documentation and golden metadata only: no runtime behaviour changes.
+
 ## [2.0.0b13] - 2026-11-02
 
 ### Added

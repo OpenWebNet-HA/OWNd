@@ -73,6 +73,9 @@ _ZONE_STATES = {
 
 
 _WHO4_TEMP_REGEX = re.compile(r"^[01][0-9]{3}$")
+# DIMENSION 60 humidity value: digits with an optional decimal part. An empty
+# value (``*#4*1*60*##``) is no reading and must not raise out of the parser.
+_WHO4_HUMIDITY_REGEX = re.compile(r"[0-9]+(?:\.[0-9]+)?", re.ASCII)
 
 # WHO 4 DIMENSION 22 is the published split-unit (air conditioning) IR
 # control: ``*#4*3#Z#N*22##`` requests the current setting and
@@ -310,6 +313,24 @@ def _zone_address_and_name(
 
 
 class OWNHeatingEvent(OWNEvent):
+    """A WHO 4 thermoregulation event or dimension reply.
+
+    Documentation context only (the decoding below is unchanged; no committed
+    plant trace exercises the other address classes): the WHO 4 WHERE table
+    (Encyclopedia who-4-temperature-control/addressing.md) distinguishes the
+    central unit ``#0`` and ``#0#C`` (central unit ``C`` of a multi-central
+    plant), a zone addressed through the central unit ``#Z`` / ``#Z#C``, a
+    stand-alone zone probe ``Z`` (``1..99``), a slave probe ``NZZ``
+    (``101..899``), an external probe ``N00`` and an actuator ``Z#N``; a
+    ``0#N`` is actuator ``N`` of zone 0 (a pump the zones share), not zone
+    ``N``. ``zone``, ``unique_id`` and ``actuator`` keep their long-standing
+    values for every form, and the WHAT mode tables of this module (the
+    hundreds digit selecting heating / conditioning / generic, the last two
+    the manual / automatic / off / holiday / program variants) are read as
+    before; a dimension write frame keeps the same ``message_type`` as the
+    matching read.
+    """
+
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
@@ -567,7 +588,15 @@ class OWNHeatingEvent(OWNEvent):
                 self._set_temperature = temperature
                 self._human_readable_log = f"Zone {self._zone} is in {text}."
 
-        elif self._dimension == 11:  # Fan speed
+        elif (
+            self._dimension == 11
+            and self._dimension_value
+            and self._dimension_value[0].isdigit()
+        ):  # Fan speed
+            # ``*#4*WHERE*11*SPEED*##``; an empty or missing SPEED
+            # (``*#4*1*11*##``, ``*#4*1*11##``) used to raise ValueError /
+            # IndexError out of the parser: the frame now stays untyped with
+            # ``fan_speed`` / ``fan_on`` ``None`` (crash guard only).
             self._type = MESSAGE_TYPE_FAN_SPEED
             _fan_mode = int(self._dimension_value[0])
             if _fan_mode < 4:
@@ -597,7 +626,9 @@ class OWNHeatingEvent(OWNEvent):
             if self._local_set_temperature is not None:
                 self._human_readable_log = f"Zone {self._zone}'s local target temperature is set to {self._local_set_temperature}°C."  # pylint: disable=line-too-long
 
-        elif self._dimension == 13:  # Local offset
+        elif self._dimension == 13 and self._dimension_value:  # Local offset
+            # A missing value (``*#4*1*13##``) used to raise IndexError out of
+            # the parser; the frame now stays untyped (crash guard only).
             self._type = MESSAGE_TYPE_LOCAL_OFFSET
             self._local_offset_raw = self._dimension_value[0]
             if self._local_offset_raw in ("0", "00"):
@@ -814,7 +845,14 @@ class OWNHeatingEvent(OWNEvent):
                 f"Zone {self._zone}'s timed manual duration is {h:02d}h {m:02d}m."
             )
 
-        elif self._dimension == 60:  # Humidity
+        elif (
+            self._dimension == 60
+            and self._dimension_value
+            and _WHO4_HUMIDITY_REGEX.fullmatch(self._dimension_value[0])
+        ):  # Humidity
+            # An empty or missing value (``*#4*1*60*##``, ``*#4*1*60##``) used
+            # to raise ValueError / IndexError out of the parser; the frame now
+            # stays untyped with ``main_humidity`` ``None`` (crash guard only).
             self._type = MESSAGE_TYPE_MAIN_HUMIDITY
             self._measured_humidity = float(self._dimension_value[0])
             self._human_readable_log = f"Zone {self._zone}'s main sensor is reporting a humidity of {self._measured_humidity}%."  # pylint: disable=line-too-long
