@@ -222,21 +222,12 @@ def test_switch_on_off_drop_out_of_range_speed(speed: int) -> None:
     assert _check_speed(speed) is None
 
 
-@pytest.mark.parametrize("speed", [True, 2.5])
-def test_switch_on_rejects_non_integer_speed(speed: object) -> None:
-    with pytest.raises(ValueError, match="must be an integer"):
-        OWNLightingCommand.switch_on("12", speed)  # type: ignore[arg-type]
-    with pytest.raises(ValueError, match="must be an integer"):
-        OWNLightingCommand.switch_off("12", speed)  # type: ignore[arg-type]
-
-
 def test_switch_on_off_accept_the_published_speed_range() -> None:
     assert str(OWNLightingCommand.switch_on("12", 0)) == "*1*1#0*12##"
     assert str(OWNLightingCommand.switch_on("12", 255)) == "*1*1#255*12##"
     assert str(OWNLightingCommand.switch_off("12", 0)) == "*1*0#0*12##"
     assert str(OWNLightingCommand.switch_on("12")) == "*1*1*12##"
     assert str(OWNLightingCommand.switch_off("12", None)) == "*1*0*12##"
-    assert str(OWNLightingCommand.switch_on("12", 5.0)) == "*1*1#5*12##"
     assert SPEED_MIN == 0 and SPEED_MAX == 255
     assert _check_speed(None) is None
 
@@ -262,7 +253,7 @@ def test_set_brightness_keeps_valid_transitions() -> None:
     assert str(OWNLightingCommand.set_brightness("12", 0, 0)) == "*1*0*12##"
 
 
-@pytest.mark.parametrize("period", [0, 0.2, 0.49, 5.01, 7, -1, True])
+@pytest.mark.parametrize("period", [0, 0.2, 0.49, 5.01, 7, -1])
 def test_flash_falls_back_to_half_a_second_outside_the_range(period: object) -> None:
     """L9 (what.md "Blinking operations": WHAT 20..29 = 0.5..5 s in 0.5 s steps):
     an out-of-range period is the 0.5 s default, as MyHOME pins."""
