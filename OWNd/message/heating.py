@@ -316,13 +316,15 @@ class OWNHeatingEvent(OWNEvent):
         self._type = None
 
         where = self._where or "0"
+        _, where_params = self._interface_and_where_params()
         self._zone = (
             int(where[1:]) if where.startswith("#") else int(where)
         )
         # ``#0#N`` is zone N of a 4-zone central unit; ``0#N`` is actuator N
-        # of zone 0 (a pump the zones share), not zone N.
-        if self._zone == 0 and self._where_param and where.startswith("#"):
-            self._zone = int(self._where_param[0])
+        # of zone 0 (a pump the zones share), not zone N; ``#0#4#IF`` is ``#0``
+        # behind interface ``IF`` (``where_params`` is empty).
+        if self._zone == 0 and where_params and where.startswith("#"):
+            self._zone = int(where_params[0])
         self._sensor = None
         if self._zone > 99:
             self._sensor = int(str(self._zone)[:1])
@@ -728,9 +730,7 @@ class OWNHeatingEvent(OWNEvent):
         ):  # Actuator status
             self._type = MESSAGE_TYPE_ACTION
             self._is_active = self._dimension_value[0] in _actuator_active_states
-            self._actuator = (
-                self._where_param[0] if self._where_param else "1"
-            )
+            self._actuator = where_params[0] if where_params else "1"
             _value = int(self._dimension_value[0])
             if _value == 0:
                 self._human_readable_log = (
@@ -835,6 +835,11 @@ class OWNHeatingEvent(OWNEvent):
     @property
     def zone(self) -> int:
         return self._zone
+
+    @property
+    def actuator(self) -> str | None:
+        """Actuator index of a WHO 4 Dimension 20 status event, else ``None``."""
+        return self._actuator
 
     @property
     def mode(self) -> str | None:
@@ -1530,6 +1535,14 @@ class OWNHeatingCommand(OWNCommand):
         message = cls(f"*#4*{where}*14##")
         message._human_readable_log = f"Requesting Central Unit {where} status."
         return message
+
+    @property
+    def actuator(self) -> str | None:
+        """Actuator index of a WHO 4 Dimension 20 request or write, else ``None``."""
+        if self._dimension != 20:
+            return None
+        _, where_params = self._interface_and_where_params()
+        return where_params[0] if where_params else "1"
 
     @property
     def is_temperature_query(self) -> bool:
