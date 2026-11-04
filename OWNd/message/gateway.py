@@ -207,6 +207,16 @@ class OWNGatewayEvent(OWNEvent):
                 self._human_readable_log = (
                     f"Gateway's internal date is: {self._date}."
                 )
+        # Requesting Dimensions 10, 11 and 12 (``*#13**10##``, ``*#13**11##``,
+        # ``*#13**12##``: IP address, netmask, MAC) makes the gateway daemon exit on
+        # H4684 020054 and MH200 020102 in the firmware oracle (``nack/crash``;
+        # ``firmware_observed`` under QEMU emulation, not confirmed on physical
+        # hardware; findings/who13-identification.md). The other eleven emulated
+        # gateways ACK them, eight with a telegram on the bus and three silently
+        # (F453, F453AV, MH200N). OWNd builds no request for them and applies no
+        # send-layer guard: the frames are legitimate on most gateways, so a refusal
+        # would need the gateway model at send time. These branches only decode
+        # replies seen on the bus (2026-11-04 audit G1).
         elif self._dimension == 10 and len(self._dimension_value) >= 4:
             self._ip_address = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}.{self._dimension_value[3]}"  # pylint: disable=line-too-long
             self._human_readable_log = f"Gateway's IP address is: {self._ip_address}."
