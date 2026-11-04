@@ -613,7 +613,9 @@ def test_own_message_helper_properties_and_effective_what() -> None:
     assert str(OWNEnergyCommand.report_current_month_energy("51", 500)) == "*#18*51*52*500##"
     assert str(OWNEnergyCommand.report_current_month_energy("51", 500, 2026, 10)) == "*#18*51*52#26#10*500##"
     assert str(OWNEnergyCommand.report_partial_month_energy("51", 300)) == "*#18*51*53*300##"
+    assert str(OWNEnergyCommand.report_partial_month_energy("51", 300, 10)) == "*#18*51*53#10*300##"
     assert str(OWNEnergyCommand.report_partial_day_energy("51", 120)) == "*#18*51*54*120##"
+    assert str(OWNEnergyCommand.report_partial_day_energy("51", 120, 18)) == "*#18*51*54#18*120##"
     assert str(OWNEnergyCommand.report_streaming_state("51", 65, 1)) == "*#18*51*1200#1*65##"
 
     # Gateway clock builders & queries
@@ -765,6 +767,14 @@ def test_expose_builders_infeasible_inputs() -> None:
     for bad_month in (0, 13):
         with pytest.raises(ValueError, match="month must be between 1 and 12"):
             OWNEnergyCommand.report_current_month_energy("51", 100, year=2026, month=bad_month)
+        with pytest.raises(ValueError, match="month must be between 1 and 12"):
+            OWNEnergyCommand.report_partial_month_energy("51", 100, month=bad_month)
+    for bad_pm in (True, 10.5, float("inf")):
+        with pytest.raises(ValueError, match="month must be between 1 and 12"):
+            OWNEnergyCommand.report_partial_month_energy("51", 100, month=bad_pm)  # type: ignore[arg-type]
+    for bad_day in (0, 32, True, 18.5, float("inf")):
+        with pytest.raises(ValueError, match="day must be between 1 and 31"):
+            OWNEnergyCommand.report_partial_day_energy("51", 100, day=bad_day)  # type: ignore[arg-type]
 
     for bad_de in (
         (True, 1),

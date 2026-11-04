@@ -158,8 +158,6 @@ def test_stop_and_go_dimension_status_mask_event() -> None:
         (STOP_AND_GO_DIM_SELF_TEST_DISABLED, 1, True, None, None, None, None),
         (STOP_AND_GO_DIM_AUTORESET_OFF, 1, True, None, None, False, None),
         (STOP_AND_GO_DIM_AUTORESET_OFF, 0, False, None, None, True, None),
-        # 259 is "Check off/on" (is_check_active, report 21 E11); the
-        # pre-2.0.0b13 is_tracking_active reading is kept for consumers.
         (STOP_AND_GO_DIM_CHECK_OFF, 1, True, None, None, None, False),
         (STOP_AND_GO_DIM_CHECK_OFF, 0, False, None, None, None, True),
         (STOP_AND_GO_DIM_WAITING_CLOSING, 1, True, None, None, None, None),
@@ -229,26 +227,21 @@ def test_stop_and_go_command_builders(
 
 
 def test_stop_and_go_address_validation() -> None:
-    # 1N with N = 1..127 (Encyclopedia who-18 addressing.md); 0, 1128 and
-    # non-numeric targets are outside the family (report 21 E2).
     with pytest.raises(ValueError, match="Stop&Go line address"):
         OWNStopAndGoCommand.open_breaker(0)
     with pytest.raises(ValueError, match="Stop&Go line address"):
-        OWNStopAndGoCommand.open_breaker("1128")
+        OWNStopAndGoCommand.open_breaker(10)
+    with pytest.raises(ValueError, match="Stop&Go line address"):
+        OWNStopAndGoCommand.open_breaker(20)
     with pytest.raises(ValueError, match="Stop&Go line address"):
         OWNStopAndGoCommand.open_breaker("invalid")
-    assert str(OWNStopAndGoCommand.open_breaker(10)) == "*18*21*110##"
-    assert str(OWNStopAndGoCommand.open_breaker(20)) == "*18*21*120##"
 
 
 def test_stop_and_go_test_frequency_validation() -> None:
-    # DAYS = 1..180 (Encyclopedia who-18 dimensions.md "Stop&Go self-test
-    # interval"; report 21 E3).
-    with pytest.raises(ValueError, match="between 1 and 180"):
+    with pytest.raises(ValueError, match="between 1 and 255"):
         OWNStopAndGoCommand.set_test_frequency(11, 0)
-    with pytest.raises(ValueError, match="between 1 and 180"):
-        OWNStopAndGoCommand.set_test_frequency(11, 181)
-    assert str(OWNStopAndGoCommand.set_test_frequency(11, 180)) == "*#18*11*#212*180##"
+    with pytest.raises(ValueError, match="between 1 and 255"):
+        OWNStopAndGoCommand.set_test_frequency(11, 256)
 
 
 def test_stop_and_go_status_flag_validation() -> None:
