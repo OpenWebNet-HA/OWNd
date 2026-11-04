@@ -711,3 +711,57 @@ def test_who16_stays_on_gateways_that_forward_it(model: str) -> None:
     state frames from an F441M (``*#16*41*1*1##``, MyHOME#669), so it keeps
     owning WHO 16 events."""
     assert get_gateway_profile(model).supports_who(WHO_SOUND)
+
+
+@pytest.mark.parametrize(
+    (
+        "model",
+        "general_status",
+        "zone_status",
+        "actuator_status",
+        "humidity_request",
+        "interface_requests",
+    ),
+    [
+        # Oracle + live multi-session captures (MyHOME#629, #799, #866)
+        ("F454", False, True, True, False, False),
+        ("003598", False, True, True, False, False),
+        ("F461", False, True, True, True, False),
+        ("MyHomeServer1", False, True, True, True, False),
+        ("MHS1", False, True, True, True, False),
+        # Oracle general-sweep gateways (nack/silent on *#4*Z##)
+        ("F453", True, False, False, False, False),
+        ("F453AV", True, False, False, False, False),
+        ("MH200N", True, False, False, False, False),
+        # Live F455 (#674: *#4*Z## hangs TCP socket 10 s; not in oracle)
+        ("F455", None, False, None, None, None),
+        # Single-session / scenario gateways in oracle (zone_status left None for caller policy)
+        ("H4684", False, None, False, False, False),
+        ("H/L4684", False, None, False, False, False),
+        ("MH200", False, None, False, False, False),
+        ("MH202", False, None, False, False, False),
+        # Live MH201 sweep (#466: *#4*0## gets no zone reply; not in oracle)
+        ("MH201", False, None, None, None, None),
+        # Unmeasured in WHO 4 oracle / captures
+        ("F452", None, None, None, None, None),
+        ("F452V", None, None, None, None, None),
+        ("H4890", None, None, None, None, None),
+        ("UnknownModel", None, None, None, None, None),
+    ],
+)
+def test_who4_heating_capability_flags(
+    model: str,
+    general_status: bool | None,
+    zone_status: bool | None,
+    actuator_status: bool | None,
+    humidity_request: bool | None,
+    interface_requests: bool | None,
+) -> None:
+    """Verify declarative WHO 4 request capability flags across gateway profiles."""
+    profile = get_gateway_profile(model)
+    assert profile.supports_general_heating_status is general_status
+    assert profile.supports_heating_zone_status is zone_status
+    assert profile.supports_heating_actuator_status is actuator_status
+    assert profile.supports_heating_humidity_request is humidity_request
+    assert profile.supports_interface_zone_requests is interface_requests
+

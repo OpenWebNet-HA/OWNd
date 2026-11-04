@@ -96,6 +96,19 @@ class GatewayProfile:
     # WHO 18 reply-form frames (*#18*W*DIM*VAL##). True means acknowledged on
     # the command session, not that the value is shown to reach the bus.
     supports_who18_response_injection: bool | None = None
+    # WHO 4 thermoregulation request capabilities (None = unverified; True/False
+    # from own-firmware-oracle suites and live hardware traces):
+    # - supports_general_heating_status: general sweep *#4*0## (trace-corpus.tsv).
+    # - supports_heating_zone_status: per-zone status *#4*Z## (thermo-zone-requests,
+    #   live multi-session traces MyHOME#629, #674, #799, #866).
+    # - supports_heating_actuator_status: per-zone *#4*Z*20## (thermo-actuator.tsv).
+    # - supports_heating_humidity_request: per-zone *#4*Z*60## (thermo-zone-requests).
+    # - supports_interface_zone_requests: WHO 4 behind #4#II (thermo-zone-requests).
+    supports_general_heating_status: bool | None = None
+    supports_heating_zone_status: bool | None = None
+    supports_heating_actuator_status: bool | None = None
+    supports_heating_humidity_request: bool | None = None
+    supports_interface_zone_requests: bool | None = None
     supported_who: tuple[int, ...] = DEFAULT_SUPPORTED_WHO
     extra_features: tuple[str, ...] = ()
     firmware_version: str | None = field(default=None, kw_only=True)
@@ -282,6 +295,11 @@ class F453Profile(GatewayProfile):
         super().__init__(
             model_name="F453",
             command_queue_delay=0.15,
+            supports_general_heating_status=True,
+            supports_heating_zone_status=False,
+            supports_heating_actuator_status=False,
+            supports_heating_humidity_request=False,
+            supports_interface_zone_requests=False,
         )
 
 
@@ -328,6 +346,11 @@ class F453AVProfile(GatewayProfile):
             model_name="F453AV",
             firmware_version=fw_str,
             command_queue_delay=0.15,
+            supports_general_heating_status=True,
+            supports_heating_zone_status=False,
+            supports_heating_actuator_status=False,
+            supports_heating_humidity_request=False,
+            supports_interface_zone_requests=False,
             supported_who=(
                 DEFAULT_SUPPORTED_WHO if has_cen_plus else _DEFAULT_WITHOUT_CEN_PLUS
             ),
@@ -338,9 +361,12 @@ class F453AVProfile(GatewayProfile):
 class F454Profile(GatewayProfile):
     """The F454 Web Server (Legrand 003598).
 
-    Verified by the firmware oracle (``F454 020051``, ``results/F454/020051/oracle/full/``):
+    Verified by the firmware oracle (``F454 020051``, ``results/F454/020051/oracle/full/``)
+    and live hardware traces (``F454`` FW 1.0.34 in MyHOME#629, ``F454`` FW 2.0 in MyHOME#866):
     packages ``openserver`` (HMAC-SHA2), ``bt_fls`` (WHO 1/2), ``bt_energia`` (WHO 3),
-    ``bt_H4690`` (WHO 4), ``bt_cen`` (WHO 15/25), ``bt_difson`` (WHO 16, answering
+    ``bt_H4690`` (WHO 4: drops ``*#4*0##`` and ``*#4*Z*60##``, expands ``*#4*Z##`` into four
+    SCS bus queries answered in ~1.3 s by both central-unit and standalone room thermostats,
+    and forwards ``*#4*Z*20##``), ``bt_cen`` (WHO 15/25), ``bt_difson`` (WHO 16, answering
     ``*#16*0*5##`` and 69 other WHO 16 requests with ``ack``/``out``), ``bt_multi``
     (WHO 22), and ``bt_energy`` (WHO 18).
     """
@@ -354,6 +380,11 @@ class F454Profile(GatewayProfile):
             supports_hmac=True,
             supports_native_transitions=True,
             supports_extended_frames=True,
+            supports_general_heating_status=False,
+            supports_heating_zone_status=True,
+            supports_heating_actuator_status=True,
+            supports_heating_humidity_request=False,
+            supports_interface_zone_requests=False,
         )
 
 
@@ -384,6 +415,7 @@ class F455Profile(GatewayProfile):
             supports_hmac=True,
             supports_native_transitions=True,
             supports_extended_frames=True,
+            supports_heating_zone_status=False,
             supported_who=(
                 WHO_LIGHTING,
                 WHO_AUTOMATION,
@@ -437,6 +469,11 @@ class F461Profile(GatewayProfile):
             supports_dimension_response_injection=False,
             supports_who4_command_injection=True,
             supports_who18_response_injection=True,
+            supports_general_heating_status=False,
+            supports_heating_zone_status=True,
+            supports_heating_actuator_status=True,
+            supports_heating_humidity_request=True,
+            supports_interface_zone_requests=False,
             supported_who=tuple(
                 w
                 for w in DEFAULT_SUPPORTED_WHO
@@ -480,6 +517,10 @@ class MH200Profile(GatewayProfile):
             max_queue_size=100,
             event_keepalive_interval=90,
             supports_energy_instant_power=False,
+            supports_general_heating_status=False,
+            supports_heating_actuator_status=False,
+            supports_heating_humidity_request=False,
+            supports_interface_zone_requests=False,
             supported_who=(
                 WHO_LIGHTING,
                 WHO_AUTOMATION,
@@ -521,6 +562,11 @@ class MH200NProfile(GatewayProfile):
             event_keepalive_interval=90,
             supports_energy_instant_power=False,
             supports_audio=True,
+            supports_general_heating_status=True,
+            supports_heating_zone_status=False,
+            supports_heating_actuator_status=False,
+            supports_heating_humidity_request=False,
+            supports_interface_zone_requests=False,
             supported_who=(
                 WHO_LIGHTING,
                 WHO_AUTOMATION,
@@ -545,6 +591,7 @@ class MH201Profile(GatewayProfile):
             max_queue_size=100,
             audio_measured=False,
             supports_extended_frames=True,
+            supports_general_heating_status=False,
             extra_features=("Clock diagnostics",),
         )
 
@@ -572,6 +619,10 @@ class MH202Profile(GatewayProfile):
             audio_measured=False,
             supports_hmac=True,
             supports_extended_frames=True,
+            supports_general_heating_status=False,
+            supports_heating_actuator_status=False,
+            supports_heating_humidity_request=False,
+            supports_interface_zone_requests=False,
             supported_who=(*DEFAULT_SUPPORTED_WHO, WHO_ALARM),
         )
 
@@ -650,6 +701,10 @@ class H4684Profile(GatewayProfile):
         super().__init__(
             model_name="H4684",
             firmware_version=fw_str,
+            supports_general_heating_status=False,
+            supports_heating_actuator_status=False,
+            supports_heating_humidity_request=False,
+            supports_interface_zone_requests=False,
             supported_who=(
                 (*base_who, WHO_SOUND_DIFFUSION) if has_who22 else base_who
             ),
@@ -685,6 +740,11 @@ class MyHomeServer1Profile(GatewayProfile):
             supports_hmac=True,
             supports_native_transitions=True,
             supports_extended_frames=True,
+            supports_general_heating_status=False,
+            supports_heating_zone_status=True,
+            supports_heating_actuator_status=True,
+            supports_heating_humidity_request=True,
+            supports_interface_zone_requests=False,
             supported_who=tuple(
                 w
                 for w in DEFAULT_SUPPORTED_WHO
