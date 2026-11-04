@@ -36,7 +36,15 @@ def _gateway_timezone(values: list[str]) -> str:
 # WHO 13 Dimension 15: Functional gateway model/device type (*#13**15*<TYPE>##).
 # Grounded in published BTicino protocol tables, physical plant captures,
 # and firmware reverse engineering (bt_device dispatch table at VA 0x02003194,
-# selector r4 == 0).
+# selector r4 == 0). The published table (Encyclopedia
+# who-13-integration-gateway/dimensions.md "DIMENSION 15 - Device type") has
+# 2, 4, 6, 7, 11 and 13 and says it is not exhaustive; the other codes come
+# from firmware reverse engineering and plant captures. A code that is not in
+# this table stays an unknown code (``device_type`` reads ``Unknown (N)``,
+# ``device_type_code`` keeps ``N``), and a non-unique code (``200``) is not a
+# product identity: ``device_type`` lists the gateways known to share it and
+# WHO 1013 Dimension 1 tells them apart (capabilities.md
+# "Product identification").
 WHO13_DEVICE_TYPES: dict[str, str] = {
     "2": "MHServer",
     "4": "MH200",
@@ -318,7 +326,15 @@ class OWNGatewayEvent(OWNEvent):
 
     @property
     def device_type(self) -> str | None:
-        """Return the decoded gateway device type string."""
+        """Return the decoded gateway device type string.
+
+        ``Unknown (N)`` for a Dimension 15 code outside ``WHO13_DEVICE_TYPES``
+        (the published table is not exhaustive and an unlisted code stays an
+        unknown code); the non-unique ``200`` reads as the slash-separated list
+        of the gateways known to share it, not as one product: identify them
+        through WHO 1013 Dimension 1 (``OWNGatewayDiagnosticEvent``).
+        ``device_type_code`` keeps the raw code either way.
+        """
         return self._device_type
 
     @property

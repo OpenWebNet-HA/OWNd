@@ -1012,9 +1012,11 @@ class OWNHeatingCommand(OWNCommand):
 
         ``where`` is a zone of one or two digits (``2``, ``#2``), one actuator
         (``2#1``; ``2#0`` for all actuators of the zone), the central-unit
-        form (``#0``, ``#0#N``) for every zone, or ``#Z#N`` (an actuator
-        addressed through the central unit; WHO 4 WHERE table, see
-        ``_zone_address_and_name``). Each form may be routed through a bus interface
+        form (``#0``, ``#0#C``) for every zone, or ``#Z#C`` (zone ``Z``
+        through a four-zone central unit ``C``: Encyclopedia
+        who-4-temperature-control/addressing.md "Historical central-unit
+        variants", ``#Z#C`` is a controlled-zone address, not an actuator;
+        see ``_zone_address_and_name``). Each form may be routed through a bus interface
         with a two-digit ``#4#NN`` suffix (``3#4#01``, ``#3#4#01``,
         ``2#1#4#01``) because the suffix is spec-legal grammar, but no
         emulated firmware routes it across an F422: own-firmware-oracle#65

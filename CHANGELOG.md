@@ -4,6 +4,9 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Documentation only, no behaviour change**: `docs/protocol_conformance_matrix.md` shows the WHO 13 reads in the published empty-`WHERE` form (`*#13**0##`, `*#13**22##`) instead of `*#13*0*0##` / `*#13*0*22##`, the form `OWNGatewayCommand.request_time()` and the keepalive already emit; the `OWNHeatingCommand.actuators_status` docstring describes `#Z#C` as zone `Z` through a four-zone central unit `C` (a controlled-zone address, not an actuator); the `OWNGatewayEvent.device_type` docstring and the `WHO13_DEVICE_TYPES` comment say that an unlisted Dimension 15 code stays `Unknown (N)` and that the non-unique `200` is a list of sharers, not a product identity (2026-11-04 audit G5, G9).
+
 ## [2.0.0b13] - 2026-11-02
 
 ### Added
