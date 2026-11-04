@@ -4,7 +4,9 @@
 # no DIMENSION 11: active power is 113, the totalizer is 51, and 11 is the ZigBee
 # "Voltage" dimension of the separate variant (zigbee-variant.md "Dimension table").
 # WHERE `1` is not a published family either (`1N` needs N = 1..127, addressing.md).
-# Energy values on the SCS wire are Wh, never kWh. They stay as `conflict` records
+# No kWh on SCS WHO 18: the PDF labels DIMENSION 51..54 "Watt", 511/512 "Watt/h" and only
+# 72 "Wh" (Encyclopedia README: preserve the published field semantics); OWNd and MyHOME read
+# the totalizers as Wh. They stay as `conflict` records
 # pinning parser shape only; OWNd gives them no `message_type` (report 21 E12).
 - id: energy.req.active_power.meter1
   frame: "*#18*1*1##"
