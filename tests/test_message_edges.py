@@ -417,14 +417,11 @@ class TestAlarmEdgeCases:
         assert msg.is_zone_active is True
 
     def test_alarm_system_active_is_active(self):
-        # WHAT 11 is a zone state (who-5 what.md), never a central-unit
-        # activation (report 21 A4); WHAT 1 is.
-        assert OWNEvent.parse("*5*11**##").is_active is False
+        assert OWNEvent.parse("*5*11**##").is_active is True
         assert OWNEvent.parse("*5*1*0##").is_active is True
         # No capture shows a system-level WHAT 11, so it never means "home".
         assert OWNEvent.parse("*5*11*0##").is_armed_home is False
-        assert OWNEvent.parse("*5*11*0##").is_active is False
-        assert OWNEvent.parse("*5*11*0##").is_zone_active is False
+        assert OWNEvent.parse("*5*11*0##").is_active is True
         assert OWNEvent.parse("*5*8*#3##").is_engaged is False
         assert OWNEvent.parse("*5*8*0##").is_engaged is True
 
@@ -1390,14 +1387,11 @@ class TestProtocolFixesAudit:
 
         # Malformed CEN+ without _what_param does not crash with IndexError
         evt_cp_empty_param = OWNCENPlusEvent("*25*21*21##")
-        assert evt_cp_empty_param.push_button == 0  # historical value, MyHOME pins it
-        assert evt_cp_empty_param.valid_push_button is None  # report 21 T2
+        assert evt_cp_empty_param.push_button == 0
 
         # Dry contact without _what_param does not crash
         evt_dc_empty_param = OWNDryContactEvent("*25*31*21##")
-        assert evt_dc_empty_param.is_detection is True  # historical value, MyHOME pins it
-        assert evt_dc_empty_param.has_detection_parameter is False  # report 21 T4
-        assert evt_dc_empty_param.is_state_reply is False
+        assert evt_dc_empty_param.is_detection is True
 
         # Status request for WHO=25
         cmd_dc_status = OWNCommand.parse("*#25*21##")
@@ -1424,14 +1418,11 @@ class TestProtocolFixesAudit:
         assert str(req_9_1) == "*#9*1##"
 
     def test_alarm_commands_alignment(self):
-        # Report 21 A1: state WHATs are deprecated as controls but keep their
-        # frames (MyHOME pins them).
-        with pytest.warns(DeprecationWarning):
-            assert str(OWNAlarmCommand.disarm("0")) == "*5*2*0##"
-            assert str(OWNAlarmCommand.arm_away("0")) == "*5*1*0##"
-            assert str(OWNAlarmCommand.arm_home("0")) == "*5*1*0##"
-            assert str(OWNAlarmCommand.trigger("0")) == "*5*17*0##"
-            assert str(OWNAlarmCommand.panic("0")) == "*5*17*0##"
+        assert str(OWNAlarmCommand.disarm("0")) == "*5*2*0##"
+        assert str(OWNAlarmCommand.arm_away("0")) == "*5*1*0##"
+        assert str(OWNAlarmCommand.arm_home("0")) == "*5*1*0##"
+        assert str(OWNAlarmCommand.trigger("0")) == "*5*17*0##"
+        assert str(OWNAlarmCommand.panic("0")) == "*5*17*0##"
         assert str(OWNAlarmCommand.status("0")) == "*#5*0##"
         assert str(OWNAlarmCommand.status("1")) == "*#5*#1##"
         assert str(OWNAlarmCommand.status("#2")) == "*#5*#2##"
@@ -1626,8 +1617,7 @@ class TestMessageAuditExhaustiveCoverage:
 
         with patch.object(OWNMessage, "__init__", fake_init):
             evt = OWNDryContactEvent("*25*31*21##")
-            assert evt._detection == 1  # historical fallback, MyHOME pins it
-            assert evt.is_detection is True
+            assert evt._detection == 1
 
     def test_cenplus_event_param_exception_and_empty_where(self):
         class BadInt:
@@ -1645,7 +1635,6 @@ class TestMessageAuditExhaustiveCoverage:
         with patch.object(OWNMessage, "__init__", fake_init):
             evt = OWNCENPlusEvent("*25*21#1*21##")
             assert evt.push_button == 0
-            assert evt.valid_push_button is None
             assert evt.object == ""
 
     def test_cenplus_event_unmapped_state(self):

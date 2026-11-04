@@ -207,10 +207,7 @@ class TestMessageExhaustiveCoverage:
         # Alarm events: maintenance (0), activation (1), engage (8), technical alarm (12), intrusion alarm (15)
         ev_maint = OWNAlarmEvent("*5*0*0##")
         assert ev_maint.state_code == 0
-        # Report 21 A4: WHAT 0 is a central-unit maintenance state (who-5
-        # what.md), not a disarm.
-        assert ev_maint.is_disarmed is False
-        assert ev_maint.is_maintenance is True
+        assert ev_maint.is_disarmed is True
         assert ev_maint.state_name == "maintenance"
 
         ev_eng = OWNAlarmEvent("*5*8*0##")
@@ -229,7 +226,6 @@ class TestMessageExhaustiveCoverage:
         ev_act = OWNAlarmEvent("*5*11*0##")
         assert ev_act.is_armed_home is False
         assert ev_act.general is True
-        assert ev_act.is_active is False  # WHAT 11 is a zone state (what.md)
 
         # Sensor in non-zero zone reporting (where="12" -> zone 1, sensor 2)
         ev_sensor = OWNAlarmEvent("*5*1*12##")

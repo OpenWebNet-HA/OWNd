@@ -2213,7 +2213,7 @@
     "_file": "who05_alarm.yaml"
   },
   {
-    "id": "alarm.event.disactivation.central",
+    "id": "alarm.event.silent.zone0",
     "frame": "*5*2*0##",
     "direction": "event",
     "who": 5,
@@ -2221,7 +2221,7 @@
     "where": "0",
     "source": "openwebnet4j",
     "mcp_valid": true,
-    "mcp_notes": "Burglar Alarm: WHAT 2 is Disactivation (Encyclopedia functional/who-5-alarm/what.md); the silent alarm is WHAT 31. WHERE 0 is the central unit. The earlier label 'Silent alarm event for zone 0' was the judge catalog wording, not the published meaning. OWNd: state_name 'deactivation', is_disarmed True, is_silent False",
+    "mcp_notes": "Burglar Alarm: WHAT 2 is Disactivation (Encyclopedia functional/who-5-alarm/what.md); the silent alarm is WHAT 31. WHERE 0 is the central unit. The earlier label 'Silent alarm event for zone 0' was the judge catalog wording, not the published meaning; the record id is kept for stability",
     "roundtrip": true,
     "_file": "who05_alarm.yaml"
   },
@@ -2247,7 +2247,7 @@
     "where": "0",
     "source": "community-plant-capture",
     "mcp_valid": true,
-    "mcp_notes": "Burglar Alarm: WHAT 1 Activation (central-unit state, Encyclopedia functional/who-5-alarm/what.md), captured on MH202 (MyHOME#564 comment 5917195080). Not an arm: the F454 trace (MyHOME#311) sends it on every disarm and only WHAT 8 means armed; OWNd is_active True, is_armed_away False",
+    "mcp_notes": "Burglar Alarm: WHAT 1 Activation (central-unit state, Encyclopedia functional/who-5-alarm/what.md), captured on MH202 (MyHOME#564 comment 5917195080). Not by itself an arm: the F454 trace (MyHOME#311) sends it on every disarm and only WHAT 8 means armed",
     "roundtrip": true,
     "_file": "who05_alarm.yaml"
   },

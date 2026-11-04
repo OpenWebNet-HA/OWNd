@@ -29,7 +29,7 @@ To prevent divergence and eliminate guesswork, every protocol frame and capabili
 | **1** | **Lighting** | ON/OFF, Status, Speed Dimming, Private Bus (`#4#01`), Dimension writes | `*1*1*0311#4#01##`, `*1*1#5*12##`, `*#1*31*#1*150*5##` | Valid | Matched | **VERIFIED (100%)** |
 | **2** | **Automation** | Shutter UP/DOWN/STOP, Bus Routing (`#4#01`), Slat Tilt, Position % | `*2*1*31#4#01##`, `*#2*31*#11#001*100##`, `*2*2*12##` | Valid | Matched | **VERIFIED (100%)** |
 | **4** | **Thermoregulation** | Probe queries (`21.5°C`), Setpoints, Antifreeze, Negative Temp (`-4.8°C`) | `*#4*1*0*0215##`, `*#4*6*12*1048*3##`, `*#4*1*#14*0200*1##` | Valid | Matched | **VERIFIED (100%)** |
-| **5** | **Burglar Alarm** | Zone status, CU status, central-unit activation / disactivation / disengage states, zone active / non-active states | `*#5*#2##`, `*5*1*0##`, `*5*2*0##`, `*5*9*0##`, `*5*11*#1##` | Valid | Matched | **VERIFIED (100%)** |
+| **5** | **Burglar Alarm** | Zone status, CU status, Silent alarms, System arm/disarm | `*5*1*1##`, `*#5*1##`, `*5*2*2##` | Valid | Matched | **VERIFIED (100%)** |
 | **9** | **Auxiliary** | Relay ON/OFF commands across auxiliary channels | `*9*1*1##`, `*9*0*1##` | Valid | Matched | **VERIFIED (100%)** |
 | **13** | **Gateway Mgmt** | Firmware version, Gateway internal datetime requests | `*#13*0*0##`, `*#13*0*22##` | Valid | Matched | **VERIFIED (100%)** |
 | **15** | **CEN Scenarios** | Press, short release, long release, extended hold | `*15*01*73##`, `*15*01#1*73##`, `*15*01#2*0110##`, `*15*01#3*0110##` | Valid | Matched | **VERIFIED (100%)** |

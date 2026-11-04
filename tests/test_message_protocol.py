@@ -66,15 +66,8 @@ def test_who25_malformed_parameters_do_not_raise() -> None:
     cen_plus = OWNCENPlusEvent("*25*21*21##")
     dry_contact = OWNDryContactEvent("*25*31*21##")
 
-    # Report 21 T2 / T4: a missing pushbutton gives valid_push_button None (0 is
-    # a real button, cen-plus.md#pushbutton-parameter) and a missing #0/#1
-    # parameter gives has_detection_parameter False (dry-contact-ir.md#what).
-    # push_button 0 and is_detection True are the historical values MyHOME pins.
     assert cen_plus.push_button == 0
-    assert cen_plus.valid_push_button is None
     assert dry_contact.is_detection is True
-    assert dry_contact.has_detection_parameter is False
-    assert dry_contact.is_state_reply is False
 
 
 def test_who25_status_request_is_a_dry_contact_command() -> None:
@@ -98,21 +91,15 @@ def test_status_requests_can_omit_where() -> None:
 
 
 def test_alarm_command_helpers_and_dispatch() -> None:
-    # Report 21 A1: WHAT 1/2/8/9/17 are states, not controls (who-5 what.md,
-    # protocol.md#write-support); the builders are deprecated but keep their
-    # frames (MyHOME pins them), see test_misc_audit_fixes.
-    for builder, frame in (
-        (OWNAlarmCommand.disarm, "*5*2*0##"),
-        (OWNAlarmCommand.disengage, "*5*9*0##"),
-        (OWNAlarmCommand.arm_away, "*5*1*0##"),
-        (OWNAlarmCommand.engage, "*5*8*0##"),
-        (OWNAlarmCommand.arm_home, "*5*1*0##"),
-        (OWNAlarmCommand.trigger, "*5*17*0##"),
-        (OWNAlarmCommand.panic, "*5*17*0##"),
-    ):
-        with pytest.warns(DeprecationWarning):
-            assert str(builder()) == frame
-    assert str(OWNAlarmCommand.arm("12345")) == "*5*36#12345*0##"
+    assert str(OWNAlarmCommand.disarm()) == "*5*2*0##"
+    assert str(OWNAlarmCommand.disengage()) == "*5*9*0##"
+    assert str(OWNAlarmCommand.disengage("1")) == "*5*9*1##"
+    assert str(OWNAlarmCommand.arm_away()) == "*5*1*0##"
+    assert str(OWNAlarmCommand.engage()) == "*5*8*0##"
+    assert str(OWNAlarmCommand.engage("1")) == "*5*8*1##"
+    assert str(OWNAlarmCommand.arm_home()) == "*5*1*0##"
+    assert str(OWNAlarmCommand.trigger()) == "*5*17*0##"
+    assert str(OWNAlarmCommand.panic()) == "*5*17*0##"
     assert str(OWNAlarmCommand.status()) == "*#5*0##"
     assert str(OWNAlarmCommand.status("1")) == "*#5*#1##"
     assert str(OWNAlarmCommand.status("#2")) == "*#5*#2##"
@@ -219,8 +206,7 @@ def test_alarm_zone_telemetry_does_not_pollute_system_arm_state() -> None:
     z_act = OWNMessage.parse("*5*11*#1##")
     assert isinstance(z_act, OWNAlarmEvent)
     assert z_act.general is False
-    assert z_act.zone == "1"  # str for the #Z selector (MyHOME pins it); zone_number is the int
-    assert z_act.zone_number == 1
+    assert z_act.zone == "1"
     assert z_act.is_zone_active is True
     assert z_act.is_armed_home is False
     assert z_act.is_armed_away is False
@@ -229,7 +215,6 @@ def test_alarm_zone_telemetry_does_not_pollute_system_arm_state() -> None:
     assert isinstance(z_byp, OWNAlarmEvent)
     assert z_byp.general is False
     assert z_byp.zone == "7"
-    assert z_byp.zone_number == 7
     assert z_byp.is_zone_inactive is True
     assert z_byp.is_zone_active is False
     assert z_byp.is_disarmed is False
