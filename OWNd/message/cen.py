@@ -53,8 +53,8 @@ class OWNCENEvent(OWNEvent):
 class OWNDryContactEvent(OWNEvent):
     """WHO 25 WHAT 31 / 32 dry contact and IR frames.
 
-    Page grammar (Encyclopedia ``functional/who-25-transversal/dry-contact-ir.md``
-    #what, #where): ``*25*31#P*WHERE##`` is ON / IR detection, ``*25*32#P*WHERE##``
+    Published grammar (WHO 25 PDF WHAT / WHERE tables; Encyclopedia
+    ``functional/who-25-transversal/dry-contact-ir.md`` #what, #where): ``*25*31#P*WHERE##`` is ON / IR detection, ``*25*32#P*WHERE##``
     OFF / no detection; the parameter ``P`` is always present, ``0`` for a state
     returned by a request and ``1`` for an event. ``WHERE`` is ``1..201`` for
     automation interfaces or ``[1-9][1-9]`` (``Z`` ``N``) for alarm / IR devices.
