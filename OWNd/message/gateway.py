@@ -23,50 +23,14 @@ def _validate_gateway_clock_values(
 
 
 def _gateway_timezone(values: list[str]) -> str:
-    """Decode an optional OWN timezone, preserving unspecified local time.
-
-    ``T`` is sign + two-digit hour offset (Encyclopedia
-    who-13-integration-gateway/dimensions.md "DIMENSION 0 - Time": ``001`` is
-    GMT+1, ``102`` GMT-2); ``100`` is GMT-0 and reads ``+00:00`` like ``000``.
-    """
+    """Decode an optional OWN timezone, preserving unspecified local time."""
     value = values[3] if len(values) > 3 else ""
     if not value or value == "999":
         return ""
     if re.fullmatch(r"[01]\d{2}", value) is None:
         raise ValueError(f"Invalid gateway timezone: {value!r}")
-    if value[1:] == "00":
-        return "+00:00"
     sign = "+" if value[0] == "0" else "-"
     return f"{sign}{value[1:]}:00"
-
-
-def _gateway_weekday(value: str) -> int | None:
-    """``W`` as 0..6 (``00`` Sunday .. ``06`` Saturday), ``None`` outside the table.
-
-    Not checked against the calendar date: the touchscreen client writes a
-    fixed ``00`` (dimensions.md "Historical touchscreen platform properties").
-    """
-    if re.fullmatch(r"[0-9]{1,2}", value) is not None and int(value) <= 6:
-        return int(value)
-    return None
-
-
-def _gateway_date(year: str, month: str, day: str) -> _dt.date | None:
-    """Decode ``D*M*Y``; ``None`` when ``Y`` is not four digits (dimensions.md "DIMENSION 1 - Date").
-
-    Day and month are validated first, exactly as on master: an out-of-range
-    value (``*#13**1*04*99*32*26##``, month ``13``, day ``32``) raises
-    ``ValueError`` whatever the year looks like (OWNd#144, caught by the
-    sessions). Only a well-formed date whose ``Y`` is not four digits
-    (``*#13**1*04*15*10*26##``: not year 0026) gives ``None``; the frame stays
-    valid with the raw values.
-    """
-    if re.fullmatch(r"[0-9]{4}", year) is None:
-        # Validate D and M against a leap year so 29 February still passes;
-        # 30 February, month 13 or day 32 raise as on master.
-        _dt.date(year=2000, month=int(month), day=int(day))
-        return None
-    return _dt.date(year=int(year), month=int(month), day=int(day))
 
 
 # WHO 13 Dimension 15: Functional gateway model/device type (*#13**15*<TYPE>##).
@@ -158,7 +122,6 @@ class OWNGatewayEvent(OWNEvent):
         self._second = None
         self._timezone = None
         self._raw_timezone = None
-        self._weekday: int | None = None
 
         self._time = None
         self._date = None
@@ -167,7 +130,6 @@ class OWNGatewayEvent(OWNEvent):
         self._ip_address = None
         self._netmask = None
         self._mac_address = None
-        self._valid_mac_address: str | None = None
 
         self._device_type = None
         self._firmware_version = None
@@ -198,25 +160,15 @@ class OWNGatewayEvent(OWNEvent):
             )
 
         elif self._dimension == 1:
-            self._weekday = _gateway_weekday(self._dimension_value[0])
             self._year = self._dimension_value[3]
             self._month = self._dimension_value[2]
             self._day = self._dimension_value[1]
-            self._date = _gateway_date(self._year, self._month, self._day)
-            if self._date is not None:
-                self._human_readable_log = (
-                    f"Gateway's internal date is: {self._date}."
-                )
-        # Requesting Dimensions 10, 11 and 12 (``*#13**10##``, ``*#13**11##``,
-        # ``*#13**12##``: IP address, netmask, MAC) makes the gateway daemon exit on
-        # H4684 020054 and MH200 020102 in the firmware oracle (``nack/crash``;
-        # ``firmware_observed`` under QEMU emulation, not confirmed on physical
-        # hardware; findings/who13-identification.md). The other eleven emulated
-        # gateways ACK them, eight with a telegram on the bus and three silently
-        # (F453, F453AV, MH200N). OWNd builds no request for them and applies no
-        # send-layer guard: the frames are legitimate on most gateways, so a refusal
-        # would need the gateway model at send time. These branches only decode
-        # replies seen on the bus (2026-11-04 audit G1).
+            self._date = _dt.date(
+                year=int(self._year), month=int(self._month), day=int(self._day)
+            )
+            self._human_readable_log = (
+                f"Gateway's internal date is: {self._date}."
+            )
         elif self._dimension == 10 and len(self._dimension_value) >= 4:
             self._ip_address = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}.{self._dimension_value[3]}"  # pylint: disable=line-too-long
             self._human_readable_log = f"Gateway's IP address is: {self._ip_address}."
@@ -226,32 +178,11 @@ class OWNGatewayEvent(OWNEvent):
             self._human_readable_log = f"Gateway's netmask is: {self._netmask}."
 
         elif self._dimension == 12 and len(self._dimension_value) >= 6:
-            # ``mac_address`` keeps formatting the first six values as hex
-            # without a range check (MyHOME#804: the integration validates the
-            # value itself and its tests pin that an octet ``256`` reads
-            # ``100``). ``valid_mac_address`` is the checked form: exactly six
-            # decimal ASCII octets in 0..255 (Encyclopedia dimensions.md
-            # "DIMENSION 12 - MAC address"), else ``None``. Eight values are
-            # the ZigBee interface IEEE address (zigbee-network-management.md
-            # "DIMENSION 12 - Interface IEEE address"), not a MAC: the log
-            # says so and the values stay raw in ``dimension_value``.
-            octets = self._dimension_value
             try:
-                self._mac_address = ":".join(f"{int(o):02x}" for o in octets[:6])
-            except (TypeError, ValueError):
-                pass
-            if len(octets) == 6 and all(
-                re.fullmatch(r"[0-9]{1,3}", o) is not None and int(o) <= 255
-                for o in octets
-            ):
-                self._valid_mac_address = self._mac_address
+                self._mac_address = f"{int(self._dimension_value[0]):02x}:{int(self._dimension_value[1]):02x}:{int(self._dimension_value[2]):02x}:{int(self._dimension_value[3]):02x}:{int(self._dimension_value[4]):02x}:{int(self._dimension_value[5]):02x}"  # pylint: disable=line-too-long
                 self._human_readable_log = f"Gateway's MAC address is: {self._mac_address}."
-            elif len(octets) == 8:
-                self._human_readable_log = (
-                    "Gateway reported an eight-value dimension 12 "
-                    "(ZigBee interface IEEE address, not a MAC address): "
-                    f"{'*'.join(octets)}."
-                )
+            except (IndexError, TypeError, ValueError):
+                pass
 
         elif self._dimension == 15 and self._dimension_value:
             code = self._dimension_value[0]
@@ -260,19 +191,9 @@ class OWNGatewayEvent(OWNEvent):
 
         elif self._dimension == 16 and len(self._dimension_value) >= 3:
             self._firmware_version = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}"  # pylint: disable=line-too-long
-            if self._where:
-                # ``*#13*PRODUCT00#9*16*V*R*B##`` is the firmware of the
-                # addressed ZigBee product, not of the gateway (Encyclopedia
-                # zigbee-network-management.md "DIMENSION 16 and 17 -
-                # Firmware and hardware versions"); ``where`` tells.
-                product = self._where + "".join(f"#{p}" for p in self._where_param)
-                self._human_readable_log = (
-                    f"Product {product}'s firmware version is: {self._firmware_version}."
-                )
-            else:
-                self._human_readable_log = (
-                    f"Gateway's firmware version is: {self._firmware_version}."
-                )
+            self._human_readable_log = (
+                f"Gateway's firmware version is: {self._firmware_version}."
+            )
 
         elif (
             self._dimension == 19
@@ -300,14 +221,9 @@ class OWNGatewayEvent(OWNEvent):
                 else None
             )
             self._timezone = _gateway_timezone(self._dimension_value)
-            self._weekday = _gateway_weekday(self._dimension_value[4])
             self._day = self._dimension_value[5]
             self._month = self._dimension_value[6]
             self._year = self._dimension_value[7]
-            if _gateway_date(self._year, self._month, self._day) is None:
-                # Two-digit year: the frame stays valid, raw values kept,
-                # typed properties None (dimensions.md "DIMENSION 1 - Date").
-                return
             self._datetime = _dt.datetime.fromisoformat(
                 f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
             )
@@ -364,16 +280,6 @@ class OWNGatewayEvent(OWNEvent):
         return self._date
 
     @property
-    def weekday(self) -> int | None:
-        """Day of week of a Dimension 1 / 22 payload: ``0`` Sunday .. ``6`` Saturday.
-
-        ``None`` outside ``00..06`` (Encyclopedia dimensions.md "DIMENSION 1 -
-        Date"); not checked against the calendar date, since the touchscreen
-        client writes a fixed ``00``.
-        """
-        return self._weekday
-
-    @property
     def datetime(self) -> _dt.datetime | None:
         """Return the decoded gateway internal datetime."""
         return self._datetime
@@ -407,18 +313,6 @@ class OWNGatewayEvent(OWNEvent):
     def netmask(self) -> str | None:
         """Return the decoded gateway netmask."""
         return self._netmask
-
-    @property
-    def valid_mac_address(self) -> str | None:
-        """Dimension 12 as a MAC address, or ``None`` when it is not one.
-
-        Six decimal ASCII octets in ``0..255`` (Encyclopedia
-        who-13-integration-gateway/dimensions.md "DIMENSION 12 - MAC address");
-        ``None`` for an octet outside the range, a seven-value reply or the
-        eight-value ZigBee interface IEEE address. ``mac_address`` keeps the
-        unchecked formatting of the first six values.
-        """
-        return self._valid_mac_address
 
     @property
     def mac_address(self) -> str | None:
@@ -478,7 +372,6 @@ class OWNGatewayCommand(OWNCommand):
         self._second = None
         self._timezone = None
         self._raw_timezone = None
-        self._weekday: int | None = None
 
         self._time = None
         self._date = None
@@ -508,15 +401,15 @@ class OWNGatewayCommand(OWNCommand):
             )
 
         elif self._dimension == 1:
-            self._weekday = _gateway_weekday(self._dimension_value[0])
             self._year = self._dimension_value[3]
             self._month = self._dimension_value[2]
             self._day = self._dimension_value[1]
-            self._date = _gateway_date(self._year, self._month, self._day)
-            if self._date is not None:
-                self._human_readable_log = (
-                    f"Gateway broadcasting internal date: {self._date}."
-                )
+            self._date = _dt.date(
+                year=int(self._year), month=int(self._month), day=int(self._day)
+            )
+            self._human_readable_log = (
+                f"Gateway broadcasting internal date: {self._date}."
+            )
 
         elif self._dimension == 22:
             self._hour = self._dimension_value[0]
@@ -528,14 +421,9 @@ class OWNGatewayCommand(OWNCommand):
                 else None
             )
             self._timezone = _gateway_timezone(self._dimension_value)
-            self._weekday = _gateway_weekday(self._dimension_value[4])
             self._day = self._dimension_value[5]
             self._month = self._dimension_value[6]
             self._year = self._dimension_value[7]
-            if _gateway_date(self._year, self._month, self._day) is None:
-                # Two-digit year: the frame stays valid, raw values kept,
-                # typed properties None (dimensions.md "DIMENSION 1 - Date").
-                return
             self._datetime = _dt.datetime.fromisoformat(
                 f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
             )
@@ -558,16 +446,6 @@ class OWNGatewayCommand(OWNCommand):
     def date(self) -> _dt.date | None:
         """Return the decoded gateway internal date."""
         return self._date
-
-    @property
-    def weekday(self) -> int | None:
-        """Day of week of a Dimension 1 / 22 payload: ``0`` Sunday .. ``6`` Saturday.
-
-        ``None`` outside ``00..06`` (Encyclopedia dimensions.md "DIMENSION 1 -
-        Date"); not checked against the calendar date, since the touchscreen
-        client writes a fixed ``00``.
-        """
-        return self._weekday
 
     @property
     def datetime(self) -> _dt.datetime | None:
