@@ -4,6 +4,10 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Added
+- **WHO 4 (`OWNHeatingEvent.actuator`, `OWNHeatingCommand.actuator`, `OWNMessage.interface`)**: Public `actuator` property on Dimension 20 status events (`*#4*Z#N*20*VAL##`), Dimension 20 requests (`*#4*Z#N*20##`) and `MyHomeServer1` Dimension 20 writes (`*#4*Z#N*#20*VAL##`), plus WHO 4 `#4#IF` bus-interface extraction in `OWNMessage.interface` and `OWNMessage.event_content` (`MyHOME#863`). Disambiguates actuator `#4` (`30#4`, `len == 1`) from F422 bus routing (`30#4#01`, `len == 2`, actuator `"1"`; `30#4#4#01`, `len == 3`, actuator `"4"` on interface `"01"`), `#0#4` (4-zone central unit 4) from `#0#4#01` (`#0` on interface `"01"`), and leaves WHO 4 Dimension 22 split addresses (`3#4#1*22##`) unrouted.
+- **Profiles (`GatewayProfile` WHO 4 request capability flags)**: Declarative `bool | None = None` fields `supports_general_heating_status` (`*#4*0##`), `supports_heating_zone_status` (`*#4*Z##`), `supports_heating_actuator_status` (`*#4*Z*20##`), `supports_heating_humidity_request` (`*#4*Z*60##`), and `supports_interface_zone_requests` (`*#4*Z#4#II...##`) populated from `own-firmware-oracle` verdicts and live hardware traces (`MyHOME#466`, `#629`, `#674`, `#799`, `#866`), with `F454Profile(supports_heating_zone_status=True, ...)` and `MH202Profile(supports_heating_zone_status=True, ...)` verified on both central-unit (`#629`) and standalone room-thermostat (`#866`) plants.
+
 ## [2.0.0b13] - 2026-11-02
 
 ### Added
