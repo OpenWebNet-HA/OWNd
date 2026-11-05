@@ -729,6 +729,9 @@ def test_who16_stays_on_gateways_that_forward_it(model: str) -> None:
         ("F461", False, True, True, True, False),
         ("MyHomeServer1", False, True, True, True, False),
         ("MHS1", False, True, True, True, False),
+        ("MH202", False, True, False, False, False),
+        ("03535", False, True, False, False, False),
+        ("003535", False, True, False, False, False),
         # Oracle general-sweep gateways (nack/silent on *#4*Z##)
         ("F453", True, False, False, False, False),
         ("F453AV", True, False, False, False, False),
@@ -739,7 +742,6 @@ def test_who16_stays_on_gateways_that_forward_it(model: str) -> None:
         ("H4684", False, None, False, False, False),
         ("H/L4684", False, None, False, False, False),
         ("MH200", False, None, False, False, False),
-        ("MH202", False, None, False, False, False),
         # Live MH201 sweep (#466: *#4*0## gets no zone reply; not in oracle)
         ("MH201", False, None, None, None, None),
         # Unmeasured in WHO 4 oracle / captures

@@ -609,6 +609,12 @@ class MH202Profile(GatewayProfile):
     every WHO 16 command: a live MH202 with an F441M matrix relays WHO 16
     state frames (``*#16*41*1*1##``, ``*#16*41*1*6##``; MyHOME#669 trace),
     and ``supported_who`` also decides which gateway owns those events.
+
+    WHO 4 per-zone status queries (``*#4*Z##``) are acknowledged by the
+    firmware oracle (``MH202 010024`` returns ``ack/out``, putting the 4 SCS
+    queries on the bus) and confirmed live on hardware (``MH202`` FW 1.0 in
+    MyHOME#866 comment 6641631764, answering all 5 frames across zones 1..5
+    in 160–250 ms).
     """
 
     def __init__(self) -> None:
@@ -620,6 +626,7 @@ class MH202Profile(GatewayProfile):
             supports_hmac=True,
             supports_extended_frames=True,
             supports_general_heating_status=False,
+            supports_heating_zone_status=True,
             supports_heating_actuator_status=False,
             supports_heating_humidity_request=False,
             supports_interface_zone_requests=False,
