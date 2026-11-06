@@ -4,6 +4,9 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Connections (`OWNSession`, `OWNEventSession`, `OWNCommandSession`)**: a BTicino F524 (firmware 1.3.95, OPEN password) ends every frame with a NUL byte and follows the ACK of an answered status request with a stray `*#*0##` in the same packet (`tests/fixtures/f524_010395_raw_2026-11-06.json`, raw capture of `MyHOME#466`, 2026-11-06). The NUL left at the head of the next read made the OPEN challenge unrecognisable, so every negotiation failed with `negotiation_failed` whatever the profile; past that, the stray NACK was read as the reply to the next command, which was refused at once while its real reply landed on the command after it. Leading NUL bytes are now dropped from every frame read on both sessions, and `OWNCommandSession.send` discards bytes still buffered before a write when they are only signaling frames and NUL padding (a reply already waiting is left to the reply reader). Verified live on the F524: negotiation succeeds and `*#13**16##` / `*#13**0##` / `*#13**1##` answer in line; that gateway refuses WHO 13 Dimensions 11, 15, 19, 23, 24 and 27, WHO 1013, and every general or point-to-point status request tried.
+
 ## [2.0.0b13] - 2026-11-02
 
 ### Added

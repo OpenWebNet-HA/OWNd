@@ -170,6 +170,39 @@ class OWNCommandSession(OWNSession):
                     "ok" if ok else "FAILED",
                 )
 
+    def _discard_stale_input(self, frame: str) -> None:
+        """Drop bytes the gateway sent after the previous exchange had ended.
+
+        A BTicino F524 1.3.95 follows the ACK of an answered status request with a
+        stray ``*#*0##`` in the same packet (and ends every frame with a NUL byte).
+        Read as the reply to the next command, that NACK turns every following
+        exchange into an immediate refusal and shifts each real reply onto the
+        command after it (MyHOME#466, F524 capture of 2026-11-06). Only buffered
+        bytes made of signaling frames (and NUL padding) are dropped: a reply
+        that is already waiting is left to the reply reader.
+
+        This peeks at the ``asyncio.StreamReader`` byte buffer; any other reader
+        is left alone. It covers the stray NACK the F524 sends in the same packet
+        as the ACK; a NACK that lands only after the next frame was written is
+        still read as that frame's reply.
+        """
+        buffer = getattr(self._stream_reader, "_buffer", None)
+        if not isinstance(buffer, bytearray):
+            return  # not an asyncio.StreamReader: nothing to peek at
+        if not buffer:
+            return
+        stale = bytes(buffer).replace(b"\x00", b"")
+        if stale.replace(b"*#*0##", b"").replace(b"*#*1##", b""):
+            return  # not only signaling: leave it to the reply reader
+        buffer.clear()
+        if stale:  # NUL padding alone goes quietly
+            self._logger.debug(
+                "%s Discarding stale %r left by the previous exchange before sending `%s`.",
+                self._log_id,
+                stale,
+                frame,
+            )
+
     async def _read_command_response(
         self,
     ) -> tuple[OWNSignaling, list[OWNMessage | str]]:
@@ -389,6 +422,7 @@ class OWNCommandSession(OWNSession):
 
             written = False
             try:
+                self._discard_stale_input(frame)
                 self._stream_writer.write(frame.encode())
                 written = True
                 await self._stream_writer.drain()

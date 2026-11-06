@@ -199,6 +199,9 @@ class OWNEventSession(OWNSession):
                 data = await asyncio.wait_for(read, timeout=self._inactivity_timeout)
             else:
                 data = await read
+            # NUL padding before a frame (a BTicino F524 1.3.95 ends every frame with
+            # one, so the next read starts with it): never part of OpenWebNet.
+            data = data.lstrip(b"\x00")
         except TimeoutError:
             self._logger.warning(
                 "%s No bus traffic for %ss; assuming stale connection, reconnecting...",
