@@ -210,15 +210,15 @@ def test_gateway_password_normalization() -> None:
     assert gw4.password is None
 
 
-F542_RAW = json.loads(
-    (Path(__file__).resolve().parent / "fixtures" / "f542_010395_raw_2026-11-06.json").read_text()
+F524_RAW = json.loads(
+    (Path(__file__).resolve().parent / "fixtures" / "f524_010395_raw_2026-11-06.json").read_text()
 )
 
 
-def _f542_raw(sent: str | None, session: str = "command") -> bytes:
-    """The exact bytes the F542 1.3.95 sent back to ``sent`` in the committed capture."""
+def _f524_raw(sent: str | None, session: str = "command") -> bytes:
+    """The exact bytes the F524 1.3.95 sent back to ``sent`` in the committed capture."""
     return next(
-        e["raw"] for e in F542_RAW["exchanges"] if e["sent"] == sent and e["session"] == session
+        e["raw"] for e in F524_RAW["exchanges"] if e["sent"] == sent and e["session"] == session
     ).encode()
 
 
@@ -237,11 +237,11 @@ class ReplyingWriter(FakeWriter):
 @pytest.mark.asyncio
 @pytest.mark.parametrize("session_cls", [OWNCommandSession, OWNEventSession])
 async def test_open_nonce_preceded_by_a_nul_byte_negotiates(session_cls) -> None:
-    """F542 1.3.95 (MyHOME#466, 2026-11-06): ``*#*1##`` then ``\x00*#<nonce>##`` on both sessions."""
+    """F524 1.3.95 (MyHOME#466, 2026-11-06): ``*#*1##`` then ``\x00*#<nonce>##`` on both sessions."""
     session, writer = make_session(session_cls)
     mode = "*99*0##" if session_cls is OWNCommandSession else "*99*1##"
     kind = "command" if session_cls is OWNCommandSession else "event"
-    challenge = _f542_raw(mode, kind)  # ``\x00*#<nonce>##``: the NUL is the greeting's tail
+    challenge = _f524_raw(mode, kind)  # ``\x00*#<nonce>##``: the NUL is the greeting's tail
     session._stream_reader.feed_data(b"*#*1##" + challenge + b"*#*1##")
 
     result = await session._negotiate()
@@ -253,10 +253,10 @@ async def test_open_nonce_preceded_by_a_nul_byte_negotiates(session_cls) -> None
 
 @pytest.mark.asyncio
 async def test_stray_nack_after_an_ack_is_discarded_before_the_next_command() -> None:
-    """F542 1.3.95 (MyHOME#466, 2026-11-06): ``<reply>*#*1##\x00*#*0##\x00`` to a status request."""
+    """F524 1.3.95 (MyHOME#466, 2026-11-06): ``<reply>*#*1##\x00*#*0##\x00`` to a status request."""
     session, _ = make_session(OWNCommandSession)
     writer = ReplyingWriter(
-        session._stream_reader, [_f542_raw("*#13**16##"), _f542_raw("*#13**1##")]
+        session._stream_reader, [_f524_raw("*#13**16##"), _f524_raw("*#13**1##")]
     )
     session._stream_writer = writer
     session._connected = True
@@ -287,7 +287,7 @@ async def test_a_reply_already_buffered_before_the_write_is_not_discarded() -> N
 async def test_nul_padding_alone_is_dropped_quietly_before_the_write(caplog) -> None:
     """After ``*#*1##\x00`` accepted the password, only the NUL is left for the first command."""
     session, _ = make_session(OWNCommandSession)
-    writer = ReplyingWriter(session._stream_reader, [_f542_raw("*#13**16##")])
+    writer = ReplyingWriter(session._stream_reader, [_f524_raw("*#13**16##")])
     session._stream_writer = writer
     session._connected = True
     session._stream_reader.feed_data(b"\x00")
@@ -311,10 +311,10 @@ async def test_discard_stale_input_touches_only_a_real_byte_buffer() -> None:
 
 @pytest.mark.asyncio
 async def test_event_session_drops_nul_padding_before_a_frame() -> None:
-    """The F542 mirrors command replies on the event session, each followed by a NUL byte."""
+    """The F524 mirrors command replies on the event session, each followed by a NUL byte."""
     session, _ = make_session(OWNEventSession)
     session._connected = True
-    session._stream_reader.feed_data(_f542_raw(None, "event") + b"\x00*1*1*12##")
+    session._stream_reader.feed_data(_f524_raw(None, "event") + b"\x00*1*1*12##")
     first = await session.get_next()
     second = await session.get_next()
     assert str(first) == "*#13**16*1*3*95##"

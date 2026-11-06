@@ -1,12 +1,12 @@
 {
   "gateway": {
-    "model": "F542 (as reported by the plant owner; the gateway refuses WHO 13 Dimensions 15 and 27 and WHO 1013, so the model is not confirmed on the wire)",
+    "model": "F524 (as reported by the plant owner; the gateway refuses WHO 13 Dimensions 15 and 27 and WHO 1013, so the model is not confirmed on the wire)",
     "firmware": "1.3.95",
     "authentication": "OPEN numeric password",
     "captured": "2026-11-06",
     "source": "MyHOME#466 (raw TCP capture on port 20000; the gateway address, MAC and password reply are not included)"
   },
-  "note": "Every frame the F542 sends ends with a NUL byte (0x00). readuntil('##') therefore leaves that NUL at the head of the next read. An answered status request is followed by *#*1## and, in the same packet, a stray *#*0##. Each 'raw' value is the exact byte sequence received, with \\u0000 for the NUL byte.",
+  "note": "Every frame the F524 sends ends with a NUL byte (0x00). readuntil('##') therefore leaves that NUL at the head of the next read. An answered status request is followed by *#*1## and, in the same packet, a stray *#*0##. Each 'raw' value is the exact byte sequence received, with \\u0000 for the NUL byte.",
   "exchanges": [
     {
       "session": "command",
