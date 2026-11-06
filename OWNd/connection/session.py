@@ -286,7 +286,7 @@ class OWNSession:
             raw_response = await asyncio.wait_for(reader, timeout=timeout)
         else:
             raw_response = await reader
-        # A BTicino F452 (firmware 1.3.95) sends its OPEN nonce as ``\x00*#<digits>##``: NUL
+        # A BTicino F542 (firmware 1.3.95) sends its OPEN nonce as ``\x00*#<digits>##``: NUL
         # bytes before the frame are padding, never part of OpenWebNet, and would otherwise make
         # the nonce unrecognisable and fail every negotiation (MyHOME#466, 2026-11-06).
         return raw_response.lstrip(b"\x00").decode()
