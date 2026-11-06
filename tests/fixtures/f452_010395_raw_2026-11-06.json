@@ -1,0 +1,102 @@
+{
+  "gateway": {
+    "model": "F452",
+    "firmware": "1.3.95",
+    "authentication": "OPEN numeric password",
+    "captured": "2026-11-06",
+    "source": "MyHOME#466 (raw TCP capture on port 20000; the gateway address, MAC and password reply are not included)"
+  },
+  "note": "Every frame the F452 sends ends with a NUL byte (0x00). readuntil('##') therefore leaves that NUL at the head of the next read. An answered status request is followed by *#*1## and, in the same packet, a stray *#*0##. Each 'raw' value is the exact byte sequence received, with \\u0000 for the NUL byte.",
+  "exchanges": [
+    {
+      "session": "command",
+      "sent": null,
+      "raw": "*#*1##\u0000",
+      "meaning": "greeting ACK, received before *99*0## was sent"
+    },
+    {
+      "session": "command",
+      "sent": "*99*0##",
+      "raw": "\u0000*#186246478##",
+      "meaning": "OPEN challenge; the NUL is the tail of the greeting"
+    },
+    {
+      "session": "command",
+      "sent": "*#<open password reply>##",
+      "raw": "*#*1##\u0000",
+      "meaning": "password accepted"
+    },
+    {
+      "session": "command",
+      "sent": "*#13**16##",
+      "raw": "*#13**16*1*3*95##*#*1##\u0000*#*0##\u0000",
+      "meaning": "firmware 1.3.95, ACK, stray NACK"
+    },
+    {
+      "session": "command",
+      "sent": "*#13**0##",
+      "raw": "*#13**0*22*00*38*##*#*1##\u0000*#*0##\u0000",
+      "meaning": "time, ACK, stray NACK"
+    },
+    {
+      "session": "command",
+      "sent": "*#13**1##",
+      "raw": "*#13**1*05*06*11*2026##*#*1##\u0000*#*0##\u0000",
+      "meaning": "date, ACK, stray NACK"
+    },
+    {
+      "session": "command",
+      "sent": "*#13**15##",
+      "raw": "*#*0##\u0000",
+      "meaning": "device type: refused"
+    },
+    {
+      "session": "command",
+      "sent": "*#13**27##",
+      "raw": "*#*0##\u0000",
+      "meaning": "model name: refused"
+    },
+    {
+      "session": "command",
+      "sent": "*#1013**1##",
+      "raw": "*#*0##\u0000",
+      "meaning": "object model: refused"
+    },
+    {
+      "session": "command",
+      "sent": "*#1*0##",
+      "raw": "*#*0##\u0000",
+      "meaning": "general lighting status: refused"
+    },
+    {
+      "session": "command",
+      "sent": "*#2*0##",
+      "raw": "*#*0##\u0000",
+      "meaning": "general automation status: refused"
+    },
+    {
+      "session": "command",
+      "sent": "*#4*0##",
+      "raw": "*#*0##\u0000",
+      "meaning": "general heating status: refused"
+    },
+    {
+      "session": "command",
+      "sent": "*#1*11##",
+      "raw": "*#*0##\u0000",
+      "meaning": "point-to-point light status: refused"
+    },
+    {
+      "session": "event",
+      "sent": "*99*1##",
+      "raw": "\u0000*#892189618##",
+      "meaning": "OPEN challenge on the event session, same NUL prefix"
+    },
+    {
+      "session": "event",
+      "sent": null,
+      "raw": "\u0000*#13**16*1*3*95##",
+      "meaning": "command-session reply mirrored on the event session, NUL prefix from the preceding ACK"
+    }
+  ]
+}

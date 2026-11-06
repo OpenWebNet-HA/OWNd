@@ -1,6 +1,8 @@
 """Regression tests for session negotiation and command responses."""
 
 import asyncio
+import json
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -15,6 +17,7 @@ from OWNd.connection import (
     OWNGateway,
     OWNSession,
 )
+from OWNd.connection.auth import calculate_open_password
 from OWNd.message import OWNLightingEvent
 
 
@@ -61,9 +64,7 @@ def make_session(
 
 
 def test_gateway_normalizes_firmware_sequences() -> None:
-    gateway = OWNGateway(
-        {"address": "192.0.2.1", "modelNumber": ["2", 1, "0"]}
-    )
+    gateway = OWNGateway({"address": "192.0.2.1", "modelNumber": ["2", 1, "0"]})
 
     assert gateway.firmware == "2.1.0"
 
@@ -77,9 +78,7 @@ def test_gateway_normalizes_firmware_sequences() -> None:
 @pytest.mark.asyncio
 async def test_legacy_authentication_fails_closed_on_unexpected_frame() -> None:
     session, _ = make_session()
-    session._read_frame = AsyncMock(
-        side_effect=["*#*1##", "*#123456789##", "*99*0##"]
-    )
+    session._read_frame = AsyncMock(side_effect=["*#*1##", "*#123456789##", "*99*0##"])
 
     result = await session._negotiate()
 
@@ -97,11 +96,16 @@ async def test_non_ascii_password_is_rejected_before_writing() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("session_cls,expected_init_frame", [
-    (OWNCommandSession, b"*99*0##"),
-    (OWNEventSession, b"*99*1##"),
-])
-async def test_alphanumeric_password_succeeds_hmac_sha1(session_cls, expected_init_frame) -> None:
+@pytest.mark.parametrize(
+    "session_cls,expected_init_frame",
+    [
+        (OWNCommandSession, b"*99*0##"),
+        (OWNEventSession, b"*99*1##"),
+    ],
+)
+async def test_alphanumeric_password_succeeds_hmac_sha1(
+    session_cls, expected_init_frame
+) -> None:
     """Verify modern gateways (e.g. F454) accept alphanumeric passwords under HMAC-SHA1."""
     pw = "F454_alpha_Pass_123!"
     session, writer = make_session(session_type=session_cls, password=pw, model="F454")
@@ -133,14 +137,21 @@ async def test_alphanumeric_password_succeeds_hmac_sha1(session_cls, expected_in
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("session_cls,expected_init_frame", [
-    (OWNCommandSession, b"*99*0##"),
-    (OWNEventSession, b"*99*1##"),
-])
-async def test_alphanumeric_password_succeeds_hmac_sha256(session_cls, expected_init_frame) -> None:
+@pytest.mark.parametrize(
+    "session_cls,expected_init_frame",
+    [
+        (OWNCommandSession, b"*99*0##"),
+        (OWNEventSession, b"*99*1##"),
+    ],
+)
+async def test_alphanumeric_password_succeeds_hmac_sha256(
+    session_cls, expected_init_frame
+) -> None:
     """Verify modern gateways accept complex alphanumeric passwords under HMAC-SHA256."""
     pw = "MyHomeServer1_ComplexPass#2026"
-    session, writer = make_session(session_type=session_cls, password=pw, model="MyHomeServer1")
+    session, writer = make_session(
+        session_type=session_cls, password=pw, model="MyHomeServer1"
+    )
     nonce_a = "9876543210987654321098765432109876543210"
 
     async def read_frame_side_effect(timeout: float = 0.0) -> str:
@@ -171,10 +182,10 @@ async def test_alphanumeric_password_succeeds_hmac_sha256(session_cls, expected_
 @pytest.mark.asyncio
 async def test_alphanumeric_password_rejected_on_legacy_nonce() -> None:
     """Verify legacy numeric gateways reject alphanumeric passwords gracefully with password_error."""
-    session, writer = make_session(session_type=OWNCommandSession, password="not-a-number", model="MH200N")
-    session._read_frame = AsyncMock(
-        side_effect=["*#*1##", "*#123456789##"]
+    session, writer = make_session(
+        session_type=OWNCommandSession, password="not-a-number", model="MH200N"
     )
+    session._read_frame = AsyncMock(side_effect=["*#*1##", "*#123456789##"])
 
     result = await session._negotiate()
 
@@ -205,6 +216,93 @@ def test_gateway_password_normalization() -> None:
     assert gw4.password is None
     gw4.password = None
     assert gw4.password is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("session_cls", [OWNCommandSession, OWNEventSession])
+async def test_open_nonce_preceded_by_a_nul_byte_negotiates(session_cls) -> None:
+    """F452 1.3.95 (MyHOME#466, 2026-11-06): ``*#*1##`` then ``\x00*#<nonce>##`` on both sessions."""
+    session, writer = make_session(session_cls)
+    mode = "*99*0##" if session_cls is OWNCommandSession else "*99*1##"
+    kind = "command" if session_cls is OWNCommandSession else "event"
+    challenge = _f452_raw(
+        mode, kind
+    )  # ``\x00*#<nonce>##``: the NUL is the greeting's tail
+    session._stream_reader.feed_data(b"*#*1##" + challenge + b"*#*1##")
+
+    result = await session._negotiate()
+
+    assert result == {"Success": True, "Message": None}
+    nonce = challenge.lstrip(b"\x00").decode()[2:-2]
+    assert (
+        writer.written[1] == f"*#{calculate_open_password('12345', nonce)}##".encode()
+    )
+
+
+F452_RAW = json.loads(
+    (
+        Path(__file__).resolve().parent / "fixtures" / "f452_010395_raw_2026-11-06.json"
+    ).read_text()
+)
+
+
+def _f452_raw(sent: str, session: str = "command") -> bytes:
+    """The exact bytes the F452 1.3.95 sent back to ``sent`` in the committed capture."""
+    return next(
+        e["raw"]
+        for e in F452_RAW["exchanges"]
+        if e["sent"] == sent and e["session"] == session
+    ).encode()
+
+
+class ReplyingWriter(FakeWriter):
+    """A writer that feeds the gateway's reply into the reader as each frame is written."""
+
+    def __init__(self, reader: asyncio.StreamReader, replies: list[bytes]) -> None:
+        super().__init__()
+        self.reader, self.replies = reader, replies
+
+    def write(self, data: bytes) -> None:
+        super().write(data)
+        self.reader.feed_data(self.replies.pop(0))
+
+
+@pytest.mark.asyncio
+async def test_stray_nack_after_an_ack_is_discarded_before_the_next_command() -> None:
+    """F452 1.3.95 (MyHOME#466, 2026-11-06): ``<reply>*#*1##\x00*#*0##\x00`` to a status request."""
+    session, _ = make_session(OWNCommandSession)
+    writer = ReplyingWriter(
+        session._stream_reader, [_f452_raw("*#13**16##"), _f452_raw("*#13**1##")]
+    )
+    session._stream_writer = writer
+    session._connected = True
+
+    first = await session.send("*#13**16##", is_status_request=True)
+    second = await session.send("*#13**1##", is_status_request=True)
+
+    assert [str(m) for m in first] == ["*#13**16*1*3*95##"]
+    assert [str(m) for m in second] == ["*#13**1*05*06*11*2026##"]
+    assert writer.written == [b"*#13**16##", b"*#13**1##"]
+
+
+@pytest.mark.asyncio
+async def test_event_session_drops_nul_padding_before_a_frame() -> None:
+    """The F452 mirrors command replies on the event session, each followed by a NUL byte."""
+    session, _ = make_session(OWNEventSession)
+    session._connected = True
+    session._stream_reader.feed_data(_f452_raw(None, "event") + b"\x00*1*1*12##")
+    first = await session.get_next()
+    second = await session.get_next()
+    assert str(first) == "*#13**16*1*3*95##"
+    assert isinstance(second, OWNLightingEvent) and str(second) == "*1*1*12##"
+
+
+@pytest.mark.asyncio
+async def test_read_frame_drops_only_leading_nul_bytes() -> None:
+    session, _ = make_session()
+    session._stream_reader.feed_data(b"\x00\x00*#*1##*1*1*12##")
+    assert await session._read_frame(1) == "*#*1##"
+    assert await session._read_frame(1) == "*1*1*12##"
 
 
 @pytest.mark.asyncio
@@ -390,9 +488,7 @@ async def test_cancelled_command_closes_stream() -> None:
     session, writer = make_session(OWNCommandSession)
     assert isinstance(session, OWNCommandSession)
 
-    pending = asyncio.create_task(
-        session.send("*#1*0##", is_status_request=True)
-    )
+    pending = asyncio.create_task(session.send("*#1*0##", is_status_request=True))
     await asyncio.sleep(0)
     pending.cancel()
 
@@ -702,9 +798,10 @@ async def test_typed_exceptions_and_last_error() -> None:
     assert isinstance(session.last_error, OWNProtocolError)
     assert exc_info.value.frame == "not-a-frame"
 
-    # 2. NACK response -> OWNNackError
+    # 2. NACK response -> OWNNackError (fed as the reply to the write: a NACK already buffered
+    #    before the write is a stale leftover and is discarded, see _discard_stale_input)
     assert session._stream_reader is not None
-    session._stream_reader.feed_data(b"*#*0##")
+    session._stream_writer = ReplyingWriter(session._stream_reader, [b"*#*0##"])
     with pytest.raises(OWNNackError) as nack_exc:
         await session.send("*#1*11##", is_status_request=True, raise_on_error=True)
     assert isinstance(session.last_error, OWNNackError)
@@ -732,9 +829,7 @@ async def test_typed_exceptions_and_last_error() -> None:
         patch.object(
             session3,
             "_negotiate",
-            new=AsyncMock(
-                return_value={"Success": False, "Message": "password_error"}
-            ),
+            new=AsyncMock(return_value={"Success": False, "Message": "password_error"}),
         ),
     ):
         with pytest.raises(OWNAuthError):
@@ -776,7 +871,9 @@ async def test_event_session_raise_on_auth_error() -> None:
 
 
 @pytest.mark.asyncio
-async def test_send_when_disconnected_uses_single_connect_attempt_and_cooldown() -> None:
+async def test_send_when_disconnected_uses_single_connect_attempt_and_cooldown() -> (
+    None
+):
     session, _ = make_session(OWNCommandSession)
     assert isinstance(session, OWNCommandSession)
     session._stream_reader = None
@@ -823,9 +920,15 @@ async def test_session_and_command_error_paths_with_raise_on_error() -> None:
     from OWNd.message import OWNSignaling
 
     # _negotiation_error_to_exception branches
-    assert isinstance(_negotiation_error_to_exception("negotiation_timeout"), OWNTimeoutError)
-    assert isinstance(_negotiation_error_to_exception("negotiation_refused"), OWNNackError)
-    assert isinstance(_negotiation_error_to_exception("negotiation_error"), OWNProtocolError)
+    assert isinstance(
+        _negotiation_error_to_exception("negotiation_timeout"), OWNTimeoutError
+    )
+    assert isinstance(
+        _negotiation_error_to_exception("negotiation_refused"), OWNNackError
+    )
+    assert isinstance(
+        _negotiation_error_to_exception("negotiation_error"), OWNProtocolError
+    )
     assert isinstance(_negotiation_error_to_exception(None), OWNConnectionError)
 
     # on_auth_error getter & exception resilience in _notify_auth_error
@@ -882,7 +985,9 @@ async def test_session_and_command_error_paths_with_raise_on_error() -> None:
         patch.object(
             session,
             "_negotiate",
-            new=AsyncMock(return_value={"Success": False, "Message": "negotiation_refused"}),
+            new=AsyncMock(
+                return_value={"Success": False, "Message": "negotiation_refused"}
+            ),
         ),
     ):
         with pytest.raises(OWNNackError):
@@ -897,7 +1002,9 @@ async def test_session_and_command_error_paths_with_raise_on_error() -> None:
         patch.object(
             session,
             "_negotiate",
-            new=AsyncMock(return_value={"Success": False, "Message": "negotiation_error"}),
+            new=AsyncMock(
+                return_value={"Success": False, "Message": "negotiation_error"}
+            ),
         ),
     ):
         with pytest.raises(OWNProtocolError):
@@ -909,7 +1016,9 @@ async def test_session_and_command_error_paths_with_raise_on_error() -> None:
             "OWNd.connection.session.asyncio.open_connection",
             new=AsyncMock(return_value=(MagicMock(), MagicMock())),
         ),
-        patch.object(session, "_negotiate", new=AsyncMock(side_effect=ConnectionResetError)),
+        patch.object(
+            session, "_negotiate", new=AsyncMock(side_effect=ConnectionResetError)
+        ),
     ):
         with pytest.raises(OWNConnectionError) as rst_exc:
             await session.test_connection(raise_on_error=True)
@@ -920,7 +1029,9 @@ async def test_session_and_command_error_paths_with_raise_on_error() -> None:
             "OWNd.connection.session.asyncio.open_connection",
             new=AsyncMock(return_value=(MagicMock(), MagicMock())),
         ),
-        patch.object(session, "_negotiate", new=AsyncMock(side_effect=TimeoutError("slow"))),
+        patch.object(
+            session, "_negotiate", new=AsyncMock(side_effect=TimeoutError("slow"))
+        ),
     ):
         with pytest.raises(OWNTimeoutError):
             await session.test_connection(raise_on_error=True)
@@ -947,17 +1058,28 @@ async def test_session_and_command_error_paths_with_raise_on_error() -> None:
     # send_to_gateway(raise_on_error=True)
     gw_obj = OWNGateway({"address": "127.0.0.1", "port": 20000})
     with (
-        patch.object(OWNCommandSession, "connect", new=AsyncMock(return_value={"Success": True})) as m_conn,
-        patch.object(OWNCommandSession, "send", new=AsyncMock(return_value=True)) as m_send,
+        patch.object(
+            OWNCommandSession, "connect", new=AsyncMock(return_value={"Success": True})
+        ) as m_conn,
+        patch.object(
+            OWNCommandSession, "send", new=AsyncMock(return_value=True)
+        ) as m_send,
     ):
-        assert await OWNCommandSession.send_to_gateway("*1*1*11##", gw_obj, raise_on_error=True) is True
+        assert (
+            await OWNCommandSession.send_to_gateway(
+                "*1*1*11##", gw_obj, raise_on_error=True
+            )
+            is True
+        )
         m_conn.assert_awaited_once_with(raise_on_error=True)
         m_send.assert_awaited_once_with("*1*1*11##", raise_on_error=True)
 
     # send(raise_on_error=True) on unexpected signaling, connection lost, and generic crash
     s_proto, _ = make_session(OWNCommandSession)
     assert isinstance(s_proto, OWNCommandSession)
-    s_proto._read_command_response = AsyncMock(return_value=(OWNSignaling("*#*2##"), []))  # type: ignore[method-assign]
+    s_proto._read_command_response = AsyncMock(
+        return_value=(OWNSignaling("*#*2##"), [])
+    )  # type: ignore[method-assign]
     with pytest.raises(OWNProtocolError):
         await s_proto.send("*1*1*11##", raise_on_error=True)
 
@@ -994,5 +1116,3 @@ async def test_session_and_command_error_paths_with_raise_on_error() -> None:
     ):
         with pytest.raises(OWNAuthError):
             await ev_sess.get_next(raise_on_auth_error=True)
-
-
