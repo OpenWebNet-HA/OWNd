@@ -180,8 +180,15 @@ class OWNCommandSession(OWNSession):
         command after it (MyHOME#466, F452 capture of 2026-11-06). Only buffered
         bytes made of signaling frames (and NUL padding) are dropped: a reply
         that is already waiting is left to the reply reader.
+
+        This peeks at the ``asyncio.StreamReader`` byte buffer; any other reader
+        is left alone. It covers the stray NACK the F452 sends in the same packet
+        as the ACK; a NACK that lands only after the next frame was written is
+        still read as that frame's reply.
         """
         buffer = getattr(self._stream_reader, "_buffer", None)
+        if not isinstance(buffer, bytearray):
+            return  # not an asyncio.StreamReader: nothing to peek at
         if not buffer:
             return
         stale = bytes(buffer).replace(b"\x00", b"")

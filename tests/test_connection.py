@@ -270,6 +270,46 @@ async def test_stray_nack_after_an_ack_is_discarded_before_the_next_command() ->
 
 
 @pytest.mark.asyncio
+async def test_a_reply_already_buffered_before_the_write_is_not_discarded() -> None:
+    """Only signaling frames and NUL padding are stale: a waiting reply reaches the reply reader."""
+    session, writer = make_session(OWNCommandSession)
+    session._connected = True
+    session._stream_reader.feed_data(b"\x00*#13**16*1*3*95##*#*1##\x00*#*0##\x00")
+
+    result = await session.send("*#13**16##", is_status_request=True)
+
+    assert [str(m) for m in result] == ["*#13**16*1*3*95##"]
+    assert writer.written == [b"*#13**16##"]
+    assert bytes(session._stream_reader._buffer) == b"\x00*#*0##\x00"  # left for the next discard
+
+
+@pytest.mark.asyncio
+async def test_nul_padding_alone_is_dropped_quietly_before_the_write(caplog) -> None:
+    """After ``*#*1##\x00`` accepted the password, only the NUL is left for the first command."""
+    session, _ = make_session(OWNCommandSession)
+    writer = ReplyingWriter(session._stream_reader, [_f452_raw("*#13**16##")])
+    session._stream_writer = writer
+    session._connected = True
+    session._stream_reader.feed_data(b"\x00")
+
+    with caplog.at_level("DEBUG"):
+        result = await session.send("*#13**16##", is_status_request=True)
+
+    assert [str(m) for m in result] == ["*#13**16*1*3*95##"]
+    assert "Discarding stale" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_discard_stale_input_touches_only_a_real_byte_buffer() -> None:
+    session, _ = make_session(OWNCommandSession)
+    session._stream_reader = AsyncMock()
+    session._discard_stale_input("*#13**16##")
+    session._stream_reader._buffer.clear.assert_not_called()
+    session._stream_reader = None
+    session._discard_stale_input("*#13**16##")
+
+
+@pytest.mark.asyncio
 async def test_event_session_drops_nul_padding_before_a_frame() -> None:
     """The F452 mirrors command replies on the event session, each followed by a NUL byte."""
     session, _ = make_session(OWNEventSession)
