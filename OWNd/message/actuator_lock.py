@@ -22,8 +22,7 @@ Evidence boundaries (Encyclopedia who-14-special-commands/README.md):
   builders here refuse ``11..15`` on firmware evidence (the ``bt_luci`` flex
   DFA accepts ``#4#0[1-9]`` only, tests/test_who14_actuator_lock.py); the
   parser still accepts ``*14*0*12#4#11##`` with ``interface == "11"`` so a
-  frame seen on the bus is never lost (who-1-lighting/addressing.md "Address
-  scopes": "Implementations should preserve that discrepancy").
+  frame seen on the bus is never lost.
 """
 
 from __future__ import annotations

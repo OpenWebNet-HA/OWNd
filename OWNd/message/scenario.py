@@ -7,7 +7,7 @@ from .base import (
     OWNEvent,
     register_command_parser,
     register_event_parser,
-    require_non_empty_where,
+    require_address_where,
 )
 
 
@@ -218,11 +218,12 @@ class OWNSceneEvent(OWNEvent):
         return None
 
 
-def _scene_where(where: str | int | None) -> str:
-    """WHO 17 scene WHERE: non-empty, no ``*`` (``None`` is not an address)."""
-    if where is None:
-        raise ValueError("where must be a non-empty address without '*'")
-    return require_non_empty_where(where)
+def _scene_where(where: object) -> str:
+    """WHO 17 scene WHERE: a ``str`` or ``int`` (not ``bool`` or ``None``), non-empty,
+    without ``*``, ``##`` or whitespace. ``start(True)`` would otherwise build
+    ``*17*1*True##`` and fall back to the "Requesting global scene status" log;
+    untyped callers still get ``ValueError`` for ``None``."""
+    return require_address_where(where)
 
 
 class OWNSceneCommand(OWNCommand):
@@ -295,7 +296,7 @@ class OWNSceneCommand(OWNCommand):
         return cls(f"*17*4*{_scene_where(where)}##")
 
     @classmethod
-    def status(cls, where: str | int | None = "0") -> OWNSceneCommand:
+    def status(cls, where: str | int = "0") -> OWNSceneCommand:
         """Query scene status: ``*#17*WHERE##`` (default ``0`` = general).
 
         ``None`` or an empty WHERE raises ``ValueError``: the page defines no

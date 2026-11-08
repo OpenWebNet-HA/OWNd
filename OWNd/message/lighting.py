@@ -13,6 +13,7 @@ from .base import (
     get_parse_gateway,
     register_command_parser,
     register_event_parser,
+    require_address_where,
     require_non_empty_where,
 )
 
@@ -475,12 +476,13 @@ class OWNLightingEvent(OWNEvent):
                     self._human_readable_log = f"{sensor} has timeout set to {self._motion_timeout}."
             elif self._dimension == 12:  # HSV Color (BTicino F429 DALI)
                 if len(self._dimension_value) >= 3:
-                    try:
-                        h = int(self._dimension_value[0])
-                        s = int(self._dimension_value[1])
-                        v = int(self._dimension_value[2])
-                    except (TypeError, ValueError):
+                    # ASCII digits only, like every other dimension: a fullwidth
+                    # value decodes to None here and the frame keeps its raw log.
+                    hsv_fields = [_int_field(values, i) for i in range(3)]
+                    if None in hsv_fields:
                         h = s = v = -1
+                    else:
+                        h, s, v = (int(f) for f in hsv_fields)  # type: ignore[arg-type]
                     if (h, s, v) == (511, 127, 255):
                         self._supports_hsv = False
                         self._supports_rgb = False
@@ -710,16 +712,18 @@ class OWNLightingEvent(OWNEvent):
 
 
 def _where_target(where: str | int) -> str:
-    """Validate the WHERE of a WHO 1 builder: non-empty, stripped, no ``*``.
+    """Validate the WHERE of a WHO 1 builder: a ``str`` or ``int`` (not ``bool`` or
+    ``None``), non-empty, stripped, without ``*``, ``##`` or whitespace.
 
     WHERE is protocol syntax and ``*`` is a field separator
     (who-1-lighting/addressing.md; protocol/addressing.md "Parsing rules").
     An empty WHERE builds ``*#1*##``, which is refused by eleven emulated
     gateways and crashes the emulated MH202 010024 (own-firmware-oracle
     ``ownd-audit-frames``); a WHERE such as ``12*1`` turns a
-    status request into a DIMENSION 1 read (``*#1*12*1##``).
+    status request into a DIMENSION 1 read (``*#1*12*1##``); ``True``, ``None``
+    or ``"12##"`` would build ``*#1*True##``, ``*#1*None##`` or ``*#1*12####``.
     """
-    return require_non_empty_where(where)
+    return require_address_where(where)
 
 
 def _check_speed(speed: int | None) -> int | None:

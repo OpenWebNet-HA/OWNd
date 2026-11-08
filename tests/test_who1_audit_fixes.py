@@ -2,8 +2,8 @@
 
 Evidence: the Encyclopedia pages below and the own-firmware-oracle suites
 ``ownd-audit-frames`` (WHO 1 empty WHERE: refused on eleven emulated gateways,
-crash on the MH202 010024) and ``scenario-who17`` (bare ``*#17##``: nack or
-silent on all twelve).
+crash on the MH202 010024) and ``scenario-who17`` (bare ``*#17##``: NACKed
+with a silent bus on all twelve).
 
 Encyclopedia pages: who-1-lighting/{what,dimensions,addressing}.md,
 who-0-scenarios/README.md, who-17-scenario-management/README.md,
@@ -106,6 +106,20 @@ def test_a_level_with_an_empty_trailing_speed_keeps_the_level(frame: str) -> Non
     assert msg.brightness == 50 and msg.is_on is True
     assert msg.transition is None
     assert OWNEvent.parse(frame) is not None
+
+
+def test_fullwidth_digits_in_an_hsv_reply_fail_closed() -> None:
+    """DIMENSION 12 reads its three values through ``_int_field`` too: fullwidth
+    ``100 50 50`` is not a colour, the frame keeps its raw log, and the ASCII
+    form still decodes."""
+    frame = "*#1*12*12*\uff11\uff10\uff10*\uff15\uff10*\uff15\uff10##"
+    msg = OWNMessage.parse(frame)
+    assert isinstance(msg, OWNLightingEvent)
+    assert msg.hsv is None and msg.hs is None and msg.rgb is None
+    assert msg.supports_hsv is None and msg.supports_rgb is None
+    assert msg.human_readable_log == frame
+    ascii_msg = OWNMessage.parse("*#1*12*12*100*50*50##")
+    assert isinstance(ascii_msg, OWNLightingEvent) and ascii_msg.hsv == (100, 50, 50)
 
 
 def test_sensor_dimensions_keep_message_type_when_value_is_missing() -> None:
@@ -218,12 +232,14 @@ def test_translation_wrapper_is_untouched() -> None:
     assert msg.human_readable_log == "*1*1000#1*12##"
 
 
-# --- Builders validate the type and keep the pinned fallbacks ---------------------
-# Precedent gate: MyHOME (tests/test_message_edges.py) pins switch_on('21', 300)
-# -> *1*1*21##, switch_off('21', -1) -> *1*0*21##, set_brightness(50, -5) ->
-# speed 0 and flash(-1) -> *1*20*21##, and light.py passes Home Assistant
+# --- Builders keep the pinned speed and period fallbacks -----------------------
+# OWNd's own tests/test_message_edges.py pins switch_on('21', 300) -> *1*1*21##,
+# switch_off('21', -1) -> *1*0*21##, set_brightness(50, -5) -> speed 0 and
+# flash(-1) -> *1*20*21##, and MyHOME's light.py passes Home Assistant
 # transition seconds straight through, so out-of-range values keep the
-# pre-existing fallback; only bool / fractional values raise (OWNd#129).
+# pre-existing fallback. switch_on / switch_off and flash use the value as
+# given; only set_brightness and report_brightness keep master's bool /
+# fractional check.
 
 
 @pytest.mark.parametrize("speed", [-1, 256, 300, 1000])
@@ -335,6 +351,26 @@ def test_who1_builders_reject_empty_or_star_where(where: str, build) -> None:
         build(where)
 
 
+@pytest.mark.parametrize("where", [True, False, None, 12.5, b"12", ["12"], "12##", "1 2", "1\t2"])
+@pytest.mark.parametrize(
+    "build",
+    [
+        lambda w: OWNLightingCommand.status(w),
+        lambda w: OWNLightingCommand.switch_on(w),
+        lambda w: OWNLightingCommand.switch_off(w, 5),
+        lambda w: OWNLightingCommand.get_brightness(w),
+        lambda w: OWNLightingCommand.set_brightness(w, 50),
+        lambda w: OWNLightingCommand.flash(w),
+    ],
+)
+def test_who1_builders_reject_bool_none_and_malformed_where(where: object, build) -> None:
+    """``issubclass(bool, int)`` lets ``status(True)`` through a ``str | int`` check and
+    ``str(None)`` is a string: on 62014a9 they built ``*#1*True##`` and ``*#1*None##``
+    (``is_valid`` False), ``"12##"`` built ``*#1*12####``. All raise now."""
+    with pytest.raises(ValueError, match="where must be a non-empty address without"):
+        build(where)
+
+
 def test_who1_builders_strip_and_accept_int_where() -> None:
     assert str(OWNLightingCommand.status(" 12 ")) == "*#1*12##"
     assert str(OWNLightingCommand.status(12)) == "*#1*12##"
@@ -347,12 +383,12 @@ def test_who1_builders_strip_and_accept_int_where() -> None:
 # --- WHO 17 -------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize("where", ["", " ", "*", "1*2", None])
-def test_scene_builders_reject_empty_where(where: str | None) -> None:
+@pytest.mark.parametrize("where", ["", " ", "*", "1*2", None, True, False, 1.5, "5##", "1 2"])
+def test_scene_builders_reject_empty_where(where: object) -> None:
     """start('') built *17*1*## with the log "Requesting global scene status";
-    status(None) emitted *#17##, which is not on the page and is NACKed on all
-    12 emulated gateways (own-firmware-oracle ``scenario-who17``: both *#17##
-    and *#17*0## nack or silent on 12/12)."""
+    status(None) emitted *#17##, which is not on the page and is NACKed with a
+    silent bus on all 12 emulated gateways (own-firmware-oracle
+    ``scenario-who17``; *#17*0## likewise)."""
     for build in (
         OWNSceneCommand.start,
         OWNSceneCommand.stop,
@@ -362,6 +398,15 @@ def test_scene_builders_reject_empty_where(where: str | None) -> None:
     ):
         with pytest.raises(ValueError, match="where must be a non-empty address without"):
             build(where)  # type: ignore[arg-type]
+
+
+def test_scene_start_true_no_longer_builds_the_global_status_log() -> None:
+    """On 62014a9 ``start(True)`` built ``*17*1*True##`` and logged "Requesting
+    global scene status", the fallback the WHERE guard is meant to end."""
+    with pytest.raises(ValueError):
+        OWNSceneCommand.start(True)  # type: ignore[arg-type]
+    with pytest.raises(ValueError):
+        OWNSceneCommand.status(False)  # type: ignore[arg-type]
 
 
 def test_scene_builders_documented_forms() -> None:
@@ -392,9 +437,9 @@ def test_who14_status_request_is_parsed_but_undocumented_and_not_built() -> None
 
 @pytest.mark.parametrize("interface", [11, "11", 15, "15"])
 def test_who14_interfaces_11_15_parse_but_are_not_built(interface: int | str) -> None:
-    """who-1-lighting/addressing.md "Address scopes": Int is 01..09 or 11..15,
-    and "Implementations should preserve that discrepancy".
-    The builders refuse 11..15 on bt_luci evidence; the parser keeps them."""
+    """who-1-lighting/addressing.md "Address scopes" publishes the interface as
+    01..09 or 11..15. The builders refuse 11..15 on bt_luci evidence (the flex
+    DFA accepts #4#0[1-9] only); the parser keeps them."""
     evt = OWNActuatorLockEvent(f"*14*0*12#4#{interface}##")
     assert evt.interface == str(interface)
     assert evt.is_locked is True

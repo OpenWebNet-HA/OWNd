@@ -626,8 +626,8 @@ class TestSceneEdgeCases:
         assert cmd_st0.human_readable_log == "Requesting status of scene 0."
 
         # None / empty WHERE: the page has no bare *#17## and the firmware
-        # oracle NACKs it on all 12 emulated gateways (report 21 M2), so the
-        # builder raises instead of emitting it.
+        # oracle NACKs it on all 12 emulated gateways (own-firmware-oracle
+        # `scenario-who17`), so the builder raises instead of emitting it.
         with pytest.raises(ValueError, match="non-empty"):
             OWNSceneCommand.status(None)
         with pytest.raises(ValueError, match="non-empty"):
@@ -881,7 +881,8 @@ class TestEnergyEdgeCases:
 class TestLightingEdgeCases:
     def test_brightness_dim4(self):
         """Dimension 4 carries the same LEVEL100 level; its trailing value is
-        status_speed and stays on transition as before (report 21 L4)."""
+        status_speed and stays on transition as before (dimensions.md
+        "DIMENSION 4 - 100-level status")."""
         msg = OWNEvent.parse("*#1*21*4*150*5##")
         assert isinstance(msg, OWNLightingEvent)
         assert msg.brightness == 50
