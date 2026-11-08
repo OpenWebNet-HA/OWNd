@@ -75,7 +75,7 @@ OWNd parses OpenWebNet frames and dispatches typed commands and events across th
 <!-- START_WHO_CATALOG_TABLE -->
 | WHO | Subsystem | Description & Capabilities | Event / Command Classes |
 |:---:|:---|:---|:---|
-| **0** | Scenarios | Basic scenario execution (1–32) from control panels, scenario module programming and memory lock states | `OWNScenarioEvent` |
+| **0** | Scenarios | Stored scenario activation (`WHAT 1–16` on F420 and 3456, `17–20` on 3456 only) from control panels, F420 scenario recording / erase and central-unit lock, unavailable and memory-full states | `OWNScenarioEvent` |
 | **1** / **1001** | Lighting | On/off switching, dimming level (0–100%) with automatic legacy pre-09W29 F414 coarse preset fallback (speed 240 / 0xF0), DALI Tunable White (Dimension 14, 2000K–6535K / mireds), status queries, actuator autodiagnostic masks (WHO 1001 Dimensions 7 and 11, from lighting and automation actuators alike) | `OWNLightingCommand`, `OWNLightingEvent`, `OWNLightingDiagnosticEvent` |
 | **2** | Automation | Shutters, blinds, motorized curtains, tilt angles, short & full replies | `OWNAutomationCommand`, `OWNAutomationEvent` |
 | **3** | Load Control | Priority forcing (`*3*2*#N##`, firmware-verified), priority states 0–3, priority status and central-unit measurement requests with typed voltage, current, power, and energy properties (`WHO_3.pdf` v1.0.0 & `bt_energia` register mappings) | `OWNLoadCommand`, `OWNLoadEvent` |
@@ -85,7 +85,7 @@ OWNd parses OpenWebNet frames and dispatches typed commands and events across th
 | **8** | Intercom / Video Door Entry | Video door entry and intercom call signaling, answering, camera and audio control | `OWNIntercomCommand`, `OWNIntercomEvent` |
 | **9** | Auxiliary | Auxiliary channel status (aux 1–9) for remote relays and inter-system signaling | `OWNAuxEvent` |
 | **13** / **1013** | Gateway Diagnostics & Clock | Gateway date/time synchronization, timezone offsets, firmware and diagnostic object model metadata | `OWNGatewayCommand`, `OWNGatewayDiagnosticCommand`, `OWNGatewayEvent`, `OWNGatewayDiagnosticEvent` |
-| **14** | Special Commands / Actuator Lock | Actuator lock (`*14*0*WHERE##`, `$03WW001100`) and unlock (`*14*1*WHERE##`, `$03WW001000`) commands and events across Point-to-Point (`APL`) and `#4#01..09` local bus interface addresses | `OWNActuatorLockCommand`, `OWNActuatorLockEvent` |
+| **14** | Special Commands / Actuator Lock | Actuator lock (`*14*0*WHERE##`, `$03WW001100`) and unlock (`*14*1*WHERE##`, `$03WW001000`) commands and events across Point-to-Point (`APL`) and `#4#01..09` local bus interface addresses (the parser also reads `#4#11..15` and the undocumented `*#14*WHERE##` shape; neither is built) | `OWNActuatorLockCommand`, `OWNActuatorLockEvent` |
 | **15** | CEN Scenarios | Scenario control, pushbutton push/release/extended press events, strongly typed command builders | `OWNCenCommand`, `OWNCENEvent` |
 | **16** / **22** | Sound Diffusion | Multi-source selection, zone activation, volume adjustment, F441 matrix routing, WHO 22 paging and standby | `OWNSoundCommand`, `OWNSoundDiffusionCommand`, `OWNSoundEvent`, `OWNSoundDiffusionEvent`, `OWNAVCommand` |
 | **17** | Scenario Programmer | MH200N / MH202 scenario activation and state monitoring | `OWNSceneCommand`, `OWNSceneEvent` |
