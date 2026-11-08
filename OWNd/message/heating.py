@@ -76,6 +76,21 @@ _WHO4_TEMP_REGEX = re.compile(r"^[01][0-9]{3}$")
 # DIMENSION 60 humidity value: digits with an optional decimal part. An empty
 # value (``*#4*1*60*##``) is no reading and must not raise out of the parser.
 _WHO4_HUMIDITY_REGEX = re.compile(r"[0-9]+(?:\.[0-9]+)?", re.ASCII)
+# An integer field of a WHO 4 dimension reply (fan speed, sensor slot, valve and
+# actuator states, dates and times): ASCII digits only. ``str.isdigit()`` is also
+# true for fullwidth or superscript digits, which the frame tokenizer lets through
+# (``*#4*1*11*３*##``); they are not a value, so the frame stays untyped.
+_WHO4_INT_REGEX = re.compile(r"[0-9]+", re.ASCII)
+
+
+def _ascii_int(value: str) -> int | None:
+    """``int(value)`` when ``value`` is ASCII digits, else ``None``."""
+    return int(value) if _WHO4_INT_REGEX.fullmatch(value) else None
+
+
+def _ascii_ints(values: list[str]) -> bool:
+    """Whether every field in ``values`` is ASCII digits."""
+    return all(_WHO4_INT_REGEX.fullmatch(v) for v in values)
 
 # WHO 4 DIMENSION 22 is the published split-unit (air conditioning) IR
 # control: ``*#4*3#Z#N*22##`` requests the current setting and
@@ -316,19 +331,27 @@ class OWNHeatingEvent(OWNEvent):
     """A WHO 4 thermoregulation event or dimension reply.
 
     Documentation context only (the decoding below is unchanged; no committed
-    plant trace exercises the other address classes): the WHO 4 WHERE table
-    (Encyclopedia who-4-temperature-control/addressing.md) distinguishes the
-    central unit ``#0`` and ``#0#C`` (central unit ``C`` of a multi-central
-    plant), a zone addressed through the central unit ``#Z`` / ``#Z#C``, a
-    stand-alone zone probe ``Z`` (``1..99``), a slave probe ``NZZ``
-    (``101..899``), an external probe ``N00`` and an actuator ``Z#N``; a
-    ``0#N`` is actuator ``N`` of zone 0 (a pump the zones share), not zone
-    ``N``. ``zone``, ``unique_id`` and ``actuator`` keep their long-standing
-    values for every form, and the WHAT mode tables of this module (the
-    hundreds digit selecting heating / conditioning / generic, the last two
-    the manual / automatic / off / holiday / program variants) are read as
-    before; a dimension write frame keeps the same ``message_type`` as the
-    matching read.
+    plant trace exercises the other address classes). The published WHERE
+    table (Encyclopedia who-4-temperature-control/addressing.md "Published
+    functional WHERE forms") has ``0`` (all probes), ``1..99`` (the master
+    probe of zone ``1..99``, in stand-alone and central-unit plants alike),
+    ``001..099`` (all probes of a zone: ``1`` and ``001`` are not the same
+    address), ``PZZ`` (probe ``P`` 1..8 of zone ``ZZ``), ``#0`` (the central
+    unit) and ``#1..#99`` (a zone through the central unit); "Actuator
+    addressing" adds ``Z#N`` (actuator ``N`` 1..9 of zone ``Z``), and the
+    "MyHOME_Suite address rules" and "Historical central-unit variants"
+    sections add ``#0#C`` / ``#Z#C`` (four-zone central unit ``C``) and the
+    external probe ``N00``. A ``0#N`` is actuator ``N`` of zone 0 (a pump the
+    zones share), not zone ``N``. ``zone`` and ``unique_id`` keep their
+    long-standing values for every form (``001`` and ``1`` both give zone 1;
+    the actuator number is private to the DIMENSION 20 log), and the WHAT mode
+    tables of this module (the hundreds digit selecting heating / conditioning
+    / generic, the last two the manual / automatic / off / holiday / program
+    variants) are read as before. ``OWNMessage.parse`` routes a dimension
+    write (``*#4*1*#7*...##``) to ``OWNHeatingCommand``; through
+    ``OWNEvent.parse`` it is an event whose DIMENSION 7 / 30 / 31 / 32 readers
+    skip a ``DIMENSION_WRITING`` frame (``message_type`` stays ``None``), as on
+    master.
     """
 
     def __init__(self, data: str) -> None:
@@ -337,9 +360,11 @@ class OWNHeatingEvent(OWNEvent):
         self._type = None
 
         where = self._where or "0"
-        self._zone = (
-            int(where[1:]) if where.startswith("#") else int(where)
-        )
+        # The frame grammar admits the wildcard WHERE ``*`` for every WHO
+        # (``*4*1**##``); it is no zone, so the event is zone 0, as a frame
+        # without a WHERE already was, instead of raising ValueError from int().
+        zone_digits = where[1:] if where.startswith("#") else where
+        self._zone = _ascii_int(zone_digits) or 0
         # ``#0#N`` is zone N of a 4-zone central unit; ``0#N`` is actuator N
         # of zone 0 (a pump the zones share), not zone N.
         if self._zone == 0 and self._where_param and where.startswith("#"):
@@ -591,7 +616,7 @@ class OWNHeatingEvent(OWNEvent):
         elif (
             self._dimension == 11
             and self._dimension_value
-            and self._dimension_value[0].isdigit()
+            and _WHO4_INT_REGEX.fullmatch(self._dimension_value[0])
         ):  # Fan speed
             # ``*#4*WHERE*11*SPEED*##``; an empty or missing SPEED
             # (``*#4*1*11*##``, ``*#4*1*11##``) used to raise ValueError /
@@ -670,13 +695,18 @@ class OWNHeatingEvent(OWNEvent):
         elif self._dimension == 15:  # Probe temperature reading
             self._type = MESSAGE_TYPE_SECONDARY_TEMPERATURE
             if self._dimension_value:
+                temp_raw: str | None
                 if len(self._dimension_value) >= 2:
-                    self._sensor = int(self._dimension_value[0])
-                    temp_raw = self._dimension_value[1]
+                    # ``*#4*Z*15*SENSOR*TTTT##``: an empty or non-ASCII sensor
+                    # slot (``*#4*1*15**0215##``) used to raise ValueError from
+                    # int(); it is no reading.
+                    self._sensor = _ascii_int(self._dimension_value[0])
+                    temp_raw = self._dimension_value[1] if self._sensor is not None else None
                 else:
                     temp_raw = self._dimension_value[0]
 
-                self._secondary_temperature = who4_temperature(temp_raw)
+                if temp_raw is not None:
+                    self._secondary_temperature = who4_temperature(temp_raw)
 
             if self._secondary_temperature is not None:
                 if self._sensor is not None:
@@ -687,7 +717,7 @@ class OWNHeatingEvent(OWNEvent):
         elif (
             self._dimension == 19
             and len(self._dimension_value) >= 2
-            and all(self._dimension_value[:2])
+            and _ascii_ints(self._dimension_value[:2])
         ):  # Valves status
             self._type = MESSAGE_TYPE_ACTION
             self._is_cooling = self._dimension_value[0] in _valve_active_states
@@ -755,7 +785,7 @@ class OWNHeatingEvent(OWNEvent):
         elif (
             self._dimension == 20
             and self._dimension_value
-            and self._dimension_value[0]
+            and _WHO4_INT_REGEX.fullmatch(self._dimension_value[0])
         ):  # Actuator status
             self._type = MESSAGE_TYPE_ACTION
             self._is_active = self._dimension_value[0] in _actuator_active_states
@@ -806,7 +836,7 @@ class OWNHeatingEvent(OWNEvent):
             self._dimension == 30
             and self._dimension_value
             and len(self._dimension_value) >= 3
-            and all(v.isdigit() for v in self._dimension_value[:3])
+            and _ascii_ints(self._dimension_value[:3])
             and self._message_type != "DIMENSION_WRITING"
         ):  # Holiday / weekend end date (DD*MM*YYYY)
             d, m, y = (
@@ -823,7 +853,7 @@ class OWNHeatingEvent(OWNEvent):
             self._dimension == 31
             and self._dimension_value
             and len(self._dimension_value) >= 2
-            and all(v.isdigit() for v in self._dimension_value[:2])
+            and _ascii_ints(self._dimension_value[:2])
             and self._message_type != "DIMENSION_WRITING"
         ):  # Holiday / weekend end time (HH*MM)
             h, m = int(self._dimension_value[0]), int(self._dimension_value[1])
@@ -836,7 +866,7 @@ class OWNHeatingEvent(OWNEvent):
             self._dimension == 32
             and self._dimension_value
             and len(self._dimension_value) >= 2
-            and all(v.isdigit() for v in self._dimension_value[:2])
+            and _ascii_ints(self._dimension_value[:2])
             and self._message_type != "DIMENSION_WRITING"
         ):  # Timed manual duration (HH*MM)
             h, m = int(self._dimension_value[0]), int(self._dimension_value[1])
