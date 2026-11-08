@@ -732,12 +732,12 @@ def test_who16_stays_on_gateways_that_forward_it(model: str) -> None:
         ("MH202", False, True, False, False, False),
         ("03535", False, True, False, False, False),
         ("003535", False, True, False, False, False),
-        # Oracle general-sweep gateways (nack/silent on *#4*Z##)
-        ("F453", True, False, False, False, False),
-        ("F453AV", True, False, False, False, False),
-        ("MH200N", True, False, False, False, False),
-        # Live F455 (#674: *#4*Z## hangs TCP socket 10 s; not in oracle)
-        ("F455", None, False, None, None, None),
+        # Gateways supporting general sweep *#4*0## (zone_status left None / unverified)
+        ("F453", True, None, False, False, False),
+        ("F453AV", True, None, False, False, False),
+        ("MH200N", True, None, False, False, False),
+        # Single-session / unmeasured in WHO 4 oracle (zone_status left None for caller policy)
+        ("F455", None, None, None, None, None),
         # Single-session / scenario gateways in oracle (zone_status left None for caller policy)
         ("H4684", False, None, False, False, False),
         ("H/L4684", False, None, False, False, False),
