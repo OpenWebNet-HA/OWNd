@@ -26,7 +26,7 @@ It powers the [Home Assistant MyHOME integration](https://github.com/OpenWebNet-
 
 - **Hardened Dual-Session Architecture**: Decouples real-time bus event monitoring (`OWNEventSession`) from command and query execution (`OWNCommandSession`), preventing command bursts from interrupting event monitoring.
 - **Strongly Typed CEN / CEN+ Command Builders (P2)**: Dedicated fluent builders (`OWNCenCommand`, `OWNCenPlusCommand`) with strict OpenWebNet golden corpus frame parity for short press, start pressure, still held, and release actions across pushbuttons and rotary encoders.
-- **Thermoregulation Central Unit Coordination (P4)**: Dedicated builder support for 3550 (`#0`) and 4695 (`#0#1`) central units (`OWNHeatingCommand.set_central_mode`, `set_central_temperature`, `set_central_antifreeze`, `set_central_thermal_protection`, `set_central_off`), enabling master heating/cooling state distribution.
+- **Thermoregulation Central Unit Coordination (P4)**: Dedicated builder support for 3550 (`#0`) and 4695 (`#0#1`) central units (`OWNHeatingCommand.set_central_mode`, `set_central_temperature`, `set_central_program`, `set_central_scenario`, `set_central_weekend`, `set_central_holiday`, `set_holiday_end_date`, `set_holiday_end_time`), enabling master heating/cooling state distribution.
 - **DALI Tunable White & Color Temperature**: Built-in support for DALI DT8 ballasts (F429 / F461) with Dimension 14 color temperature encoding and bidirectional Kelvin/mireds conversion.
 - **OpenWebNet Golden Corpus Validation**: Cross-checked and validated against the community OpenWebNet Golden Corpus (75+ real-world captured frame scenarios) ensuring exact frame encodings, dimensions, and edge cases.
 - **Serial & USB Dongle Support**: Built-in single-channel serial transport (`AsyncSerialTransport`) for the Legrand 3578 USB/ZigBee interface with in-band event and command-reply demultiplexing.
@@ -228,7 +228,14 @@ asyncio.run(main())
 ### 4. Strongly Typed CEN / CEN+ & Central Unit Commands (Phase 2)
 
 ```python
-from OWNd.message import OWNCenCommand, OWNCenPlusCommand, OWNHeatingCommand
+from OWNd.message import (
+    CLIMATE_MODE_COOL,
+    CLIMATE_MODE_HEAT,
+    CLIMATE_MODE_OFF,
+    OWNCenCommand,
+    OWNCenPlusCommand,
+    OWNHeatingCommand,
+)
 
 # CEN (WHO=15): Button 2 short press on scenario controller 12
 frame_cen_press = OWNCenCommand.press(where="12", button=2)                # *15*02*12##
@@ -244,13 +251,13 @@ frame_cenplus_held = OWNCenPlusCommand.still_held(where="21", button=5)
 frame_cenplus_rel = OWNCenPlusCommand.release(where="21", button=5)
 
 # Central Unit (WHO=4): Set 3550 (#0) master mode to Heating -> *4*1*#0##
-frame_heat = OWNHeatingCommand.set_central_mode(where="#0", mode="heating")
+frame_heat = OWNHeatingCommand.set_central_mode(where="#0", mode=CLIMATE_MODE_HEAT)  # "heat"
 
 # Central Unit (WHO=4): Set 4695 (#0#1) master mode to Cooling -> *4*0*#0#1##
-frame_cool = OWNHeatingCommand.set_central_mode(where="#0#1", mode="cooling")
+frame_cool = OWNHeatingCommand.set_central_mode(where="#0#1", mode=CLIMATE_MODE_COOL)  # "cool"
 
 # Central Unit (WHO=4): Turn Central Unit OFF -> *4*303*#0##
-frame_off = OWNHeatingCommand.set_central_mode(where="#0", mode="off")
+frame_off = OWNHeatingCommand.set_central_mode(where="#0", mode=CLIMATE_MODE_OFF)  # "off"
 ```
 
 ---
