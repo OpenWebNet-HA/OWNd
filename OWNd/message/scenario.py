@@ -7,10 +7,21 @@ from .base import (
     OWNEvent,
     register_command_parser,
     register_event_parser,
+    require_address_where,
 )
 
 
+
 class OWNScenarioEvent(OWNEvent):
+    """WHO 0 scenario activation and F420 programming / central-unit events.
+
+    The published table (who-0-scenarios/README.md "WHAT reference") lists
+    ``*0*N*WHERE##`` with ``N`` 1..16 (F420 and 3456) and 17..20 (3456 only),
+    and WHAT 40..46 as the F420 programming vocabulary and central-unit states.
+    Decoding is unchanged: any WHAT outside 40..46 is reported as a launch of
+    that number, pending committed plant traces.
+    """
+
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
@@ -19,8 +30,10 @@ class OWNScenarioEvent(OWNEvent):
         self._programming_scenario: int | None = None
         self._event: str | None = None
         # WHAT 40-46 are scenario-module programming states, not scenarios
-        # (libqtdevices scenario_device.cpp:27-35, 93-156; mhs1 bt_luci
-        # accepts *0*40#N*W##, 41#N, 42, 42#N, 43, 44 and emits 40#N..46#N).
+        # (who-0-scenarios/README.md "Start recording - WHAT 40#X" ..
+        # "Lock and unlock - WHAT 43 / 44"; libqtdevices scenario_device.cpp:27-35,
+        # 93-156; mhs1 bt_luci accepts *0*40#N*W##, 41#N, 42, 42#N, 43, 44 and
+        # emits 40#N..46#N).
         _programming = {
             40: "programming started",
             41: "programming stopped",
@@ -54,6 +67,7 @@ class OWNScenarioEvent(OWNEvent):
 
     @property
     def scenario(self) -> int | None:
+        """Activated scenario number (any WHAT outside 40..46), None for a programming / status frame."""
         return self._scenario
 
     @property
@@ -62,7 +76,7 @@ class OWNScenarioEvent(OWNEvent):
 
     @property
     def event(self) -> str | None:
-        """'launched' for WHAT 1-31, the programming/lock state for WHAT 40-46, None for a status request."""
+        """'launched' for any WHAT outside 40..46, the programming/lock state for WHAT 40..46, None for a status request."""
         return self._event
 
     @property
@@ -204,15 +218,27 @@ class OWNSceneEvent(OWNEvent):
         return None
 
 
+def _scene_where(where: object) -> str:
+    """WHO 17 scene WHERE: a ``str`` or ``int`` (not ``bool`` or ``None``), non-empty,
+    without ``*``, ``##`` or whitespace. ``start(True)`` would otherwise build
+    ``*17*1*True##`` and fall back to the "Requesting global scene status" log;
+    untyped callers still get ``ValueError`` for ``None``."""
+    return require_address_where(where)
+
+
 class OWNSceneCommand(OWNCommand):
     """WHO 17: MH200/MH200N/MH202 Scene Management commands.
 
-    Published functional model:
+    Published functional model (who-17-scenario-management/README.md):
     *17*1*WHERE## - Start scene
     *17*2*WHERE## - Stop scene
     *17*3*WHERE## - Enable scene
     *17*4*WHERE## - Disable scene
-    *#17*WHERE##  - Query scene status
+    *#17*WHERE##  - Query scene status (WHERE 0 = general)
+
+    There is no bare ``*#17##`` form on the page, and the firmware oracle has
+    it NACKed on all 12 emulated gateways (``scenario-who17``); the
+    parser still reads it, the builder no longer emits it.
     """
 
     def __init__(self, data: str) -> None:
@@ -251,30 +277,33 @@ class OWNSceneCommand(OWNCommand):
 
     @classmethod
     def start(cls, where: str | int) -> OWNSceneCommand:
-        """Start/execute scene."""
-        return cls(f"*17*1*{where}##")
+        """Start/execute scene (``*17*1*WHERE##``); WHERE must be non-empty."""
+        return cls(f"*17*1*{_scene_where(where)}##")
 
     @classmethod
     def stop(cls, where: str | int) -> OWNSceneCommand:
-        """Stop/abort running scene."""
-        return cls(f"*17*2*{where}##")
+        """Stop/abort running scene (``*17*2*WHERE##``); WHERE must be non-empty."""
+        return cls(f"*17*2*{_scene_where(where)}##")
 
     @classmethod
     def enable(cls, where: str | int) -> OWNSceneCommand:
-        """Enable scene for execution."""
-        return cls(f"*17*3*{where}##")
+        """Enable scene for execution (``*17*3*WHERE##``); WHERE must be non-empty."""
+        return cls(f"*17*3*{_scene_where(where)}##")
 
     @classmethod
     def disable(cls, where: str | int) -> OWNSceneCommand:
-        """Disable scene execution."""
-        return cls(f"*17*4*{where}##")
+        """Disable scene execution (``*17*4*WHERE##``); WHERE must be non-empty."""
+        return cls(f"*17*4*{_scene_where(where)}##")
 
     @classmethod
-    def status(cls, where: str | int | None = "0") -> OWNSceneCommand:
-        """Query scene status (default '0' for general status)."""
-        if where is not None and str(where) != "":
-            return cls(f"*#17*{where}##")
-        return cls("*#17##")
+    def status(cls, where: str | int = "0") -> OWNSceneCommand:
+        """Query scene status: ``*#17*WHERE##`` (default ``0`` = general).
+
+        ``None`` or an empty WHERE raises ``ValueError``: the page defines no
+        bare ``*#17##`` and the firmware oracle has it NACKed on all 12
+        emulated gateways (own-firmware-oracle ``scenario-who17``).
+        """
+        return cls(f"*#17*{_scene_where(where)}##")
 
 
 register_event_parser(0, OWNScenarioEvent)
