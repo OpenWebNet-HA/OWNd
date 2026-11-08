@@ -31,10 +31,10 @@ LIGHTING_STATE_ANOMALY = 19
 DIMMER_SPEED_COARSE_ONLY = 240
 
 # Published LEVEL100 field (who-1-lighting/dimensions.md "Value fields"):
-# 100 = OFF, 101..199 = 1 %..99 %, 200 = maximum. Anything else is not a
-# level and "must not be decoded as 100%..200%".
+# 100 = OFF, 101..199 = 1 %..99 %, 200 = maximum. The decoder keeps
+# ``level - 100`` without a range check (_decode_level100): no committed
+# trace shows a value outside the field.
 LEVEL100_MIN = 100
-LEVEL100_MAX = 200
 
 # Published SPEED field (who-1-lighting/what.md "Switching and levels" and
 # dimensions.md "Value fields"): 0 = last speed used, 1..254 explicit, 255 default.
@@ -52,12 +52,14 @@ def _int_field(values: list[str], index: int) -> int | None:
 
     The frame grammar admits empty tags (``*#1*12*1*##``): a tokenizer must
     preserve them and a decoder must not crash on them (Encyclopedia
-    protocol/frame-syntax.md "Delimiters and empty tags", ENCY_CONFIRM LS-L1).
+    protocol/frame-syntax.md "Delimiters and empty tags"). Only ASCII digits
+    are a value: ``str.isdigit`` also accepts fullwidth, superscript and circled
+    digits, which are not on the wire and (for the last two) make ``int`` raise.
     """
     if index >= len(values):
         return None
     value = values[index]
-    if not value.isdigit():
+    if not (value.isascii() and value.isdigit()):
         return None
     return int(value)
 
@@ -711,27 +713,26 @@ def _where_target(where: str | int) -> str:
     """Validate the WHERE of a WHO 1 builder: non-empty, stripped, no ``*``.
 
     WHERE is protocol syntax and ``*`` is a field separator
-    (who-1-lighting/addressing.md; protocol/addressing.md "Parsing rules",
-    ENCY_CONFIRM LS-L10). An empty WHERE builds ``*#1*##``, which is refused by
-    eleven emulated gateways and crashes the emulated MH202 010024
-    (ORACLE_CONFIRM.md row L10, crash table); a WHERE such as ``12*1`` turns a
+    (who-1-lighting/addressing.md; protocol/addressing.md "Parsing rules").
+    An empty WHERE builds ``*#1*##``, which is refused by eleven emulated
+    gateways and crashes the emulated MH202 010024 (own-firmware-oracle
+    ``ownd-audit-frames``); a WHERE such as ``12*1`` turns a
     status request into a DIMENSION 1 read (``*#1*12*1##``).
     """
     return require_non_empty_where(where)
 
 
-def _check_speed(speed: int | None, name: str = "transition speed") -> int | None:
+def _check_speed(speed: int | None) -> int | None:
     """Return ``speed`` when it is within the SPEED field, else ``None``.
 
     what.md "Switching and levels": ``0`` = last speed used, ``1..254`` explicit,
     ``255`` default. ``None`` means "no speed field". A value outside 0..255 is
     dropped (``None``), as before, so the builders keep their pre-existing
     fallback (``switch_on('21', 300)`` -> ``*1*1*21##``); MyHOME passes Home
-    Assistant transition seconds through and pins those frames (precedent gate,
-    audit rows L7, L8). The value is used as given, as on ``master``: no type
-    check is added here without a committed plant trace.
+    Assistant transition seconds through and pins those frames. The value is
+    used as given, as on ``master``: no type check is added here without a
+    committed plant trace.
     """
-    del name
     if speed is None:
         return None
     if not SPEED_MIN <= speed <= SPEED_MAX:
@@ -819,7 +820,7 @@ class OWNLightingCommand(OWNCommand):
     def status(cls, where: str | int) -> OWNLightingCommand:
         """``*#1*WHERE##`` status request. WHERE must be a non-empty address
         without ``*``: ``*#1*##`` crashes the emulated MH202 010024
-        (ORACLE_CONFIRM.md row L10) and ``12*1`` would build a DIMENSION 1 read."""
+        (own-firmware-oracle ``ownd-audit-frames``) and ``12*1`` would build a DIMENSION 1 read."""
         message = cls(f"*#1*{_where_target(where)}##")
         message._human_readable_log = f"Requesting light or switch {message._where}{message._interface_log_text} status."
         return message
@@ -901,7 +902,7 @@ class OWNLightingCommand(OWNCommand):
         """Blink every ``_frequency`` seconds: WHAT 20..29 = 0.5..5 s in 0.5 s steps
         (what.md "Blinking operations"). ``None`` or a period outside 0.5..5 s
         falls back to the 0.5 s default (WHAT 20), as before (MyHOME pins
-        ``flash('21', -1)`` -> ``*1*20*21##``; audit row L9); an in-range period
+        ``flash('21', -1)`` -> ``*1*20*21##``); an in-range period
         is rounded to the nearest 0.5 s step."""
         # Compatibility with the misspelled keyword exposed by bundled V2.
         if _freqency is not None:
@@ -918,8 +919,8 @@ class OWNLightingCommand(OWNCommand):
     def switch_on(cls, where: str | int, _transition: int | None = None) -> OWNLightingCommand:
         """``*1*1*WHERE##``, or ``*1*1#SPEED*WHERE##`` with a speed 0..255
         (what.md "Switching and levels"); an out-of-range speed is dropped
-        (plain frame) and the value is used as given, as before (audit row L7,
-        precedent gate)."""
+        (plain frame) and the value is used as given, as before (MyHOME pins
+        the plain frame)."""
         speed = _check_speed(_transition)
         if speed is not None:
             message = cls(f"*1*1#{speed}*{_where_target(where)}##")
@@ -933,8 +934,8 @@ class OWNLightingCommand(OWNCommand):
     def switch_off(cls, where: str | int, _transition: int | None = None) -> OWNLightingCommand:
         """``*1*0*WHERE##``, or ``*1*0#SPEED*WHERE##`` with a speed 0..255
         (what.md "Switching and levels"); an out-of-range speed is dropped
-        (plain frame) and the value is used as given, as before (audit row L7,
-        precedent gate)."""
+        (plain frame) and the value is used as given, as before (MyHOME pins
+        the plain frame)."""
         speed = _check_speed(_transition)
         if speed is not None:
             message = cls(f"*1*0#{speed}*{_where_target(where)}##")
@@ -1056,16 +1057,18 @@ class OWNLightingCommand(OWNCommand):
 
         ``_transition`` is the published SPEED field (``0`` = last speed used,
         ``1..254``, ``255`` = default; dimensions.md "Value fields"): a ``bool``
-        or fractional value raises ``ValueError``; a value outside 0..255 is
-        sent as ``0`` (last speed used), as before (audit row L8, precedent
-        gate: MyHOME pins that frame).
+        or fractional value raises ``ValueError``; the value is converted with
+        ``int`` as on ``master`` (so ``"5"`` is accepted and ``None`` raises
+        ``TypeError``) and one outside 0..255 is sent as ``0`` (last speed
+        used), as before (MyHOME pins that frame).
         """
         if any(
             isinstance(x, bool) or (isinstance(x, float) and x % 1 != 0)
             for x in (_level, _transition)
         ):
             raise ValueError("brightness level and transition must be integers")
-        transition_speed = int(_check_speed(_transition) or 0)
+        trans_int = int(_transition)
+        transition_speed = trans_int if SPEED_MIN <= trans_int <= SPEED_MAX else 0
         use_coarse = (
             is_coarse_dimmer_where(where, gateway=gateway)
             if coarse is None

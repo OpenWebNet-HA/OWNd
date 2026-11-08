@@ -76,7 +76,7 @@ class OWNScenarioEvent(OWNEvent):
 
     @property
     def event(self) -> str | None:
-        """'launched' for WHAT 1-31, the programming/lock state for WHAT 40-46, None for a status request."""
+        """'launched' for any WHAT outside 40..46, the programming/lock state for WHAT 40..46, None for a status request."""
         return self._event
 
     @property
@@ -236,7 +236,7 @@ class OWNSceneCommand(OWNCommand):
     *#17*WHERE##  - Query scene status (WHERE 0 = general)
 
     There is no bare ``*#17##`` form on the page, and the firmware oracle has
-    it NACKed on all 12 emulated gateways (ORACLE_CONFIRM.md row M2); the
+    it NACKed on all 12 emulated gateways (``scenario-who17``); the
     parser still reads it, the builder no longer emits it.
     """
 
@@ -300,7 +300,7 @@ class OWNSceneCommand(OWNCommand):
 
         ``None`` or an empty WHERE raises ``ValueError``: the page defines no
         bare ``*#17##`` and the firmware oracle has it NACKed on all 12
-        emulated gateways (``scenario-who17``; ORACLE_CONFIRM.md row M2).
+        emulated gateways (own-firmware-oracle ``scenario-who17``).
         """
         return cls(f"*#17*{_scene_where(where)}##")
 

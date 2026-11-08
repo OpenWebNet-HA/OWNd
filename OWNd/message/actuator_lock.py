@@ -11,7 +11,7 @@ Evidence boundaries (Encyclopedia who-14-special-commands/README.md):
   established". The ``*#14*WHERE##`` status request this module parses
   (:attr:`OWNActuatorLockCommand.is_status_request`) is therefore
   **undocumented**: it is read if seen on the bus but no builder emits it
-  (audit row A1; ENCY_CONFIRM LS-A1).
+  (who-14-special-commands/README.md "Scope of the semantics").
 - "Addressing": the Encyclopedia page says WHO 14 has no address grammar of
   its own, but the WHO 1 PDF (chapter 4 "WHO 14", 4.2 "WHERE Table") gives
   it one: General ``0``, Area ``A [00, 1-9, 100]`` and Point-to-point
@@ -22,8 +22,8 @@ Evidence boundaries (Encyclopedia who-14-special-commands/README.md):
   builders here refuse ``11..15`` on firmware evidence (the ``bt_luci`` flex
   DFA accepts ``#4#0[1-9]`` only, tests/test_who14_actuator_lock.py); the
   parser still accepts ``*14*0*12#4#11##`` with ``interface == "11"`` so a
-  frame seen on the bus is never lost (audit row A2; ENCY_CONFIRM LS-A2:
-  "Implementations should preserve that discrepancy").
+  frame seen on the bus is never lost (who-1-lighting/addressing.md "Address
+  scopes": "Implementations should preserve that discrepancy").
 """
 
 from __future__ import annotations
