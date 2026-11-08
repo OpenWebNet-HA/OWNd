@@ -8,11 +8,11 @@ import logging
 
 from ..connection import COMMAND_RESPONSE_MAX_FRAMES, COMMAND_TIMEOUT
 from ..connection.command_session import (
-    DESTRUCTIVE_FRAME_REASON,
     destructive_frame_error,
+    destructive_frame_reason,
 )
 from ..exceptions import OWNError, OWNProtocolError
-from ..message import OWNMessage, OWNSignaling, is_who4_dimension_22_crash_form
+from ..message import OWNMessage, OWNSignaling
 from .base import OWNTransport
 
 SEPARATOR = b"##"
@@ -163,15 +163,17 @@ class AsyncSerialTransport(OWNTransport):
         text = str(message)
         if not text.endswith("##"):
             text += "##"
-        if is_who4_dimension_22_crash_form(text):
-            # Never written, whatever the caller: it crashes bt_termo.
-            err: OWNError = destructive_frame_error(text)
+        reason = destructive_frame_reason(text)
+        if reason is not None:
+            # Never written, whatever the caller: the same classifier as the
+            # command session (WHO 4 dimension 22, WHO 18 dimension 52).
+            err: OWNError = destructive_frame_error(text, reason)
             self._last_error = err
             self._logger.error(
                 "%s Refusing to send `%s`: %s.",
                 self.log_id,
                 text,
-                DESTRUCTIVE_FRAME_REASON,
+                reason,
             )
             if raise_on_error:
                 raise err

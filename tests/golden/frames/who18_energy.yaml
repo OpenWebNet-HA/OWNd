@@ -2,12 +2,12 @@
 # labelled `legrand-spec` with active-power / kWh-totalizer meanings, but WHO_18.pdf
 # (Encyclopedia who-18 dimensions.md "Identifier table") defines no DIMENSION 1 and
 # no DIMENSION 11: active power is 113, the totalizer is 51, and 11 is the ZigBee
-# "Voltage" dimension of the separate variant (zigbee-variant.md "Dimension table").
+# "Voltage" dimension of the separate variant (zigbee-variant.md "DIMENSION table").
 # WHERE `1` is not a published family either (`1N` needs N = 1..127, addressing.md).
 # No kWh on SCS WHO 18: the PDF labels DIMENSION 51..54 "Watt", 511/512 "Watt/h" and only
 # 72 "Wh" (Encyclopedia README: preserve the published field semantics); OWNd and MyHOME read
 # the totalizers as Wh. They stay as `conflict` records
-# pinning parser shape only; OWNd gives them no `message_type` (report 21 E12).
+# pinning parser shape only; OWNd gives them no `message_type`.
 - id: energy.req.active_power.meter1
   frame: "*#18*1*1##"
   direction: dimension_request

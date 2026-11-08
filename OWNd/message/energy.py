@@ -334,21 +334,88 @@ class OWNEnergyEvent(OWNEvent):
         return self._human_readable_log
 
 
-# DIMENSION 52 with a four-digit year: ``*#18*WHERE*52#2026#10##`` and the
-# value-field form ``*#18*WHERE*52#2026#10*100##`` crash F460 020012 and F461
-# 020011 after the telegram went out (findings/audit-crash-frames.md;
-# tools/expected_divergences.yaml ``crash_frames``); the two-digit form
-# ``*#18*WHERE*52#26#9##`` does not. No builder emits the four-digit form; the
-# send layer refuses it when it is handed in as a raw frame (same pattern as
-# ``is_who4_dimension_22_crash_form``).
-_WHO18_DIM52_FOUR_DIGIT_YEAR = re.compile(
-    r"^\*#18\*[^*]+\*52#[0-9]{4}#[0-9]{1,2}(?:\*[^*]*)?##$", re.ASCII
+# WHO 18 DIMENSION 52 (monthly energy): ``*#18*51*52#2026#10##`` and the
+# value-field form ``*#18*51*52#2026#10*100##`` crash the F460 020012, the F461
+# 020011 and the 3488 030205 (HOMETOUCH) after the telegram went out, while
+# the documented two-digit form ``*#18*51*52#26#9##`` went out without a crash
+# (OpenWebNet-HA/own-firmware-oracle, suite ``ownd-audit-frames``, index
+# SHA-256 db03cc878d84d514b9e324c2d01d050264f2e4ccd0c1aad33937683c30e472ca,
+# ``findings/audit-crash-frames.md`` and ``tools/expected_divergences.yaml``
+# ``crash_frames``; emulated firmware, ``harness=full``, not yet replayed on
+# physical hardware). The firmware reads the year of ``52#Y#M`` with atoi()
+# into a one-byte slot (``26`` -> ``1A`` in ``$06D1A1023350161A09``), and
+# ``2026`` (0x7EA) overflows that formatter (``$006D1A1023350167EA0``), so every
+# spelling atoi() reads as a wide year does the same (``02026``, ``256``);
+# leading zeros on WHO or DIMENSION (``*#018*``, ``*052``), a ``#52`` write, an
+# extra ``#`` parameter, an empty WHERE, a non-ASCII digit or more than one
+# value field were not replayed. As for WHO 4 dimension 22
+# (``is_who4_dimension_22_crash_form``), the allowance is the tested forms,
+# not the complement of the crash set. No builder emits a refused form; the
+# send paths refuse one handed in as a raw frame.
+#
+# ``_WHO18_DIMENSION_52_REGEX`` recognises every DIMENSION 52 spelling, anchored
+# to the first ``*`` of each ``##``-delimited chunk (mid-frame ``*#18*`` is a
+# WHERE or DIMENSION ``#18``); WHO and DIMENSION accept what the gateway's
+# atoi() reads as 18 / 52 (leading zeros, whitespace, a ``+`` sign).
+_WHO18_DIMENSION_52_REGEX = re.compile(
+    r"^[^*]*\*#\s*\+?0*18\s*\*[^*]*\*\s*#?\s*\+?0*52(?:\s*\Z|[#*\s])"
+)
+# The forms that go out, spelled canonically: WHO ``18``, a non-empty ASCII
+# WHERE of the published families (digits, ``#0`` suffix for an actuator),
+# DIMENSION ``52`` as a request or report (``*52``, ``*52*Wh``) or with the
+# documented year and month (``52#YY#M``, ``YY`` 0..99 as one or two digits,
+# ``M`` 1..12, optionally ``*Wh``). ``\Z`` on the end (``$`` also matches
+# before a trailing newline); ASCII only.
+_WHO18_DIMENSION_52_SENDABLE_REGEX = re.compile(
+    r"^\*#18\*[0-9]+(?:#0)?\*52(?:#[0-9]{1,2}#(?:0?[1-9]|1[0-2]))?(?:\*[0-9]+)?\Z",
+    re.ASCII,
 )
 
 
-def is_who18_dimension_52_four_digit_year(frame: object) -> bool:
-    """True for a WHO 18 DIMENSION 52 frame carrying a four-digit year (crashes F460 / F461)."""
-    return bool(_WHO18_DIM52_FOUR_DIGIT_YEAR.match(str(frame)))
+def _decode_frame(frame: object) -> str:
+    return (
+        bytes(frame).decode("latin-1")
+        if isinstance(frame, (bytes, bytearray, memoryview))
+        else str(frame)
+    )
+
+
+def is_who18_dimension_52(frame: object) -> bool:
+    """True if ``frame`` (or any ``##``-delimited frame in it) is WHO 18 DIMENSION 52.
+
+    Every spelling, the safe forms included. The send paths refuse the narrower
+    :func:`is_who18_dimension_52_crash_form`. ``bytes``, ``bytearray`` and
+    ``memoryview`` are decoded as latin-1 (the wire encoding); anything else is
+    checked through ``str()``.
+    """
+    raw = _decode_frame(frame)
+    return any(_WHO18_DIMENSION_52_REGEX.search(chunk) for chunk in raw.split("##"))
+
+
+def is_who18_dimension_52_crash_form(frame: object) -> bool:
+    """True if ``frame`` holds a WHO 18 DIMENSION 52 frame that every send path refuses.
+
+    That is every DIMENSION 52 spelling except the canonical forms the firmware
+    oracle replayed without a crash or that the builders emit: ``*#18*WHERE*52##``,
+    ``*#18*WHERE*52*Wh##``, ``*#18*WHERE*52#YY#M##`` and ``*#18*WHERE*52#YY#M*Wh##``
+    with a one- or two-digit year and a month 1..12. Refused: a four-digit or
+    wider year (``52#2026#10`` crashes the F460, F461 and 3488; ``02026`` and
+    ``256`` reach the same one-byte formatter), a month outside 1..12 or with
+    three digits, leading zeros, whitespace or ``+`` on WHO or DIMENSION, a
+    ``#52`` write, an extra ``#`` parameter, an empty or non-digit WHERE, a
+    non-ASCII digit and more than one value field. Buffers are decoded like
+    :func:`is_who18_dimension_52`.
+    """
+    raw = _decode_frame(frame)
+    return any(
+        _WHO18_DIMENSION_52_REGEX.search(chunk)
+        and not _WHO18_DIMENSION_52_SENDABLE_REGEX.match(chunk)
+        for chunk in raw.split("##")
+    )
+
+
+# The name of the first release of the guard, kept for its callers.
+is_who18_dimension_52_four_digit_year = is_who18_dimension_52_crash_form
 
 
 def _normalize_actuator_where(where: str | int) -> str:
@@ -568,10 +635,10 @@ class OWNEnergyCommand(OWNCommand):
         With ``year`` and ``month`` the documented ``52#YY#M`` form is built
         with a two-digit year (``*#18*51*52#26#9*100##``); WHO_18.pdf defines
         DIMENSION 52 only with the year and month parameters. A four-digit
-        year is never emitted: ``52#2026#10`` crashed the F460 and F461
-        gateways in the firmware oracle (``findings/audit-crash-frames.md``),
-        and the send layer refuses that form
-        (:func:`is_who18_dimension_52_four_digit_year`). With both omitted
+        year is never emitted: ``52#2026#10`` crashed the F460, F461 and 3488
+        in the firmware oracle (``ownd-audit-frames``), and the send layer
+        refuses every untested spelling
+        (:func:`is_who18_dimension_52_crash_form`). With both omitted
         the parameter-less ``*#18*WHERE*52*Wh##`` is built as before, for the
         existing callers (MyHOME ``expose.py``).
         """
@@ -606,7 +673,7 @@ class OWNEnergyCommand(OWNCommand):
         """Build a WHO 18 Dimension 53 current-month partial energy report (*#18*WHERE*53[#M]*Wh##).
 
         WHO_18.pdf lists DIMENSION 53 as a parameter-less scalar (capture:
-        ``*#18*52*53*1##``, F454 2.0.5, MyHOME#466); the ``53#M`` form built
+        ``*#18*52*53*1##``, F454 2.0.51, MyHOME#466); the ``53#M`` form built
         when ``month`` is given is the TS10 touchscreen's parameterised
         variant, not a form of the PDF. Both forms are kept on the wire as
         before, pending a committed plant trace of the parameterised reply.
@@ -695,8 +762,9 @@ def _normalize_stop_and_go_where(where: str | int) -> str:
     """Normalize Stop&Go line address to 1N format (11..19).
 
     WHO_18.pdf's WHERE table publishes the Stop&Go family as ``1N`` with
-    N = 1..127; the builders accept lines 1..9 / addresses 11..19 only, the
-    range covered by committed plant traces, until a trace of a wider
+    N = 1..127; the builders accept lines 1..9 / addresses 11..19 only,
+    master's range (derived from the firmware oracle ``energy-ts10`` suite; no
+    physical Stop&Go trace is committed), kept until a plant trace of a wider
     address is committed.
     """
     target = str(where).strip()
@@ -724,7 +792,8 @@ class OWNStopAndGoEvent(OWNEvent):
         - Individual status flags: *#18*1N*251..263*BIT##
     Addresses are formatted as 1N (11..19, where line is 1..9). WHO_18.pdf
     publishes the family as 1N with N = 1..127; ``line`` is decoded for the
-    single-digit addresses only, the range covered by committed plant traces.
+    single-digit addresses only, master's range from the firmware oracle
+    ``energy-ts10`` suite, kept until a physical Stop&Go trace is committed.
     """
 
     def __init__(self, data: str) -> None:
@@ -839,7 +908,7 @@ class OWNStopAndGoEvent(OWNEvent):
 
     @property
     def line(self) -> int | None:
-        """Line number (1..9) corresponding to address 1N, or None if non-standard (WHO_18.pdf publishes N = 1..127; wider addresses are not decoded without a committed plant trace)."""
+        """Line number (1..9) corresponding to address 1N, or None if non-standard (WHO_18.pdf publishes N = 1..127; wider addresses are not decoded until a physical Stop&Go trace is committed)."""
         return self._line
 
     @property
