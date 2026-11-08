@@ -100,7 +100,7 @@ class GatewayProfile:
     # from own-firmware-oracle suites and live hardware traces):
     # - supports_general_heating_status: general sweep *#4*0## (trace-corpus.tsv).
     # - supports_heating_zone_status: per-zone status *#4*Z## (thermo-zone-requests,
-    #   live multi-session traces MyHOME#629, #674, #799, #866).
+    #   live multi-session traces MyHOME#629, #799, #866).
     # - supports_heating_actuator_status: per-zone *#4*Z*20## (thermo-actuator.tsv).
     # - supports_heating_humidity_request: per-zone *#4*Z*60## (thermo-zone-requests).
     # - supports_interface_zone_requests: WHO 4 behind #4#II (thermo-zone-requests).
@@ -296,7 +296,6 @@ class F453Profile(GatewayProfile):
             model_name="F453",
             command_queue_delay=0.15,
             supports_general_heating_status=True,
-            supports_heating_zone_status=False,
             supports_heating_actuator_status=False,
             supports_heating_humidity_request=False,
             supports_interface_zone_requests=False,
@@ -347,7 +346,6 @@ class F453AVProfile(GatewayProfile):
             firmware_version=fw_str,
             command_queue_delay=0.15,
             supports_general_heating_status=True,
-            supports_heating_zone_status=False,
             supports_heating_actuator_status=False,
             supports_heating_humidity_request=False,
             supports_interface_zone_requests=False,
@@ -415,7 +413,6 @@ class F455Profile(GatewayProfile):
             supports_hmac=True,
             supports_native_transitions=True,
             supports_extended_frames=True,
-            supports_heating_zone_status=False,
             supported_who=(
                 WHO_LIGHTING,
                 WHO_AUTOMATION,
@@ -563,7 +560,6 @@ class MH200NProfile(GatewayProfile):
             supports_energy_instant_power=False,
             supports_audio=True,
             supports_general_heating_status=True,
-            supports_heating_zone_status=False,
             supports_heating_actuator_status=False,
             supports_heating_humidity_request=False,
             supports_interface_zone_requests=False,
