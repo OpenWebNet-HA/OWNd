@@ -53,7 +53,11 @@ async def main(arguments: dict[str, Any], connection: OWNEventSession) -> None:
 
     try:
         logger.info("Starting connection to the discovered gateway")
-        await connection.connect()
+        # The first connection has to succeed: an unreachable gateway or a
+        # rejected password ends the command with that error, instead of
+        # leaving it retrying forever. Once connected, get_next() still
+        # reconnects by itself after a drop.
+        await connection.connect(raise_on_error=True)
 
         logger.info("Now waiting for events from the gateway (e.g. a cover opening/closing)")
         while True:
