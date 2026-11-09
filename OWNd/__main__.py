@@ -126,8 +126,9 @@ if __name__ == "__main__":
         "logger": _logger,
     }
 
-    loop = asyncio.get_event_loop()
-    main_task = asyncio.ensure_future(main(_arguments, event_session))
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    main_task = loop.create_task(main(_arguments, event_session))
     # loop.set_debug(True)
 
     try:
