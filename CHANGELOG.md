@@ -4,7 +4,7 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 ### Fixed
-- **CLI (`python -m OWNd`)**: no longer crashes at startup on Python 3.14 with `RuntimeError: There is no current event loop in thread 'MainThread'`. The entry point relied on `asyncio.get_event_loop()` creating a loop implicitly, which Python 3.14 removed; it now creates and sets its own loop. The library API is not affected.
+- **CLI (`python -m OWNd`)**: no longer crashes at startup on Python 3.14 with `RuntimeError: There is no current event loop in thread 'MainThread'`. The entry point relied on `asyncio.get_event_loop()` creating a loop implicitly, which Python 3.14 removed; it now runs through `asyncio.run()`. A startup or connection failure (gateway unreachable, wrong password) now ends the command with a traceback and a non-zero exit code instead of leaving it hanging until Ctrl-C, and the event session is closed on every exit path. The library API is not affected.
 
 ### Added
 - **WHO 1 (`OWNLightingEvent`)**: a DIMENSION 4 "100-level status with ON/OFF speed" report is also exposed as `status_level` / `status_speed` (Encyclopedia `who-1-lighting/dimensions.md` "DIMENSION 4 - 100-level status"); `brightness`, `is_on`, `transition` and the coarse-dimmer learning are unchanged.

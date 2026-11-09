@@ -51,16 +51,19 @@ async def main(arguments: dict[str, Any], connection: OWNEventSession) -> None:
     if logger is not None:
         connection.logger = logger
 
-    logger.info("Starting connection to the discovered gateway")
-    await connection.connect()
+    try:
+        logger.info("Starting connection to the discovered gateway")
+        await connection.connect()
 
-    logger.info("Now waiting for events from the gateway (e.g. a cover opening/closing)")
-    while True:
-        message = await connection.get_next()
-        if message:
-            logger.debug("Received: %s", message)
-            if isinstance(message, OWNMessage) and message.is_event:
-                logger.info(message.human_readable_log)
+        logger.info("Now waiting for events from the gateway (e.g. a cover opening/closing)")
+        while True:
+            message = await connection.get_next()
+            if message:
+                logger.debug("Received: %s", message)
+                if isinstance(message, OWNMessage) and message.is_event:
+                    logger.info(message.human_readable_log)
+    finally:
+        await connection.close()
 
 
 if __name__ == "__main__":
@@ -126,20 +129,10 @@ if __name__ == "__main__":
         "logger": _logger,
     }
 
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    main_task = loop.create_task(main(_arguments, event_session))
-    # loop.set_debug(True)
-
     try:
         _logger.info("Starting OWNd.")
-        loop.run_forever()
-        # asyncio.run(main(arguments))
+        asyncio.run(main(_arguments, event_session))
     except KeyboardInterrupt:
-        _logger.info("Stoping OWNd.")
-        main_task.cancel()
-        loop.run_until_complete(event_session.close())
-        loop.stop()
-        loop.close()
+        _logger.info("Stopping OWNd.")
     finally:
         _logger.info("OWNd stopped.")
