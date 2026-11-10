@@ -166,10 +166,12 @@ class OWNDoorEntryCommand(OWNCommand):
     (``*6*0*WHERE##``), Open lock (``*6*10*WHERE##``) and Camera cycling
     (``*6*18*WHERE##``, which needs a preceding Camera ON). The page is
     product-scoped (L4686SDK 1.0.0) and the historical simulator accepts a
-    wider index range, so no range is enforced here. On the emulated gateways
-    of the firmware oracle (no entrance panel on the bus) ``*6*10*0##`` is
-    ``nack`` on all 12 while ``*6*10*4001##`` is forwarded by F453, F453AV,
-    H4684 and MH200; that is not evidence about a physical panel.
+    wider index range, so no range is enforced here. In own-firmware-oracle
+    (suite ``ownd-audit-frames``, 13 emulated gateways, no entrance panel on
+    the bus) ``*6*10*0##`` is ``NACK`` / ``SILENT`` on all 13, while
+    ``*6*10*4001##`` is ``ACK`` / ``OUT`` on F453, F453AV, H4684 and MH200
+    and ``NACK`` / ``SILENT`` on the other 9; that is not evidence about a
+    physical panel.
     """
 
     @classmethod
@@ -714,10 +716,12 @@ class OWNIntercomCommand(OWNCommand):
         #historical-touchscreen-call-model) serializes end-call as
         ``*8*3#KIND#MMTYPE*4LOCAL##``, the literal ``4`` concatenated in front
         of its local address (``411`` for local ``11``), and its parser treats
-        an end-call ``MMTYPE`` of ``3`` as a stop-video notification. On the
-        emulated gateways of the firmware oracle ``*8*3#6#2*4##``,
-        ``*8*3#6#2*11##`` and ``*8*3#6#2*411##`` are all ``nack`` with no
-        intercom on the bus, which decides nothing between the spellings.
+        an end-call ``MMTYPE`` of ``3`` as a stop-video notification. In
+        own-firmware-oracle (suites ``ownd-audit-frames`` and
+        ``intercom-ts10``) ``*8*3#6#2*4##``, ``*8*3#6#2*11##`` and
+        ``*8*3#6#2*411##`` are ``NACK`` / ``SILENT`` on all 13 emulated
+        gateways with no intercom on the bus, which decides nothing between
+        the spellings.
         """
         target = str(where).strip()
         message = cls(f"*8*3#{kind}#{mm_type}*{target}##")
@@ -739,8 +743,10 @@ class OWNIntercomCommand(OWNCommand):
         """Silence multimedia amplifier: ``*8*63*WHERE##``.
 
         The Encyclopedia ``who-8`` README lists WHAT 63 / 64 only as received
-        events of the local amplifier; ``*8*63*11##`` is ``nack`` on the 12
-        emulated gateways with nothing on the bus. Kept as is: no plant trace.
+        events of the local amplifier; ``*8*63*11##`` and ``*8*64*11##`` are
+        ``NACK`` / ``SILENT`` on all 13 emulated gateways of own-firmware-oracle
+        (suite ``intercom-ts10``) with nothing on the bus. Kept as is: no
+        plant trace.
         """
         target = str(where).strip()
         message = cls(f"*8*63*{target}##")
@@ -764,8 +770,9 @@ class OWNIntercomCommand(OWNCommand):
         """Request device/intercom status: ``*#8*WHERE##``.
 
         No WHO 8 status request is on the Encyclopedia ``who-8`` README and
-        ``*#8*11##`` is ``nack`` on the 12 emulated gateways with nothing on
-        the bus. Kept as is: no plant trace.
+        ``*#8*11##`` is ``NACK`` / ``SILENT`` on all 13 emulated gateways of
+        own-firmware-oracle (suite ``intercom-ts10``) with nothing on the bus.
+        Kept as is: no plant trace.
         """
         target = str(where).strip()
         message = cls(f"*#8*{target}##")
