@@ -194,11 +194,10 @@ class OWNGatewayEvent(OWNEvent):
             and len(self._dimension_value) >= 6
             and all(_is_ascii_digits(v) for v in self._dimension_value[:6])
         ):
-            try:
-                self._mac_address = f"{int(self._dimension_value[0]):02x}:{int(self._dimension_value[1]):02x}:{int(self._dimension_value[2]):02x}:{int(self._dimension_value[3]):02x}:{int(self._dimension_value[4]):02x}:{int(self._dimension_value[5]):02x}"  # pylint: disable=line-too-long
-                self._human_readable_log = f"Gateway's MAC address is: {self._mac_address}."
-            except (IndexError, TypeError, ValueError):
-                pass
+            # Six ASCII-digit fields (checked above): int() cannot raise here;
+            # an empty or non-ASCII field leaves the frame untyped instead.
+            self._mac_address = f"{int(self._dimension_value[0]):02x}:{int(self._dimension_value[1]):02x}:{int(self._dimension_value[2]):02x}:{int(self._dimension_value[3]):02x}:{int(self._dimension_value[4]):02x}:{int(self._dimension_value[5]):02x}"  # pylint: disable=line-too-long
+            self._human_readable_log = f"Gateway's MAC address is: {self._mac_address}."
 
         elif self._dimension == 15 and self._dimension_value and _is_ascii_digits(self._dimension_value[0]):
             code = self._dimension_value[0]
