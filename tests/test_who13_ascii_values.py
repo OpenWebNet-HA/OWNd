@@ -67,6 +67,14 @@ def test_ascii_non_digit_tokens_never_reach_the_decoder() -> None:
         assert OWNMessage.parse(frame) is None
 
 
+def test_absurd_uptime_magnitude_stays_untyped() -> None:
+    """ASCII digits pass the gate, but timedelta refuses the magnitude: no crash, no uptime."""
+    message = OWNMessage.parse("*#13**19*99999999999999999999*0*0*0##")
+    assert isinstance(message, OWNGatewayEvent)
+    assert message.uptime is None
+    assert message.human_readable_log == "*#13**19*99999999999999999999*0*0*0##"
+
+
 def test_empty_tokens_do_not_raise() -> None:
     """Empty value tokens never raised on master (the review's cases 1-4); pinned so it stays that way."""
     for frame in ("*#13**12*0**80*1*214*135##", "*#13**19**0*0*0##", "*#13**15*##"):
