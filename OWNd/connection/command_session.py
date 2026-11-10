@@ -43,7 +43,7 @@ DESTRUCTIVE_FRAME_REASON = (
 # (``OWNd.message.is_who22_bare_power_frame``).
 DESTRUCTIVE_WHO22_REASON = (
     "the bare WHO 22 power frame (WHAT 0 / 1 without #mmtype#area, not a published "
-    "form) crashes the sound daemon on eight of the twelve emulated gateways; use "
+    "form) crashes the sound daemon on eight of the twelve pinned emulated gateways; use "
     "turn_on_with_source / "
     "route_source / turn_off_atomic"
 )

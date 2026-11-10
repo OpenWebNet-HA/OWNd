@@ -1059,19 +1059,21 @@ class OWNSoundDiffusionEvent(OWNEvent):
 # ``*22*0#<mmtype>#<area>*WHERE##`` and ``*22*1#<mmtype>#<area>*WHERE##``
 # (WHO 22 PDF 3.1.1 / 3.1.2 for a source target, 3.2.1 for a speaker). The bare
 # form without them, ``*22*1*WHERE##`` / ``*22*0*WHERE##``, is not published and
-# crashes the sound daemon on eight of the twelve emulated gateways (F453, F453AV,
-# F454, F459, F460, F461, MH200N, MyHomeServer1) on every tested target class
-# (source ``2#S``, amplifier ``3#A#P``, area ``4#A``, all ``6``); F450, H4684,
-# MH200 and MH202 drop it without crashing, and the published forms go out on the
-# bus on the eight and on MH202 (own-firmware-oracle suite
-# ``sound-who22-bare-power``, pinned in ``tests/golden/firmware_oracle.json``). The send layer refuses the bare form,
+# crashes the sound daemon on eight of the twelve emulated gateways of the pinned
+# oracle index (F453, F453AV, F454, F459, F460, F461, MH200N, MyHomeServer1) on
+# every tested target class (source ``2#S``, amplifier ``3#A#P``, area ``4#A``,
+# all ``6``); F450, H4684, MH200 and MH202 drop it without crashing, and the
+# published forms go out on the bus on the eight and on MH202 (own-firmware-oracle
+# suite ``sound-who22-bare-power``, pinned in ``tests/golden/firmware_oracle.json``;
+# on the oracle's ``main`` the 3488 HOMETOUCH added since crashes on the same
+# eight frames, nine of thirteen). The send layer refuses the bare form,
 # the same pattern as the WHO 4 dimension 22 crash frame; the parser and the
 # builders stay as they are.
 _WHO22_BARE_POWER_FRAME = re.compile(r"^\*22\*[01]\*[^*]+##$", re.ASCII)
 
 
 def is_who22_bare_power_frame(frame: object) -> bool:
-    """True for a WHO 22 WHAT 0 / 1 frame without ``#mmtype#area`` (crashes 8 of 12 gateways)."""
+    """True for a WHO 22 WHAT 0 / 1 frame without ``#mmtype#area`` (crashes the sound daemon on 8 of the 12 pinned gateways, 9 of 13 on the oracle's main)."""
     return bool(_WHO22_BARE_POWER_FRAME.match(str(frame)))
 
 
@@ -1097,8 +1099,9 @@ class OWNSoundDiffusionCommand(OWNCommand):
         """Build the bare ``*22*1*WHERE##`` power-on frame (unchanged; never sent).
 
         The frame is not a published WHO 22 form and crashes the sound daemon of
-        eight of the twelve emulated gateways (F453, F453AV, F454, F459, F460,
-        F461, MH200N, MyHomeServer1), so every send path refuses it with
+        eight of the twelve emulated gateways in the pinned oracle index (F453,
+        F453AV, F454, F459, F460, F461, MH200N, MyHomeServer1; the 3488 HOMETOUCH
+        on the oracle's main as well), so every send path refuses it with
         ``reason="destructive_frame"`` (:func:`is_who22_bare_power_frame`). The
         published power-on is :meth:`turn_on_with_source`
         (``*22*1#TYPE#SOURCE*WHERE##``), or :meth:`route_source` on a matrix.
@@ -1113,7 +1116,8 @@ class OWNSoundDiffusionCommand(OWNCommand):
         """Build the bare ``*22*0*WHERE##`` power-off frame (unchanged; never sent).
 
         Same evidence as :meth:`turn_on`: the bare form crashes the sound daemon
-        on eight of the twelve emulated gateways and every send path refuses it. The published power-off is
+        on eight of the twelve pinned emulated gateways (nine of thirteen on the
+        oracle's main) and every send path refuses it. The published power-off is
         :meth:`turn_off_atomic` (``*22*0#TYPE#0*WHERE##``).
         """
         target = _require_non_empty_where(where)

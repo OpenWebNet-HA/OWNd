@@ -75,7 +75,7 @@ The firmware oracle fixture captures empirical OpenWebNet protocol execution acr
 - **Schema Version**: `1.1.0` (Format `1.0.0`)
 - **Digest Pin**: `verdicts_sha256`: `e14901b758acdf4a90e7da2458dac86feb51bcabf8d4224ecc4f835299b61113`
 - **Total Unique Input Frames**: 520 frames across 23 test suites
-- **Total Verdict Rows**: 6,644 empirical verdicts across 12 emulated gateways (552–556 rows each)
+- **Total Verdict Rows**: 6,644 empirical verdicts across 12 emulated gateways (552–556 rows each). The pin is the `results/mcp_index.json` of own-firmware-oracle at the time of the `sound-who22-bare-power` run; the oracle's `main` has since grown (13 emulated gateways with the 3488 HOMETOUCH, 30 suites), a refresh is a separate chore.
 - **Fleet Emulation Status**:
   - **12 Emulated**: `F450` (020010), `F453` (010100), `F453AV` (030014), `F454` (020051), `F459` (020105), `F460` (020012), `F461` (020011), `H4684` (020054), `MH200` (020102), `MH200N` (010108), `MH202` (010024), `MyHomeServer1` (028206).
   - **5 Catalogued**: `3550` (030020), `F455` (010102), `L4561N` (040006), `L4686SDK` (012001), `MH201` (030644).
