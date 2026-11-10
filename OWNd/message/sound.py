@@ -272,11 +272,17 @@ class OWNAVCommand(OWNCommand):
         Documentation note (no runtime change): the WHO 7 PDF WHERE table lists
         ``4000`` = Camera 00 .. ``4099`` = Camera 99, which would make single-digit
         cameras two-digit (``5`` -> ``4005``), while the same specification elsewhere
-        allows ``4000..5000`` (ownkb:claim:c003560, ownkb:question:q100005). There
-        is no committed physical WHO 7 video capture; both ``*7*0*405##`` and
-        ``*7*0*4005##`` are NACKed by a live F461 2.0.11 and neither is in the
-        firmware oracle index, so the emitted frame stays as it is until a real
-        camera capture settles what hardware accepts and emits.
+        allows ``4000..5000`` (ownkb:claim:c003560, ownkb:question:q100005; the
+        Encyclopedia ``who-7-multimedia-video/README.md`` treats ``4000..4099``
+        as the enumerated range and the ``5000`` as a source inconsistency). No
+        committed plant capture carries a camera selection frame: the only
+        physical WHO 7 traffic in MyHOME's fixtures is the 3488 touch screen's
+        event frames with an absent WHERE (MyHOME#862), and the F461 "impulse
+        intercom" probes of MyHOME#667 are synthetic. Both ``*7*0*405##`` and
+        ``*7*0*4005##`` are NACKed by a live F461 2.0.11 (no camera on that
+        plant) and neither is in the firmware oracle index, so the emitted frame
+        stays as it is until a real camera capture settles what hardware
+        accepts and emits.
         """
         camera_id: str | int = where
         where_str = str(where)
