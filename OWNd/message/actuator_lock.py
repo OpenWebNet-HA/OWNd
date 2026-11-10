@@ -3,6 +3,26 @@
 Defines WHO 14 Point-to-Point (APL) actuator lock (``*14*0*WHERE##``) and
 unlock (``*14*1*WHERE##``) command and event frames, including optional
 2-digit local bus interface routing (``*14*WHAT*WHERE#4#01..09##``).
+
+Evidence boundaries (Encyclopedia who-14-special-commands/README.md):
+
+- "Scope of the semantics": only the two lock / unlock command frames are
+  established; "No additional WHO 14 WHAT or DIMENSION vocabulary is
+  established". The ``*#14*WHERE##`` status request this module parses
+  (:attr:`OWNActuatorLockCommand.is_status_request`) is therefore
+  **undocumented**: it is read if seen on the bus but no builder emits it
+  (who-14-special-commands/README.md "Scope of the semantics").
+- "Addressing": the Encyclopedia page says WHO 14 has no address grammar of
+  its own, but the WHO 1 PDF (chapter 4 "WHO 14", 4.2 "WHERE Table") gives
+  it one: General ``0``, Area ``A [00, 1-9, 100]`` and Point-to-point
+  ``A;PL``; the builders accept the Point-to-point form only (with the optional
+  ``#4#01..09`` interface); the General and Area forms are documented here
+  and not built, pending committed plant traces of a locked load. The Lighting page gives the local-bus interface as ``01..09`` or
+  ``11..15`` (who-1-lighting/addressing.md "Address scopes"), while the
+  builders here refuse ``11..15`` on firmware evidence (the ``bt_luci`` flex
+  DFA accepts ``#4#0[1-9]`` only, tests/test_who14_actuator_lock.py); the
+  parser still accepts ``*14*0*12#4#11##`` with ``interface == "11"`` so a
+  frame seen on the bus is never lost.
 """
 
 from __future__ import annotations
@@ -28,7 +48,11 @@ ACTUATOR_LOCK_STATE_NAMES: dict[int, str] = {
 def _format_actuator_where(
     where: str | int, interface: str | int | None = None
 ) -> str:
-    """Validate and format a WHO 14 Point-to-Point (APL) WHERE with optional #4#01..09 routing."""
+    """Validate and format a WHO 14 Point-to-Point (APL) WHERE with optional #4#01..09 routing.
+
+    Interfaces ``11..15`` (who-1-lighting/addressing.md) are refused here on
+    ``bt_luci`` evidence (flex DFA ``#4#0[1-9]``); the parser accepts them.
+    """
     if isinstance(where, bool):
         raise ValueError(
             "WHO 14 actuator WHERE must be a Point-to-Point (APL) address, not bool"
@@ -166,7 +190,14 @@ class OWNActuatorLockCommand(OWNCommand):
 
     @property
     def is_status_request(self) -> bool:
-        """True if this frame is a status request (*#14*WHERE##)."""
+        """True if this frame has the status-request shape (``*#14*WHERE##``).
+
+        Undocumented: no Encyclopedia source defines a WHO 14 status request
+        (who-14-special-commands/README.md "Scope of the semantics": the two
+        lock / unlock commands are "ordinary command frames, not DIMENSION
+        operations"); the parser keeps the shape for frames seen on the bus,
+        and there is deliberately no builder for it.
+        """
         return self._message_type == "STATUS_REQUEST"
 
     @property

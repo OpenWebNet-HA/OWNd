@@ -1728,7 +1728,7 @@
     ],
     "source": "openwebnet4j",
     "mcp_valid": true,
-    "mcp_notes": "Complete probe status probe 6: -4.8\u00b0C (extended dimension 12)",
+    "mcp_notes": "Complete probe status probe 6: setpoint after local offset -4.8\u00b0C (dimension 12 is not a measured temperature; openwebnet4j fixture, signed value outside the published 0020..0430)",
     "roundtrip": true,
     "_file": "who04_thermo.yaml"
   },
