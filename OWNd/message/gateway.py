@@ -216,16 +216,14 @@ class OWNGatewayEvent(OWNEvent):
             and len(self._dimension_value) >= 4
             and all(_is_ascii_digits(v) for v in self._dimension_value[:4])
         ):
-            try:
-                self._uptime = _dt.timedelta(
-                    days=int(self._dimension_value[0]),
-                    hours=int(self._dimension_value[1]),
-                    minutes=int(self._dimension_value[2]),
-                    seconds=int(self._dimension_value[3]),
-                )
-                self._human_readable_log = f"Gateway's uptime is: {self._uptime}."
-            except (IndexError, TypeError, ValueError):
-                pass
+            # Four ASCII-digit fields: int() cannot raise here.
+            self._uptime = _dt.timedelta(
+                days=int(self._dimension_value[0]),
+                hours=int(self._dimension_value[1]),
+                minutes=int(self._dimension_value[2]),
+                seconds=int(self._dimension_value[3]),
+            )
+            self._human_readable_log = f"Gateway's uptime is: {self._uptime}."
 
         elif self._dimension == 22:
             self._hour = self._dimension_value[0]

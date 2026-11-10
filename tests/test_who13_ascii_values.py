@@ -40,14 +40,13 @@ def test_fullwidth_digits_leave_the_dimension_untyped(frame: str, attribute: str
         "*#13**#0*\uff11\uff12*00*00*002##",
         "*#13**0*12*00*00*0\uff10\uff11##",
         "*#13**22*12*00*00*0\uff10\uff11*01*01*01*2026##",
-        "*#13**22*12*00*00*001*01*\uff10\uff11*2026##",
-        "*#13**#22*12*00*00*001*01*\uff10\uff11*2026##",
+        "*#13**22*\uff11\uff12*00*00*001*01*01*01*2026##",
+        "*#13**22*12*00*00*001*01*01*01*\uff12\uff10\uff12\uff16##",
+        "*#13**#22*12*00*00*001*01*\uff10\uff11*01*2026##",
     ],
 )
 def test_fullwidth_clock_fields_raise_the_malformed_clock_error(frame: str) -> None:
-    # A fullwidth digit in the Dimension 22 date part is split differently by the frame
-    # grammar and fails the value-count check instead; still the same ValueError family.
-    with pytest.raises(ValueError, match="Invalid gateway (date|time|datetime|timezone)|requires 8 values"):
+    with pytest.raises(ValueError, match="Invalid gateway (date|time|datetime|timezone)"):
         OWNMessage.parse(frame)
 
 
