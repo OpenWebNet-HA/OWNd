@@ -625,15 +625,13 @@ class TestSceneEdgeCases:
         assert str(cmd_st0) == "*#17*0##"
         assert cmd_st0.human_readable_log == "Requesting status of scene 0."
 
-        # Status global (None or empty)
-        cmd_st_global = OWNSceneCommand.status(None)
-        assert str(cmd_st_global) == "*#17##"
-        assert cmd_st_global.scenario is None
-        assert cmd_st_global.human_readable_log == "Requesting global scene status."
-
-        cmd_st_empty = OWNSceneCommand.status("")
-        assert str(cmd_st_empty) == "*#17##"
-        assert cmd_st_empty.human_readable_log == "Requesting global scene status."
+        # None / empty WHERE: the page has no bare *#17## and the firmware
+        # oracle NACKs it on all 12 emulated gateways (own-firmware-oracle
+        # `scenario-who17`), so the builder raises instead of emitting it.
+        with pytest.raises(ValueError, match="non-empty"):
+            OWNSceneCommand.status(None)
+        with pytest.raises(ValueError, match="non-empty"):
+            OWNSceneCommand.status("")
 
     def test_scene_command_parse(self):
         c1 = OWNCommand.parse("*17*1*10##")
@@ -882,10 +880,15 @@ class TestEnergyEdgeCases:
 
 class TestLightingEdgeCases:
     def test_brightness_dim4(self):
-        """Dimension 4 is also brightness."""
+        """Dimension 4 carries the same LEVEL100 level; its trailing value is
+        status_speed and stays on transition as before (dimensions.md
+        "DIMENSION 4 - 100-level status")."""
         msg = OWNEvent.parse("*#1*21*4*150*5##")
         assert isinstance(msg, OWNLightingEvent)
         assert msg.brightness == 50
+        assert msg.status_level == 50
+        assert msg.status_speed == 5
+        assert msg.transition == 5
 
     def test_timer_dimension(self):
         """Dimension 2 = time value."""

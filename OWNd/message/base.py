@@ -72,6 +72,23 @@ def require_non_empty_where(where: str | int) -> str:
 _require_non_empty_where = require_non_empty_where
 
 
+def require_address_where(where: object) -> str:
+    """Reject anything that is not a usable WHERE: not ``str`` / ``int``, ``bool``,
+    ``None``, empty, or containing ``*``, ``##`` or whitespace.
+
+    ``issubclass(bool, int)`` is true, so ``status(True)`` would pass a plain
+    ``str | int`` check and build ``*#1*True##``; ``str(None)`` would build
+    ``*#1*None##``; ``"12##"`` would build ``*#1*12####``. The value is
+    stripped before the check, as :func:`require_non_empty_where` does.
+    """
+    if isinstance(where, bool) or not isinstance(where, (str, int)):
+        raise ValueError(f"where must be a non-empty address without '*', not {where!r}")
+    w = str(where).strip()
+    if not w or "*" in w or "##" in w or any(c.isspace() for c in w):
+        raise ValueError(f"where must be a non-empty address without '*', '##' or spaces, not {where!r}")
+    return w
+
+
 
 class OWNMessage:
     _ACK = re.compile(r"^\*#\*1##$")  #  *#*1##

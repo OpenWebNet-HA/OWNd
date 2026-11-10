@@ -26,7 +26,7 @@ It powers the [Home Assistant MyHOME integration](https://github.com/OpenWebNet-
 
 - **Hardened Dual-Session Architecture**: Decouples real-time bus event monitoring (`OWNEventSession`) from command and query execution (`OWNCommandSession`), preventing command bursts from interrupting event monitoring.
 - **Strongly Typed CEN / CEN+ Command Builders (P2)**: Dedicated fluent builders (`OWNCenCommand`, `OWNCenPlusCommand`) with strict OpenWebNet golden corpus frame parity for short press, start pressure, still held, and release actions across pushbuttons and rotary encoders.
-- **Thermoregulation Central Unit Coordination (P4)**: Dedicated builder support for 3550 (`#0`) and 4695 (`#0#1`) central units (`OWNHeatingCommand.set_central_mode`, `set_central_temperature`, `set_central_antifreeze`, `set_central_thermal_protection`, `set_central_off`), enabling master heating/cooling state distribution.
+- **Thermoregulation Central Unit Coordination (P4)**: Dedicated builder support for 3550 (`#0`) and 4695 (`#0#1`) central units (`OWNHeatingCommand.set_central_mode`, `set_central_temperature`, `set_central_program`, `set_central_scenario`, `set_central_weekend`, `set_central_holiday`, `set_holiday_end_date`, `set_holiday_end_time`), enabling master heating/cooling state distribution.
 - **DALI Tunable White & Color Temperature**: Built-in support for DALI DT8 ballasts (F429 / F461) with Dimension 14 color temperature encoding and bidirectional Kelvin/mireds conversion.
 - **OpenWebNet Golden Corpus Validation**: Cross-checked and validated against the community OpenWebNet Golden Corpus (75+ real-world captured frame scenarios) ensuring exact frame encodings, dimensions, and edge cases.
 - **Serial & USB Dongle Support**: Built-in single-channel serial transport (`AsyncSerialTransport`) for the Legrand 3578 USB/ZigBee interface with in-band event and command-reply demultiplexing.
@@ -75,7 +75,7 @@ OWNd parses OpenWebNet frames and dispatches typed commands and events across th
 <!-- START_WHO_CATALOG_TABLE -->
 | WHO | Subsystem | Description & Capabilities | Event / Command Classes |
 |:---:|:---|:---|:---|
-| **0** | Scenarios | Basic scenario execution (1–32) from control panels, scenario module programming and memory lock states | `OWNScenarioEvent` |
+| **0** | Scenarios | Stored scenario activation (`WHAT 1–16` on F420 and 3456, `17–20` on 3456 only) from control panels, F420 scenario recording / erase and central-unit lock, unavailable and memory-full states | `OWNScenarioEvent` |
 | **1** / **1001** | Lighting | On/off switching, dimming level (0–100%) with automatic legacy pre-09W29 F414 coarse preset fallback (speed 240 / 0xF0), DALI Tunable White (Dimension 14, 2000K–6535K / mireds), status queries, actuator autodiagnostic masks (WHO 1001 Dimensions 7 and 11, from lighting and automation actuators alike) | `OWNLightingCommand`, `OWNLightingEvent`, `OWNLightingDiagnosticEvent` |
 | **2** | Automation | Shutters, blinds, motorized curtains, tilt angles, short & full replies | `OWNAutomationCommand`, `OWNAutomationEvent` |
 | **3** | Load Control | Priority forcing (`*3*2*#N##`, firmware-verified), priority states 0–3, priority status and central-unit measurement requests with typed voltage, current, power, and energy properties (`WHO_3.pdf` v1.0.0 & `bt_energia` register mappings) | `OWNLoadCommand`, `OWNLoadEvent` |
@@ -85,7 +85,7 @@ OWNd parses OpenWebNet frames and dispatches typed commands and events across th
 | **8** | Intercom / Video Door Entry | Video door entry and intercom call signaling, answering, camera and audio control | `OWNIntercomCommand`, `OWNIntercomEvent` |
 | **9** | Auxiliary | Auxiliary channel status (aux 1–9) for remote relays and inter-system signaling | `OWNAuxEvent` |
 | **13** / **1013** | Gateway Diagnostics & Clock | Gateway date/time synchronization, timezone offsets, firmware and diagnostic object model metadata | `OWNGatewayCommand`, `OWNGatewayDiagnosticCommand`, `OWNGatewayEvent`, `OWNGatewayDiagnosticEvent` |
-| **14** | Special Commands / Actuator Lock | Actuator lock (`*14*0*WHERE##`, `$03WW001100`) and unlock (`*14*1*WHERE##`, `$03WW001000`) commands and events across Point-to-Point (`APL`) and `#4#01..09` local bus interface addresses | `OWNActuatorLockCommand`, `OWNActuatorLockEvent` |
+| **14** | Special Commands / Actuator Lock | Actuator lock (`*14*0*WHERE##`, `$03WW001100`) and unlock (`*14*1*WHERE##`, `$03WW001000`) commands and events across Point-to-Point (`APL`) and `#4#01..09` local bus interface addresses (the parser also reads `#4#11..15` and the undocumented `*#14*WHERE##` shape; neither is built) | `OWNActuatorLockCommand`, `OWNActuatorLockEvent` |
 | **15** | CEN Scenarios | Scenario control, pushbutton push/release/extended press events, strongly typed command builders | `OWNCenCommand`, `OWNCENEvent` |
 | **16** / **22** | Sound Diffusion | Multi-source selection, zone activation, volume adjustment, F441 matrix routing, WHO 22 paging and standby | `OWNSoundCommand`, `OWNSoundDiffusionCommand`, `OWNSoundEvent`, `OWNSoundDiffusionEvent`, `OWNAVCommand` |
 | **17** | Scenario Programmer | MH200N / MH202 scenario activation and state monitoring | `OWNSceneCommand`, `OWNSceneEvent` |
@@ -228,7 +228,14 @@ asyncio.run(main())
 ### 4. Strongly Typed CEN / CEN+ & Central Unit Commands (Phase 2)
 
 ```python
-from OWNd.message import OWNCenCommand, OWNCenPlusCommand, OWNHeatingCommand
+from OWNd.message import (
+    CLIMATE_MODE_COOL,
+    CLIMATE_MODE_HEAT,
+    CLIMATE_MODE_OFF,
+    OWNCenCommand,
+    OWNCenPlusCommand,
+    OWNHeatingCommand,
+)
 
 # CEN (WHO=15): Button 2 short press on scenario controller 12
 frame_cen_press = OWNCenCommand.press(where="12", button=2)                # *15*02*12##
@@ -244,13 +251,13 @@ frame_cenplus_held = OWNCenPlusCommand.still_held(where="21", button=5)
 frame_cenplus_rel = OWNCenPlusCommand.release(where="21", button=5)
 
 # Central Unit (WHO=4): Set 3550 (#0) master mode to Heating -> *4*1*#0##
-frame_heat = OWNHeatingCommand.set_central_mode(where="#0", mode="heating")
+frame_heat = OWNHeatingCommand.set_central_mode(where="#0", mode=CLIMATE_MODE_HEAT)  # "heat"
 
 # Central Unit (WHO=4): Set 4695 (#0#1) master mode to Cooling -> *4*0*#0#1##
-frame_cool = OWNHeatingCommand.set_central_mode(where="#0#1", mode="cooling")
+frame_cool = OWNHeatingCommand.set_central_mode(where="#0#1", mode=CLIMATE_MODE_COOL)  # "cool"
 
 # Central Unit (WHO=4): Turn Central Unit OFF -> *4*303*#0##
-frame_off = OWNHeatingCommand.set_central_mode(where="#0", mode="off")
+frame_off = OWNHeatingCommand.set_central_mode(where="#0", mode=CLIMATE_MODE_OFF)  # "off"
 ```
 
 ---
