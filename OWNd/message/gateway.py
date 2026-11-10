@@ -22,12 +22,20 @@ def _validate_gateway_clock_values(
         )
 
 
+def _is_ascii_digits(value: str) -> bool:
+    """Only ASCII digits are a wire value: ``str.isdigit`` also accepts fullwidth,
+    superscript and circled digits, which ``int`` converts (or rejects) but which
+    are not on the bus (Encyclopedia ``protocol/frame-syntax.md``)."""
+    return bool(value) and value.isascii() and value.isdigit()
+
+
 def _gateway_timezone(values: list[str]) -> str:
     """Decode an optional OWN timezone, preserving unspecified local time."""
     value = values[3] if len(values) > 3 else ""
     if not value or value == "999":
         return ""
-    if re.fullmatch(r"[01]\d{2}", value) is None:
+    # re.ASCII: a fullwidth "0０１" matched \d and reached fromisoformat.
+    if re.fullmatch(r"[01]\d{2}", value, re.ASCII) is None:
         raise ValueError(f"Invalid gateway timezone: {value!r}")
     sign = "+" if value[0] == "0" else "-"
     return f"{sign}{value[1:]}:00"
@@ -151,6 +159,8 @@ class OWNGatewayEvent(OWNEvent):
                 if len(self._dimension_value) > 3 and self._dimension_value[3]
                 else None
             )
+            if not all(_is_ascii_digits(v) for v in (self._hour, self._minute, self._second)):
+                raise ValueError(f"Invalid gateway time: {self._dimension_value!r}")
             self._timezone = _gateway_timezone(self._dimension_value)
             self._time = _dt.time.fromisoformat(
                 f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
@@ -163,6 +173,8 @@ class OWNGatewayEvent(OWNEvent):
             self._year = self._dimension_value[3]
             self._month = self._dimension_value[2]
             self._day = self._dimension_value[1]
+            if not all(_is_ascii_digits(v) for v in (self._year, self._month, self._day)):
+                raise ValueError(f"Invalid gateway date: {self._dimension_value!r}")
             self._date = _dt.date(
                 year=int(self._year), month=int(self._month), day=int(self._day)
             )
@@ -177,14 +189,18 @@ class OWNGatewayEvent(OWNEvent):
             self._netmask = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}.{self._dimension_value[3]}"  # pylint: disable=line-too-long
             self._human_readable_log = f"Gateway's netmask is: {self._netmask}."
 
-        elif self._dimension == 12 and len(self._dimension_value) >= 6:
+        elif (
+            self._dimension == 12
+            and len(self._dimension_value) >= 6
+            and all(_is_ascii_digits(v) for v in self._dimension_value[:6])
+        ):
             try:
                 self._mac_address = f"{int(self._dimension_value[0]):02x}:{int(self._dimension_value[1]):02x}:{int(self._dimension_value[2]):02x}:{int(self._dimension_value[3]):02x}:{int(self._dimension_value[4]):02x}:{int(self._dimension_value[5]):02x}"  # pylint: disable=line-too-long
                 self._human_readable_log = f"Gateway's MAC address is: {self._mac_address}."
             except (IndexError, TypeError, ValueError):
                 pass
 
-        elif self._dimension == 15 and self._dimension_value:
+        elif self._dimension == 15 and self._dimension_value and _is_ascii_digits(self._dimension_value[0]):
             code = self._dimension_value[0]
             self._device_type = WHO13_DEVICE_TYPES.get(code, f"Unknown ({code})")
             self._human_readable_log = f"Gateway device type is: {self._device_type}."
@@ -198,7 +214,7 @@ class OWNGatewayEvent(OWNEvent):
         elif (
             self._dimension == 19
             and len(self._dimension_value) >= 4
-            and all(self._dimension_value[:4])
+            and all(_is_ascii_digits(v) for v in self._dimension_value[:4])
         ):
             try:
                 self._uptime = _dt.timedelta(
@@ -224,6 +240,11 @@ class OWNGatewayEvent(OWNEvent):
             self._day = self._dimension_value[5]
             self._month = self._dimension_value[6]
             self._year = self._dimension_value[7]
+            if not all(
+                _is_ascii_digits(v)
+                for v in (self._hour, self._minute, self._second, self._day, self._month, self._year)
+            ):
+                raise ValueError(f"Invalid gateway datetime: {self._dimension_value!r}")
             self._datetime = _dt.datetime.fromisoformat(
                 f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
             )
@@ -392,6 +413,8 @@ class OWNGatewayCommand(OWNCommand):
                 if len(self._dimension_value) > 3 and self._dimension_value[3]
                 else None
             )
+            if not all(_is_ascii_digits(v) for v in (self._hour, self._minute, self._second)):
+                raise ValueError(f"Invalid gateway time: {self._dimension_value!r}")
             self._timezone = _gateway_timezone(self._dimension_value)
             self._time = _dt.time.fromisoformat(
                 f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
@@ -404,6 +427,8 @@ class OWNGatewayCommand(OWNCommand):
             self._year = self._dimension_value[3]
             self._month = self._dimension_value[2]
             self._day = self._dimension_value[1]
+            if not all(_is_ascii_digits(v) for v in (self._year, self._month, self._day)):
+                raise ValueError(f"Invalid gateway date: {self._dimension_value!r}")
             self._date = _dt.date(
                 year=int(self._year), month=int(self._month), day=int(self._day)
             )
@@ -424,6 +449,11 @@ class OWNGatewayCommand(OWNCommand):
             self._day = self._dimension_value[5]
             self._month = self._dimension_value[6]
             self._year = self._dimension_value[7]
+            if not all(
+                _is_ascii_digits(v)
+                for v in (self._hour, self._minute, self._second, self._day, self._month, self._year)
+            ):
+                raise ValueError(f"Invalid gateway datetime: {self._dimension_value!r}")
             self._datetime = _dt.datetime.fromisoformat(
                 f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
             )
@@ -635,17 +665,32 @@ class OWNGatewayCommand(OWNCommand):
 
     @classmethod
     def request_ip_address(cls) -> OWNGatewayCommand:
-        """Request the gateway IP address (Dimension 10)."""
+        """Request the gateway IP address (Dimension 10).
+
+        own-firmware-oracle ``who13-identification``: answered by 8 of the 13
+        emulated gateways and ACKed silently by F453, F453AV and MH200N, but
+        H4684 020054 and MH200 020102 NACK it and crash their worker process.
+        """
         return cls("*#13**10##")
 
     @classmethod
     def request_netmask(cls) -> OWNGatewayCommand:
-        """Request the gateway netmask (Dimension 11)."""
+        """Request the gateway netmask (Dimension 11).
+
+        own-firmware-oracle ``who13-identification``: answered by 8 of the 13
+        emulated gateways and ACKed silently by F453, F453AV and MH200N, but
+        H4684 020054 and MH200 020102 NACK it and crash their worker process.
+        """
         return cls("*#13**11##")
 
     @classmethod
     def request_mac_address(cls) -> OWNGatewayCommand:
-        """Request the gateway MAC address (Dimension 12)."""
+        """Request the gateway MAC address (Dimension 12).
+
+        own-firmware-oracle ``who13-identification``: answered by 8 of the 13
+        emulated gateways and ACKed silently by F453, F453AV and MH200N, but
+        H4684 020054 and MH200 020102 NACK it and crash their worker process.
+        """
         return cls("*#13**12##")
 
     @classmethod

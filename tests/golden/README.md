@@ -21,7 +21,7 @@ Every other source (`legrand-spec`, `encyclopedia`, `openwebnet4j`, `public-read
 - A `builder:` block proves the builder matches the fixture, not that either is right. When both are written in the same change from the same reading, the test only compares the code with itself. Prefer builder parity against a capture or an independent source such as `openwebnet4j`.
 - When a capture arrives for a frame that so far exists only as a spec-derived fixture, add the capture and keep the spec entry only if it agrees.
 
-## Supported Subsystems Catalog (118 Fixtures)
+## Supported Subsystems Catalog (172 Fixtures)
 
 - **Signaling (`who00_signaling.yaml`)**: Gateway ACK (`*#*1##`) and NACK (`*#*0##`).
 - **WHO=0 Scenarios (`who00_scenario.yaml`)**: Basic scenario execution and stop.
@@ -30,7 +30,7 @@ Every other source (`legrand-spec`, `encyclopedia`, `openwebnet4j`, `public-read
 - **WHO=4 Thermoregulation (`who04_thermo.yaml`)**: Measured temperature queries (`21.5°C`), setpoint writes, Antifreeze/Protection modes, and a signed dimension 12 complete-probe-status fixture (setpoint after local offset, `-4.8°C`; not a measured temperature). Two MyHomeServer1 + Home+Control plants (MyHOME#429) add dimension 7, which carries the zone state and setpoint on those plants and is not in `WHO_4 2.pdf`: cooling and heating setpoints, protection (the zone is OFF: `*4*202*Z##` in cooling, `*4*102*Z##` antifreeze at 7.0 °C in heating), the 35.0 °C protection value sent just before a real setpoint, MyHomeServer1's `*#4*Z*#7*...##` program writes, and the dimension 5 re-assert.
 - **WHO=5 Burglar Alarm (`who05_alarm.yaml`)**: Status requests and silent alarm events across zones and central units.
 - **WHO=9 Auxiliary (`who09_auxiliary.yaml`)**: Activation and deactivation of AUX relay channels.
-- **WHO=13 Gateway Management (`who13_gateway.yaml`)**: Firmware versions and gateway internal datetime responses.
+- **WHO=13 Gateway Management (`who13_gateway.yaml`)**: Firmware versions and gateway internal datetime responses; physical F461 2.0.11 replies with the timezone field `999` (Dimensions 0 and 22, decoded as naive time) and its Dimension 16 / 23 / 24 versions (MyHOME#865), and the H/L4684 6.0.11 Dimension 15 code `23` (MyHOME#466).
 - **WHO=15 CEN Pushbuttons (`who15_cen.yaml`)**: Pressure, short release, long release and extended pressure (`*15*BUTTON[#1|#2|#3]*WHERE##`), with a four-digit source address captured on an MH200N + MyHomeServer1 bus (`0512`, MyHOME#624).
 - **WHO=18 Energy Management (`who18_energy.yaml`)**: Instantaneous active power and cumulative energy totalizers.
 - **WHO=25 CEN+ / Dry Contacts (`who25_cen_plus.yaml`)**: CEN+ short press, hold start, hold repeat and release (`*25*21..24#PUSHBUTTON*2OBJECT##`, captured on an MH201) and a dry-contact event captured on an H4890 (`*25*31#1*339##`; on the bus, dry-contact WHEREs start with `3`).

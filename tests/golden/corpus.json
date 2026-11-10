@@ -2773,6 +2773,124 @@
     "_file": "who13_gateway.yaml"
   },
   {
+    "id": "gateway.resp.internal.time.f461.999",
+    "frame": "*#13**0*17*45*24*999##",
+    "direction": "dimension_response",
+    "who": 13,
+    "what": null,
+    "where": "",
+    "dimension": 0,
+    "dimension_values": [
+      "17",
+      "45",
+      "24",
+      "999"
+    ],
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Gateway Management: BTicino F461 FW 2.0.11 answers *#13**0## with the time and the timezone field 999 (no timezone configured), decoded as a naive 17:45:24 (MyHOME#865, tests/fixtures/traces/f461_live_2026-11-04/myhome_sweep_F461_all_2026-11-04T15-45-56.json)",
+    "roundtrip": true,
+    "_file": "who13_gateway.yaml"
+  },
+  {
+    "id": "gateway.resp.internal.datetime.f461.999",
+    "frame": "*#13**22*22*59*16*999*01*26*10*2026##",
+    "direction": "dimension_response",
+    "who": 13,
+    "what": null,
+    "where": "",
+    "dimension": 22,
+    "dimension_values": [
+      "22",
+      "59",
+      "16",
+      "999",
+      "01",
+      "26",
+      "10",
+      "2026"
+    ],
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Gateway Management: BTicino F461 FW 2.0.11 reports Dimension 22 with the timezone field 999 (no timezone configured), weekday Monday (01) 2026-10-26 22:59:16, decoded as a naive datetime (MyHOME, tests/fixtures/traces/f461_who13_clock_tz_live_2026-10-26/myhome_trace_F461_who13_clock_tz_live_2026-10-26.json)",
+    "roundtrip": true,
+    "_file": "who13_gateway.yaml"
+  },
+  {
+    "id": "gateway.resp.firmware.version.f461",
+    "frame": "*#13**16*2*0*11##",
+    "direction": "dimension_response",
+    "who": 13,
+    "what": null,
+    "where": "",
+    "dimension": 16,
+    "dimension_values": [
+      "2",
+      "0",
+      "11"
+    ],
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Gateway Management: BTicino F461 reports firmware 2.0.11 on Dimension 16 (MyHOME#865, f461_live_2026-11-04 sweep)",
+    "roundtrip": true,
+    "_file": "who13_gateway.yaml"
+  },
+  {
+    "id": "gateway.resp.kernel.version.f461",
+    "frame": "*#13**23*5*10*35##",
+    "direction": "dimension_response",
+    "who": 13,
+    "what": null,
+    "where": "",
+    "dimension": 23,
+    "dimension_values": [
+      "5",
+      "10",
+      "35"
+    ],
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Gateway Management: BTicino F461 FW 2.0.11 reports kernel 5.10.35 on Dimension 23 (MyHOME#865, f461_live_2026-11-04 sweep)",
+    "roundtrip": true,
+    "_file": "who13_gateway.yaml"
+  },
+  {
+    "id": "gateway.resp.distribution.version.f461",
+    "frame": "*#13**24*2*26*4##",
+    "direction": "dimension_response",
+    "who": 13,
+    "what": null,
+    "where": "",
+    "dimension": 24,
+    "dimension_values": [
+      "2",
+      "26",
+      "4"
+    ],
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Gateway Management: BTicino F461 FW 2.0.11 reports distribution 2.26.4 on Dimension 24 (MyHOME#865, f461_live_2026-11-04 sweep)",
+    "roundtrip": true,
+    "_file": "who13_gateway.yaml"
+  },
+  {
+    "id": "gateway.resp.model.device_type.hl4684.23",
+    "frame": "*#13**15*23##",
+    "direction": "dimension_response",
+    "who": 13,
+    "what": null,
+    "where": "",
+    "dimension": 15,
+    "dimension_values": [
+      "23"
+    ],
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Gateway Management: BTicino H/L4684 FW 6.0.11 answers *#13**15## with code 23 (MyHOME#466, tests/fixtures/traces/issue_466/config_entry-myhome_HL4684_fw6_0_11.json); decoded through WHO13_DEVICE_TYPES",
+    "roundtrip": true,
+    "_file": "who13_gateway.yaml"
+  },
+  {
     "id": "cen.event.press.btn2.11",
     "frame": "*15*02*11##",
     "direction": "event",
