@@ -170,6 +170,26 @@ class OWNCommandSession(OWNSession):
                     "ok" if ok else "FAILED",
                 )
 
+    def _peer_closed(self) -> bool:
+        """True when the open socket was already closed by the gateway.
+
+        After the peer's FIN the stream reader is at EOF; after an RST it
+        carries the exception and the transport is closing. Both are visible
+        before any read, since the event loop delivered them while the session
+        sat idle. Only asyncio's own streams are inspected: ``False`` when they
+        are missing (``send()`` reopens them anyway) and for streams installed
+        by hand (test doubles, which may model a lost acknowledgement by
+        feeding EOF before the write), so those keep the previous behaviour.
+        """
+        reader, writer = self._stream_reader, self._stream_writer
+        if not isinstance(reader, asyncio.StreamReader) or not isinstance(
+            writer, asyncio.StreamWriter
+        ):
+            return False
+        if reader.at_eof() or reader.exception() is not None:
+            return True
+        return writer.is_closing()
+
     async def _read_command_response(
         self,
     ) -> tuple[OWNSignaling, list[OWNMessage | str]]:
@@ -337,6 +357,22 @@ class OWNCommandSession(OWNSession):
             # (~13.3 s) retry window on session open. This single-attempt path
             # only runs when `send()` is called directly on a closed session or
             # on attempt 2 after a mid-flight transport drop.
+            # A gateway closes a command session it finds idle (a live F461
+            # 2.0.11 after about 30 s, 2026-11-11 plant run). Its FIN or RST
+            # has already reached the reader or the transport before the next
+            # write, so the write would succeed locally and the read would fail
+            # at once, with the frame never received and, written, never
+            # replayed. Nothing has been written yet here, so dropping the dead
+            # socket and reopening below is not a replay.
+            if self._peer_closed():
+                self._logger.debug(
+                    "%s Command session was closed by the gateway while idle; "
+                    "reopening it before `%s`.",
+                    self._log_id,
+                    message,
+                )
+                await self._close_streams()
+
             if self._stream_reader is None or self._stream_writer is None:
                 now = time.monotonic()
                 if (
