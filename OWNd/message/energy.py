@@ -127,7 +127,9 @@ class OWNEnergyEvent(OWNEvent):
                         _message_date = _raw_message_date
                 except (ValueError, IndexError):
                     # Invalid date for the current year (e.g. Feb 29) or
-                    # missing parameters: drop the sample, keep the session.
+                    # missing parameters: drop the sample, keep the session,
+                    # and say so instead of echoing the raw frame.
+                    self._human_readable_log = f"Sensor {self._sensor} is reporting dimension 511 for month/day {'/'.join(self._dimension_param)}, which is not a calendar date; sample ignored."  # pylint: disable=line-too-long
                     return
 
                 if len(self._dimension_value) < 2 or not all(
@@ -181,6 +183,12 @@ class OWNEnergyEvent(OWNEvent):
                             int(self._dimension_value[0]),
                         )
                 except (ValueError, IndexError):
+                    # The series always carries tags 1..31 (WHO 18 PDF 5.1.5
+                    # and 5.1.6, "<Tag> the day from: 1 to 31"): a live F461
+                    # 2.0.11 answers *#18*51*513#11## with a day 31 for
+                    # November. Not a calendar date: drop the sample, keep the
+                    # session, and say so instead of echoing the raw frame.
+                    self._human_readable_log = f"Sensor {self._sensor} is reporting dimension {self._dimension} for day {self._dimension_value[0]} of month {'/'.join(self._dimension_param)}, which is not a calendar date; sample ignored."  # pylint: disable=line-too-long
                     return
                 self._type = MESSAGE_TYPE_DAILY_CONSUMPTION
                 self._daily_consumption["date"] = _message_date
