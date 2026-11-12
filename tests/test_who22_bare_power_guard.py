@@ -5,6 +5,12 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from OWNd.connection import OWNCommandSession, OWNGateway
+from OWNd.connection.command_session import (
+    DESTRUCTIVE_DIM52_REASON,
+    DESTRUCTIVE_FRAME_REASON,
+    DESTRUCTIVE_WHO22_REASON,
+    destructive_frame_reason,
+)
 from OWNd.exceptions import OWNProtocolError
 from OWNd.message import OWNCommand, OWNSoundDiffusionCommand, is_who22_bare_power_frame
 from OWNd.transport.serial import AsyncSerialTransport
@@ -142,3 +148,33 @@ async def test_serial_transport_refuses_the_bare_frame_and_keeps_the_who4_guard(
     with pytest.raises(OWNProtocolError, match="dimension 22"):
         await transport.send("*#4*#0*22##", raise_on_error=True)
     assert writer.written == []
+
+
+@pytest.mark.parametrize(
+    "frame",
+    ["*22*1*3##", "*22*0*3##", "*22*1*3#1#1##", "*22*0*2#1##", "*22*1*#4#1##", "*22*0*0##"],
+)
+def test_classifier_names_the_bare_frame(frame: str) -> None:
+    """``destructive_frame_reason`` (the one classifier of every send path since #157)
+    refuses the bare power frame with the WHO 22 reason."""
+    assert destructive_frame_reason(frame) == DESTRUCTIVE_WHO22_REASON
+
+
+@pytest.mark.parametrize(
+    ("frame", "reason"),
+    [
+        ("*22*1#4#1*3##", None),  # published form with #mmtype#area
+        ("*22*0#4#1*3#1#1##", None),
+        ("*#22*3*1##", None),  # WHO 22 dimension request
+        ("*22*2*3##", None),  # another WHAT
+        ("*#4*2*22##", DESTRUCTIVE_FRAME_REASON),  # master's WHO 4 dimension 22 guard
+        ("*#4*3#4#1*22##", None),  # published split-unit form
+        ("*#18*51*52#2026#10##", DESTRUCTIVE_DIM52_REASON),  # master's WHO 18 dimension 52 guard
+        ("*#18*51*52#26#9##", None),
+        ("*1*1*11##", None),
+        ("*#1*0##", None),
+    ],
+)
+def test_classifier_is_unchanged_for_every_other_frame(frame: str, reason: str | None) -> None:
+    """Folding the WHO 22 guard into the classifier changes nothing for other frames."""
+    assert destructive_frame_reason(frame) == reason

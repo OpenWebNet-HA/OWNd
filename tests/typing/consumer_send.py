@@ -19,8 +19,19 @@ from OWNd.message import (
     OWNLightingCommand,
     OWNMessage,
     OWNSceneCommand,
+    is_who18_dimension_52_crash_form,
+    is_who4_dimension_22_crash_form,
 )
 from OWNd.transport import AsyncSerialTransport, AsyncTcpTransport, OWNTransport
+
+
+def frame_is_refused(frame: str, raw: bytes) -> bool:
+    """A consumer may ask the destructive-frame guards itself before sending; both take str or bytes."""
+    return (
+        is_who4_dimension_22_crash_form(frame)
+        or is_who18_dimension_52_crash_form(frame)
+        or is_who18_dimension_52_crash_form(raw)
+    )
 
 
 async def send_raw_frame(session: OWNCommandSession) -> None:

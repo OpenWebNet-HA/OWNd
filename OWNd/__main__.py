@@ -9,6 +9,7 @@ from typing import Any
 from .message import OWNMessage
 
 from .connection import OWNEventSession, OWNGateway
+from .exceptions import OWNConnectionError
 
 
 async def main(arguments: dict[str, Any], connection: OWNEventSession) -> None:
@@ -37,30 +38,61 @@ async def main(arguments: dict[str, Any], connection: OWNEventSession) -> None:
     raw_logger = arguments.get("logger")
     logger = raw_logger if isinstance(raw_logger, logging.Logger) else logging.getLogger("OWNd")
 
+    cli_info: dict[str, Any] = {
+        "address": address,
+        "port": port,
+        "password": password,
+        "serialNumber": serial_number,
+    }
+
     logger.info("Starting discovery of a supported gateway via SSDP")
-    gateway = await OWNGateway.build_from_discovery_info(
-        {
-            "address": address,
-            "port": port,
-            "password": password,
-            "serialNumber": serial_number,
-        }
-    )
+    gateway = await OWNGateway.build_from_discovery_info(cli_info)
+    if gateway is None:
+        # Without --port, build_from_discovery_info() probes the network
+        # (SSDP, or the HTTP descriptor of --address) and returns None when
+        # nothing answers. Connecting with no gateway would fail on an
+        # assertion in the session, so decide here.
+        if address is None:
+            raise OWNConnectionError(
+                "No OpenWebNet gateway discovered on the network",
+                reason="discovery_failed",
+            )
+        gateway = OWNGateway(cli_info)  # port None -> the profile default, 20000
+        logger.info(
+            "No gateway description found at %s; connecting to it directly on port %s",
+            address,
+            gateway.port,
+        )
+    else:
+        # The HTTP / SSDP probe builds the gateway from its description, which
+        # carries no password; fill in what the command line gave and the
+        # description did not (a description's own serial number stays).
+        if password is not None and gateway.password is None:
+            gateway.password = password
+        if serial_number is not None and gateway.serial_number is None:
+            gateway.serial_number = serial_number
     connection.gateway = gateway
 
     if logger is not None:
         connection.logger = logger
 
-    logger.info("Starting connection to the discovered gateway")
-    await connection.connect()
+    try:
+        logger.info("Starting connection to the discovered gateway")
+        # The first connection has to succeed: an unreachable gateway or a
+        # rejected password ends the command with that error, instead of
+        # leaving it retrying forever. Once connected, get_next() still
+        # reconnects by itself after a drop.
+        await connection.connect(raise_on_error=True)
 
-    logger.info("Now waiting for events from the gateway (e.g. a cover opening/closing)")
-    while True:
-        message = await connection.get_next()
-        if message:
-            logger.debug("Received: %s", message)
-            if isinstance(message, OWNMessage) and message.is_event:
-                logger.info(message.human_readable_log)
+        logger.info("Now waiting for events from the gateway (e.g. a cover opening/closing)")
+        while True:
+            message = await connection.get_next()
+            if message:
+                logger.debug("Received: %s", message)
+                if isinstance(message, OWNMessage) and message.is_event:
+                    logger.info(message.human_readable_log)
+    finally:
+        await connection.close()
 
 
 if __name__ == "__main__":
@@ -126,19 +158,10 @@ if __name__ == "__main__":
         "logger": _logger,
     }
 
-    loop = asyncio.get_event_loop()
-    main_task = asyncio.ensure_future(main(_arguments, event_session))
-    # loop.set_debug(True)
-
     try:
         _logger.info("Starting OWNd.")
-        loop.run_forever()
-        # asyncio.run(main(arguments))
+        asyncio.run(main(_arguments, event_session))
     except KeyboardInterrupt:
-        _logger.info("Stoping OWNd.")
-        main_task.cancel()
-        loop.run_until_complete(event_session.close())
-        loop.stop()
-        loop.close()
+        _logger.info("Stopping OWNd.")
     finally:
         _logger.info("OWNd stopped.")

@@ -14,14 +14,27 @@ from .base import (
 
 
 class OWNCENEvent(OWNEvent):
+    """WHO 15 CEN frames: ``*15*BUTTON[#PHASE]*WHERE##``.
+
+    A frame without a WHAT (the status request ``*#15*WHERE##`` or a reply
+    ``*#15*WHERE*...##`` seen on a monitor session) carries no button: it is
+    not a press (``is_pressed`` is ``False``, as ``OWNAlarmEvent``,
+    ``OWNDoorEntryEvent`` and ``OWNIntercomEvent`` already fail closed on a
+    missing WHAT) and the log says so. It used to read as "Button None ...
+    has been pressed".
+    """
+
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
         self._state: str | None = self._what_param[0] if self._what_param else None
         self.push_button = self._what
         self.object = self._where
+        self._has_button = self._what is not None
 
-        if self._state is None:
+        if not self._has_button:
+            self._human_readable_log = f"CEN object {self.object}{self._interface_log_text} sent no button: the frame carries no WHAT (a *#15*WHERE## status form, not a pushbutton event)."  # pylint: disable=line-too-long
+        elif self._state is None:
             self._human_readable_log = f"Button {self.push_button} of CEN object {self.object}{self._interface_log_text} has been pressed."  # pylint: disable=line-too-long
         elif int(self._state) == 3:
             self._human_readable_log = f"Button {self.push_button} of CEN object {self.object}{self._interface_log_text} is being held pressed."  # pylint: disable=line-too-long
@@ -34,7 +47,7 @@ class OWNCENEvent(OWNEvent):
 
     @property
     def is_pressed(self) -> bool:
-        return self._state is None
+        return self._has_button and self._state is None
 
     @property
     def is_held(self) -> bool:
@@ -51,20 +64,46 @@ class OWNCENEvent(OWNEvent):
 
 
 class OWNDryContactEvent(OWNEvent):
+    """WHO 25 WHAT 31 / 32 dry contact and IR frames.
+
+    ``sensor`` strips a leading ``3`` from the WHERE (``*25*31#1*339##`` ->
+    ``39``), the form every committed capture carries (``31``, ``33``,
+    ``331..339`` on MH200N, MH202, F454 and H4890; golden fixture
+    ``dry_contact.event.on.339``). Documentation context: the WHO 25 PDF
+    WHERE table writes the published WHERE with that prefix, ``3`` +
+    ``[1-201]`` (automation dry-contact interface) or ``3`` + ``[1-9][1-9]``
+    (alarm / IR interface, zone and sensor), and the Encyclopedia
+    ``functional/who-25-transversal/dry-contact-ir.md`` describes the sensor
+    number without it. ``OWNDryContactCommand.status`` sends the WHERE as
+    given.
+    """
+
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
-        self._state = 1 if self._what == 31 else 0
+        # No WHAT, no state: ``*#25*WHERE##`` is the status request (and
+        # ``*#25*WHERE*...##`` a dimension form), not a WHAT 31 / 32 report.
+        # It used to read as OFF with a detection.
+        self._state: int | None = (
+            None if self._what is None else (1 if self._what == 31 else 0)
+        )
         try:
             self._detection = int(self._what_param[0]) if self._what_param else 1
         except (IndexError, TypeError, ValueError):
             self._detection = 1
+        if self._state is None:
+            self._detection = 0
         where = self._where or ""
         self._sensor = (
             where[1:] if len(where) > 1 and where.startswith("3") else where
         )
 
-        if self._detection == 1:
+        if self._state is None:
+            self._human_readable_log = (
+                f"Sensor {self._sensor} sent no state: the frame carries no WHAT "
+                "(a *#25*WHERE## status form, not a WHAT 31 / 32 report)."
+            )
+        elif self._detection == 1:
             self._human_readable_log = (
                 f"Sensor {self._sensor} detected {'ON' if self._state == 1 else 'OFF'}."
             )
@@ -74,7 +113,10 @@ class OWNDryContactEvent(OWNEvent):
             )
 
     @property
-    def is_on(self) -> bool:
+    def is_on(self) -> bool | None:
+        """``True`` for WHAT 31, ``False`` for WHAT 32, ``None`` when the frame has no WHAT."""
+        if self._state is None:
+            return None
         return self._state == 1
 
     @property
@@ -247,6 +289,10 @@ class OWNCenCommand(OWNCommand):
 
     @staticmethod
     def _button(button: int | str) -> str:
+        # ``int(True)`` is 1 and ``int(1.9)`` is 1: refuse bool and fractional
+        # values instead of silently building another button.
+        if isinstance(button, bool) or (isinstance(button, float) and button % 1 != 0):
+            raise ValueError("CEN button must be an integer between 0 and 31")
         value = int(button)
         if not 0 <= value <= 31:
             raise ValueError("CEN button must be between 0 and 31")
@@ -305,10 +351,22 @@ class OWNCenCommand(OWNCommand):
 
 
 class OWNCenPlusCommand(OWNCommand):
-    """Command builder for WHO=25 CEN+ scenario pushbuttons."""
+    """Command builder for WHO=25 CEN+ scenario pushbuttons (``WHAT 21..24``).
+
+    Documentation context: the WHO 15/25 PDF WHAT table also lists the
+    rotary-selector codes ``WHAT 25..28`` (slow / fast clockwise, slow / fast
+    counter-clockwise) and marks them writable, but its action grammar is
+    written for ``21..24`` only and no committed plant trace shows a client
+    sending ``25..28``, so no builder emits them. The Encyclopedia
+    ``functional/who-25-transversal/cen-plus.md`` gives the WHERE as the
+    prefix ``2`` followed by an Object ``0..2047`` and the pushbutton as
+    ``0..31``; only the pushbutton range is enforced here.
+    """
 
     @staticmethod
     def _button(button: int | str) -> int:
+        if isinstance(button, bool) or (isinstance(button, float) and button % 1 != 0):
+            raise ValueError("CEN+ button must be an integer between 0 and 31")
         value = int(button)
         if not 0 <= value <= 31:
             raise ValueError("CEN+ button must be between 0 and 31")

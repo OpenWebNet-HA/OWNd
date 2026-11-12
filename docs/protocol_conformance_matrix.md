@@ -27,16 +27,16 @@ To prevent divergence and eliminate guesswork, every protocol frame and capabili
 | **-** | **Signaling** | Gateway ACK / NACK | `*#*1##`, `*#*0##` | Valid | Matched | **VERIFIED (100%)** |
 | **0** | **Scenarios** | Execute, Stop, Start | `*0*1*1##`, `*0*2*1##` | Valid | Matched | **VERIFIED (100%)** |
 | **1** | **Lighting** | ON/OFF, Status, Speed Dimming, Private Bus (`#4#01`), Dimension writes | `*1*1*0311#4#01##`, `*1*1#5*12##`, `*#1*31*#1*150*5##` | Valid | Matched | **VERIFIED (100%)** |
-| **2** | **Automation** | Shutter UP/DOWN/STOP, Bus Routing (`#4#01`), Slat Tilt, Position % | `*2*1*31#4#01##`, `*#2*31*#11#001*100##`, `*2*2*12##` | Valid | Matched | **VERIFIED (100%)** |
-| **4** | **Thermoregulation** | Probe queries (`21.5°C`), Setpoints, Antifreeze, Negative Temp (`-4.8°C`) | `*#4*1*0*0215##`, `*#4*6*12*1048*3##`, `*#4*1*#14*0200*1##` | Valid | Matched | **VERIFIED (100%)** |
+| **2** | **Automation** | Shutter UP/DOWN/STOP, Bus Routing (`#4#01`), Go-to-level Position % (`#11#PRIORITY`) | `*2*1*31#4#01##`, `*#2*31*#11#001*100##`, `*2*2*12##` | Valid | Matched | **VERIFIED (100%)** |
+| **4** | **Thermoregulation** | Probe queries (`21.5°C`), Setpoints, Antifreeze, Dimension 12 setpoint after offset (`-4.8°C`) | `*#4*1*0*0215##`, `*#4*6*12*1048*3##`, `*#4*1*#14*0200*1##` | Valid | Matched | **VERIFIED (100%)** |
 | **5** | **Burglar Alarm** | Zone status, CU status, Silent alarms, System arm/disarm | `*5*1*1##`, `*#5*1##`, `*5*2*2##` | Valid | Matched | **VERIFIED (100%)** |
 | **9** | **Auxiliary** | Relay ON/OFF commands across auxiliary channels | `*9*1*1##`, `*9*0*1##` | Valid | Matched | **VERIFIED (100%)** |
-| **13** | **Gateway Mgmt** | Firmware version, Gateway internal datetime requests | `*#13*0*0##`, `*#13*0*22##` | Valid | Matched | **VERIFIED (100%)** |
+| **13** | **Gateway Mgmt** | Firmware version, Gateway internal datetime requests | `*#13**0##`, `*#13**22##` | Valid | Matched | **VERIFIED (100%)** |
 | **15** | **CEN Scenarios** | Press, short release, long release, extended hold | `*15*01*73##`, `*15*01#1*73##`, `*15*01#2*0110##`, `*15*01#3*0110##` | Valid | Matched | **VERIFIED (100%)** |
-| **18** | **Energy Mgmt** | Instantaneous active power (W), Cumulative energy (kWh) | `*#18*51*113##`, `*#18*51*51##`, `*#18*51*52#26#9##` | Valid | Matched | **VERIFIED (100%)** |
+| **18** | **Energy Mgmt** | Instantaneous active power (W), Cumulative energy (Wh) as read by OWNd (PDF: DIMENSION 51..54 'Watt', only 72 'Wh') | `*#18*51*113##`, `*#18*51*51##`, `*#18*51*52#26#9##` | Valid | Matched | **VERIFIED (100%)** |
 | **25** | **CEN+ / Dry Contacts**| Short press; start, hold and release of an extended press; WHERE `2` + object 0–2047 | `*25*21#1*21##`, `*25*22#1*21##`, `*25*23#1*21##`, `*25*24#1*21##` | Valid | Matched | **VERIFIED (100%)** |
 
-Sources for the examples changed in [OWNd#77](https://github.com/OpenWebNet-HA/OWNd/issues/77). The MyHomeServer1 firmware, run on an emulated bus, produces a bus frame for each of them and refuses the examples they replace. The WHO 15 press and short release (`*15*01*73##`, `*15*01#1*73##`) were captured on an MH200N + MyHomeServer1 bus in [MyHOME#541](https://github.com/OpenWebNet-HA/MyHOME/issues/541). Long release and extended hold (`#2`, `#3`) rest on the firmware alone. The WHO 25 examples are an MH201 capture from [MyHOME#418](https://github.com/OpenWebNet-HA/MyHOME/issues/418). The energy request `*#18*51*52#26#9##` was accepted by a real MyHomeServer1.
+Sources for the examples changed in [OWNd#77](https://github.com/OpenWebNet-HA/OWNd/issues/77). The MyHomeServer1 firmware, run on an emulated bus, produces a bus frame for each of them and refuses the examples they replace. The WHO 15 press and short release (`*15*01*73##`, `*15*01#1*73##`) were captured on an MH200N + MyHomeServer1 bus in [MyHOME#541](https://github.com/OpenWebNet-HA/MyHOME/issues/541). Long release and extended hold (`#2`, `#3`) rest on the firmware alone. The WHO 25 examples are an MH201 capture from [MyHOME#418](https://github.com/OpenWebNet-HA/MyHOME/issues/418). The energy request `*#18*51*52#26#9##` was accepted by a real MyHomeServer1. The WHO 13 reads use the published empty-`WHERE` form `*#13**DIMENSION##` (Encyclopedia who-13-integration-gateway/dimensions.md "Read form"): in own-firmware-oracle (`ownd-audit-frames` and `who13-clock`) all thirteen emulated gateways answer `*#13**0##` and `*#13**22##` with ACK and the current time, while the `WHERE 0` spelling `*#13*0*0##` this table used to show is `nack, silent` on all thirteen (`ownd-audit-frames`); `OWNGatewayCommand.request_time()` and the event keepalive emit `*#13**0##`.
 
 ---
 
@@ -54,9 +54,9 @@ Sources for the examples changed in [OWNd#77](https://github.com/OpenWebNet-HA/O
 - **Observation**: In `openwebnet4j`, frame `*5*7*##` (Alarm) synthesizes `WHERE = '0'` when the address is omitted.
 - **Verifiable Truth**: Official Legrand specification PDFs require a target address for WHERE in WHO=5 command frames. `openwebnet-mcp` rejects `*5*7*##` as malformed syntax. OWNd conforms strictly to the standard by returning `None` for omitted mandatory fields.
 
-### 3.4 Extended Thermoregulation (Dimension 12 Negative Temperatures)
-- **Observation**: Physical temperature probes in outdoor zones report negative temperatures via Dimension 12: `*#4*6*12*1048*3##`.
-- **Verifiable Truth**: The value parameter `1048` represents `-4.8°C` (the initial `1` indicates negative sign; `048` is tenths of a degree). OWNd decodes this mathematically into `_measured_temperature = -4.8`.
+### 3.4 Extended Thermoregulation (Dimension 12 Setpoint After Local Offset)
+- **Observation**: Dimension 12 is the complete probe status: its value is the zone's setpoint after the local offset, not a measured temperature (Encyclopedia `who-4-temperature-control/dimensions.md`, "DIMENSION 12 - complete probe status": `*#4*WHERE*12*T*3##`, `T` in `0020..0430`; measured temperatures are Dimension 0). The openwebnet4j fixture `*#4*6*12*1048*3##` carries a signed value the published range does not include.
+- **Verifiable Truth**: The value parameter `1048` decodes as `-4.8°C` with the `SXXX` sign rule (the initial `1` indicates negative sign; `048` is tenths of a degree). OWNd stores it in `local_set_temperature` (`message_type` `local_target_temperature`); `main_temperature` stays `None`.
 
 ---
 

@@ -226,6 +226,29 @@ class OWNAlarmCommand(OWNCommand):
     disarm.
 
     The arm/disarm/trigger builders below are kept for API compatibility.
+
+    Documentation context only (no committed plant trace backs any of it, so
+    nothing below changes what the builders emit):
+
+    - The archived touchscreen client (libqtdevices, TS10) arms and disarms
+      with password frames rather than the WHAT 1 / 2 / 8 / 9 state codes:
+      ``*5*36#PASSWORD*0##`` toggles the armed state and
+      ``*5*50#PASSWORD#MASK*0##`` sets the zone partialization (eight textual
+      bits for zones 1..8, ``1`` = partialized). The Encyclopedia
+      (``functional/who-5-alarm/protocol.md`` #historical-password-controls,
+      #write-support) lists WHAT 1, 2, 8, 9 and 17 as states / events and says
+      their presence in the vocabulary is not permission to send them as
+      controls. OWNd has no builder for the password frames: the password
+      format and acceptance rules are not established by any capture.
+    - In own-firmware-oracle (suite ``ownd-audit-frames``, 13 emulated
+      gateways, no central unit on the bus) ``*5*1*0##``, ``*5*2*0##``,
+      ``*5*8*0##``, ``*5*9*0##`` and ``*5*17*0##`` are ``NACK`` / ``SILENT`` on
+      10 of 13 and ``ACK`` / ``OUT`` (a central-unit poll,
+      ``$06D1C10403BB000000``) on F453, MH200 and MH200N; ``*5*36#12345*0##``
+      is ``ACK`` / ``OUT`` (password telegrams) on H4684 and MH202 and
+      ``NACK`` / ``SILENT`` on the other 11. ``*5*50#PASSWORD#MASK*0##`` has
+      not been replayed in the oracle. Empty-bus ACKs / NACKs say nothing
+      about what a real central unit does with them.
     """
 
     @classmethod
