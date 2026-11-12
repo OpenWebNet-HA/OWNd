@@ -151,6 +151,43 @@
     method: set_central_mode
     args: ["#0", "off"]
 
+- id: thermo.capture.central.restore_last_program.cu99
+  frame: "*4*3100*#0##"
+  direction: command
+  who: 4
+  what: 3100
+  where: "#0"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Last set up weekly program activation command (WHO_4 2.pdf 1.6.8 p. 33; Encyclopedia who-4-temperature-control/what.md 'Restore last weekly program' 3100). Sent through an F461 2.0.11 to a 3550 that was OFF (*4*203*#0##): ACK after 97 ms, and within 0.15 s the 3550 put *4*2101*#0##, *4*21*#0##, *4*31*#0##, *4*22*#0## on the bus (seen on the F461 and on an F455 1.0.76 event monitor), then the zones' program setpoints (*#4*2*#14*0200*2##, *#4*3*#14*0200*2##); *#4*#0## 3 s later answered *4*2101*#0##, *4*21*#0##, *4*31*#0##. Repeated once (ACK 111 ms, same answer). Test plant, 2026-11-12 16:08:55 and 16:09:35 UTC. Built by set_central_mode('#0', 'auto')"
+  roundtrip: true
+  builder:
+    class: OWNHeatingCommand
+    method: set_central_mode
+    args: ["#0", "auto"]
+
+- id: thermo.capture.central.program1.conditioning.cu99
+  frame: "*4*2101*#0##"
+  direction: event
+  who: 4
+  what: 2101
+  where: "#0"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "3550 report 'weekly program 1, conditioning' (WHO_4 2.pdf 1.6.8 p. 33 monitor table: what = [2101 - 2103] when the central unit is in conditioning mode), the first frame of the 3550's answer to *4*3100*#0## (2026-11-12 16:08:55.35 UTC, 0.13 s after the ACK) and the read-back state of the central unit before the OFF of the same run. OWNd decodes mode 'cool', program 1"
+  roundtrip: true
+
+- id: thermo.capture.central.auto_generic.cu99.no_effect
+  frame: "*4*311*#0##"
+  direction: command
+  who: 4
+  what: 311
+  where: "#0"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Generic automatic WHAT 311 addressed to the 99-zone central unit, what set_central_mode('#0', 'auto') built before 3100. Sent by Home Assistant through an F461 2.0.11 to a 3550 that was OFF: ACKed, forwarded on the bus (F455 1.0.76 event monitor 2026-11-12 16:08:35.04 UTC), no 3550 frame followed and *#4*#0## answered *4*203*#0##, *4*21*#0##, *4*31*#0## 2 s and 8 s later; same in a second round at 16:09:15 UTC. The Encyclopedia lists 311 as the zone form *4*311*#WHERE## (what.md 'automatic generic operation ... for the selected zone'). Kept as the record of the frame that does nothing on this central unit; no builder emits it for #0 any more"
+  roundtrip: true
+
 - id: thermo.cmd.central.setpoint.cu99.205
   frame: "*#4*#0*#14*0205*1##"
   direction: dimension_write

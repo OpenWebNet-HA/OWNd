@@ -1313,9 +1313,25 @@ class OWNHeatingCommand(OWNCommand):
         unit (libqtdevices ``thermal_device.cpp``): 303 generic off, 1 winter,
         0 summer, 302 generic protection. 102 is the winter (antifreeze)
         protection; 202, the summer protection, is not offered because it
-        would also switch the plant to summer. 311 is the generic automatic
-        command libqtdevices sends to zones; on ``#0`` it puts every zone back
-        on the central unit's program.
+        would also switch the plant to summer.
+
+        ``auto`` on the 99-zone central unit ``#0`` is the published "last set
+        up weekly program activation command" ``*4*3100*#0##`` (WHO_4 2.pdf
+        1.6.8 p. 33; Encyclopedia ``who-4-temperature-control/what.md`` "Restore
+        last weekly program" 3100). A live 3550 behind an F461 2.0.11 answered it
+        within 0.15 s with ``*4*2101*#0##``, ``*4*21*#0##``, ``*4*31*#0##``,
+        ``*4*22*#0##`` and put the zones back under the program (2026-11-12
+        16:08:55 and 16:09:35 UTC, twice), while ``*4*311*#0##`` sent 20 s earlier
+        was ACKed and forwarded on the bus but changed nothing (``*#4*#0##`` still
+        answered ``*4*203*#0##`` 2 s and 8 s later, both rounds). 311 is the zone
+        form (``*4*311*#Z##``, what.md "automatic generic operation ... for the
+        selected zone"; libqtdevices sends it to zones) and is kept for every
+        other WHERE (4-zone centrals ``#0#C``), where no trace exists.
+
+        ``heat`` / ``cool`` build ``*4*1*#0##`` / ``*4*0*#0##``, the season values
+        of the 1.9.2 / 1.9.3 operation-mode tables (p. 63-64): a 3550 already in
+        the conditioning season answered nothing to ``*4*0*#0##`` (same run,
+        16:08:46 and 16:09:26 UTC); a season switch was not tried. Unchanged.
 
         ``where`` is the central unit itself: ``#0`` (3550, 99 zones) or
         ``#0#C`` with ``C`` the 4695 unit's configured zone 1..99 or
@@ -1346,6 +1362,14 @@ class OWNHeatingCommand(OWNCommand):
         mode_code = mode_map.get(mode)
         if mode_code is None:
             raise ValueError(f"Unsupported central unit mode: {mode}")
+        if mode == CLIMATE_MODE_AUTO and where == "#0":
+            # Live 3550 (2026-11-12): *4*311*#0## changes nothing, *4*3100*#0## restores
+            # the last weekly program (WHO_4 2.pdf 1.6.8).
+            message = cls(f"*4*3100*{where}##")
+            message._human_readable_log = (
+                f"Setting Central Unit {where} back to its last weekly program (code 3100)."
+            )
+            return message
         message = cls(f"*4*{mode_code}*{where}##")
         message._human_readable_log = (
             f"Setting Central Unit {where} mode to '{mode}' (code {mode_code})."

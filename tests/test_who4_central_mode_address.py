@@ -81,8 +81,9 @@ def test_set_central_mode_refuses_a_plain_zone_for_every_mode(mode: str) -> None
     ("where", "frame"),
     [
         # ``#0``: the 3550 99-zone central unit (golden corpus
-        # ``thermo.cmd.central.mode.*.cu99``).
-        ("#0", "*4*311*#0##"),
+        # ``thermo.cmd.central.mode.*.cu99``); ``auto`` is the published program
+        # restore 3100 (``thermo.capture.central.restore_last_program.cu99``).
+        ("#0", "*4*3100*#0##"),
         # ``#0#C``: the 4695 4-zone central unit ``C``, 1..99 or 01..99
         # (MyHOME_Suite ``#0#[ZA][ZB]``, MHCatalogue 4695 ``ZAZB_CENTRAL``,
         # golden corpus ``#0#1``).
@@ -93,8 +94,8 @@ def test_set_central_mode_refuses_a_plain_zone_for_every_mode(mode: str) -> None
         ("#0#12", "*4*311*#0#12##"),
         ("#0#99", "*4*311*#0#99##"),
         # Surrounding whitespace is stripped, as ``actuators_status`` does.
-        (" #0 ", "*4*311*#0##"),
-        ("#0\n", "*4*311*#0##"),
+        (" #0 ", "*4*3100*#0##"),
+        ("#0\n", "*4*3100*#0##"),
         (" #0#1\t", "*4*311*#0#1##"),
     ],
 )
@@ -102,9 +103,11 @@ def test_set_central_mode_keeps_central_addresses(where: str, frame: str) -> Non
     command = OWNHeatingCommand.set_central_mode(where, CLIMATE_MODE_AUTO)
 
     assert str(command) == frame
-    assert command.human_readable_log == (
-        f"Setting Central Unit {where.strip()} mode to 'auto' (code 311)."
-    )
+    if "*3100*" in frame:
+        expected_log = f"Setting Central Unit {where.strip()} back to its last weekly program (code 3100)."
+    else:
+        expected_log = f"Setting Central Unit {where.strip()} mode to 'auto' (code 311)."
+    assert command.human_readable_log == expected_log
 
 
 @pytest.mark.parametrize(
