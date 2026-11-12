@@ -22,12 +22,20 @@ def _validate_gateway_clock_values(
         )
 
 
+def _is_ascii_digits(value: str) -> bool:
+    """Only ASCII digits are a wire value: ``str.isdigit`` also accepts fullwidth,
+    superscript and circled digits, which ``int`` converts (or rejects) but which
+    are not on the bus (Encyclopedia ``protocol/frame-syntax.md``)."""
+    return bool(value) and value.isascii() and value.isdigit()
+
+
 def _gateway_timezone(values: list[str]) -> str:
     """Decode an optional OWN timezone, preserving unspecified local time."""
     value = values[3] if len(values) > 3 else ""
     if not value or value == "999":
         return ""
-    if re.fullmatch(r"[01]\d{2}", value) is None:
+    # re.ASCII: a fullwidth "0０１" matched \d and reached fromisoformat.
+    if re.fullmatch(r"[01]\d{2}", value, re.ASCII) is None:
         raise ValueError(f"Invalid gateway timezone: {value!r}")
     sign = "+" if value[0] == "0" else "-"
     return f"{sign}{value[1:]}:00"
@@ -36,7 +44,15 @@ def _gateway_timezone(values: list[str]) -> str:
 # WHO 13 Dimension 15: Functional gateway model/device type (*#13**15*<TYPE>##).
 # Grounded in published BTicino protocol tables, physical plant captures,
 # and firmware reverse engineering (bt_device dispatch table at VA 0x02003194,
-# selector r4 == 0).
+# selector r4 == 0). The published table (Encyclopedia
+# who-13-integration-gateway/dimensions.md "DIMENSION 15 - Device type") has
+# 2, 4, 6, 7, 11 and 13 and says it is not exhaustive; the other codes come
+# from firmware reverse engineering and plant captures. A code that is not in
+# this table stays an unknown code (``device_type`` reads ``Unknown (N)``,
+# ``device_type_code`` keeps ``N``), and a non-unique code (``200``) is not a
+# product identity: ``device_type`` lists the gateways known to share it and
+# WHO 1013 Dimension 1 tells them apart (capabilities.md
+# "Product identification").
 WHO13_DEVICE_TYPES: dict[str, str] = {
     "2": "MHServer",
     "4": "MH200",
@@ -143,6 +159,8 @@ class OWNGatewayEvent(OWNEvent):
                 if len(self._dimension_value) > 3 and self._dimension_value[3]
                 else None
             )
+            if not all(_is_ascii_digits(v) for v in (self._hour, self._minute, self._second)):
+                raise ValueError(f"Invalid gateway time: {self._dimension_value!r}")
             self._timezone = _gateway_timezone(self._dimension_value)
             self._time = _dt.time.fromisoformat(
                 f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
@@ -155,6 +173,8 @@ class OWNGatewayEvent(OWNEvent):
             self._year = self._dimension_value[3]
             self._month = self._dimension_value[2]
             self._day = self._dimension_value[1]
+            if not all(_is_ascii_digits(v) for v in (self._year, self._month, self._day)):
+                raise ValueError(f"Invalid gateway date: {self._dimension_value!r}")
             self._date = _dt.date(
                 year=int(self._year), month=int(self._month), day=int(self._day)
             )
@@ -169,14 +189,17 @@ class OWNGatewayEvent(OWNEvent):
             self._netmask = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}.{self._dimension_value[3]}"  # pylint: disable=line-too-long
             self._human_readable_log = f"Gateway's netmask is: {self._netmask}."
 
-        elif self._dimension == 12 and len(self._dimension_value) >= 6:
-            try:
-                self._mac_address = f"{int(self._dimension_value[0]):02x}:{int(self._dimension_value[1]):02x}:{int(self._dimension_value[2]):02x}:{int(self._dimension_value[3]):02x}:{int(self._dimension_value[4]):02x}:{int(self._dimension_value[5]):02x}"  # pylint: disable=line-too-long
-                self._human_readable_log = f"Gateway's MAC address is: {self._mac_address}."
-            except (IndexError, TypeError, ValueError):
-                pass
+        elif (
+            self._dimension == 12
+            and len(self._dimension_value) >= 6
+            and all(_is_ascii_digits(v) for v in self._dimension_value[:6])
+        ):
+            # Six ASCII-digit fields (checked above): int() cannot raise here;
+            # an empty or non-ASCII field leaves the frame untyped instead.
+            self._mac_address = f"{int(self._dimension_value[0]):02x}:{int(self._dimension_value[1]):02x}:{int(self._dimension_value[2]):02x}:{int(self._dimension_value[3]):02x}:{int(self._dimension_value[4]):02x}:{int(self._dimension_value[5]):02x}"  # pylint: disable=line-too-long
+            self._human_readable_log = f"Gateway's MAC address is: {self._mac_address}."
 
-        elif self._dimension == 15 and self._dimension_value:
+        elif self._dimension == 15 and self._dimension_value and _is_ascii_digits(self._dimension_value[0]):
             code = self._dimension_value[0]
             self._device_type = WHO13_DEVICE_TYPES.get(code, f"Unknown ({code})")
             self._human_readable_log = f"Gateway device type is: {self._device_type}."
@@ -190,8 +213,10 @@ class OWNGatewayEvent(OWNEvent):
         elif (
             self._dimension == 19
             and len(self._dimension_value) >= 4
-            and all(self._dimension_value[:4])
+            and all(_is_ascii_digits(v) for v in self._dimension_value[:4])
         ):
+            # Four ASCII-digit fields: int() cannot raise, but timedelta does
+            # on an absurd magnitude (tests/test_message_exhaustive.py).
             try:
                 self._uptime = _dt.timedelta(
                     days=int(self._dimension_value[0]),
@@ -200,7 +225,7 @@ class OWNGatewayEvent(OWNEvent):
                     seconds=int(self._dimension_value[3]),
                 )
                 self._human_readable_log = f"Gateway's uptime is: {self._uptime}."
-            except (IndexError, TypeError, ValueError):
+            except (OverflowError, ValueError):
                 pass
 
         elif self._dimension == 22:
@@ -216,6 +241,11 @@ class OWNGatewayEvent(OWNEvent):
             self._day = self._dimension_value[5]
             self._month = self._dimension_value[6]
             self._year = self._dimension_value[7]
+            if not all(
+                _is_ascii_digits(v)
+                for v in (self._hour, self._minute, self._second, self._day, self._month, self._year)
+            ):
+                raise ValueError(f"Invalid gateway datetime: {self._dimension_value!r}")
             self._datetime = _dt.datetime.fromisoformat(
                 f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
             )
@@ -318,7 +348,15 @@ class OWNGatewayEvent(OWNEvent):
 
     @property
     def device_type(self) -> str | None:
-        """Return the decoded gateway device type string."""
+        """Return the decoded gateway device type string.
+
+        ``Unknown (N)`` for a Dimension 15 code outside ``WHO13_DEVICE_TYPES``
+        (the published table is not exhaustive and an unlisted code stays an
+        unknown code); the non-unique ``200`` reads as the slash-separated list
+        of the gateways known to share it, not as one product: identify them
+        through WHO 1013 Dimension 1 (``OWNGatewayDiagnosticEvent``).
+        ``device_type_code`` keeps the raw code either way.
+        """
         return self._device_type
 
     @property
@@ -376,6 +414,8 @@ class OWNGatewayCommand(OWNCommand):
                 if len(self._dimension_value) > 3 and self._dimension_value[3]
                 else None
             )
+            if not all(_is_ascii_digits(v) for v in (self._hour, self._minute, self._second)):
+                raise ValueError(f"Invalid gateway time: {self._dimension_value!r}")
             self._timezone = _gateway_timezone(self._dimension_value)
             self._time = _dt.time.fromisoformat(
                 f"{self._hour}:{self._minute}:{self._second}{self._timezone}"
@@ -388,6 +428,8 @@ class OWNGatewayCommand(OWNCommand):
             self._year = self._dimension_value[3]
             self._month = self._dimension_value[2]
             self._day = self._dimension_value[1]
+            if not all(_is_ascii_digits(v) for v in (self._year, self._month, self._day)):
+                raise ValueError(f"Invalid gateway date: {self._dimension_value!r}")
             self._date = _dt.date(
                 year=int(self._year), month=int(self._month), day=int(self._day)
             )
@@ -408,6 +450,11 @@ class OWNGatewayCommand(OWNCommand):
             self._day = self._dimension_value[5]
             self._month = self._dimension_value[6]
             self._year = self._dimension_value[7]
+            if not all(
+                _is_ascii_digits(v)
+                for v in (self._hour, self._minute, self._second, self._day, self._month, self._year)
+            ):
+                raise ValueError(f"Invalid gateway datetime: {self._dimension_value!r}")
             self._datetime = _dt.datetime.fromisoformat(
                 f"{self._year}-{self._month}-{self._day}T{self._hour}:{self._minute}:{self._second}{self._timezone}"  # pylint: disable=line-too-long
             )
@@ -619,17 +666,32 @@ class OWNGatewayCommand(OWNCommand):
 
     @classmethod
     def request_ip_address(cls) -> OWNGatewayCommand:
-        """Request the gateway IP address (Dimension 10)."""
+        """Request the gateway IP address (Dimension 10).
+
+        own-firmware-oracle ``who13-identification``: answered by 8 of the 13
+        emulated gateways and ACKed silently by F453, F453AV and MH200N, but
+        H4684 020054 and MH200 020102 NACK it and crash their worker process.
+        """
         return cls("*#13**10##")
 
     @classmethod
     def request_netmask(cls) -> OWNGatewayCommand:
-        """Request the gateway netmask (Dimension 11)."""
+        """Request the gateway netmask (Dimension 11).
+
+        own-firmware-oracle ``who13-identification``: answered by 8 of the 13
+        emulated gateways and ACKed silently by F453, F453AV and MH200N, but
+        H4684 020054 and MH200 020102 NACK it and crash their worker process.
+        """
         return cls("*#13**11##")
 
     @classmethod
     def request_mac_address(cls) -> OWNGatewayCommand:
-        """Request the gateway MAC address (Dimension 12)."""
+        """Request the gateway MAC address (Dimension 12).
+
+        own-firmware-oracle ``who13-identification``: answered by 8 of the 13
+        emulated gateways and ACKed silently by F453, F453AV and MH200N, but
+        H4684 020054 and MH200 020102 NACK it and crash their worker process.
+        """
         return cls("*#13**12##")
 
     @classmethod
