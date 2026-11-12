@@ -29,6 +29,7 @@ from ..message import (
     OWNMessage,
     OWNSignaling,
     is_who18_dimension_52_crash_form,
+    is_who22_bare_power_frame,
     is_who4_dimension_22_crash_form,
 )
 
@@ -50,18 +51,30 @@ DESTRUCTIVE_DIM52_REASON = (
 )
 
 
+# Same treatment for the bare WHO 22 power frame
+# (``OWNd.message.is_who22_bare_power_frame``).
+DESTRUCTIVE_WHO22_REASON = (
+    "the bare WHO 22 power frame (WHAT 0 / 1 without #mmtype#area, not a published "
+    "form) crashes the sound daemon on eight of the twelve pinned emulated gateways; use "
+    "turn_on_with_source / "
+    "route_source / turn_off_atomic"
+)
+
+
 def destructive_frame_reason(frame: str) -> str | None:
     """The refusal reason when ``frame`` is one every send path refuses, else ``None``.
 
     The one classifier behind ``OWNCommandSession.send``, ``send_to_gateway``
     and ``AsyncSerialTransport.send`` (``AsyncTcpTransport.send`` goes through
     the session), so the paths cannot drift: the WHO 4 dimension 22 crash
-    forms and the WHO 18 dimension 52 crash forms.
+    forms, the WHO 18 dimension 52 crash forms and the bare WHO 22 power frame.
     """
     if is_who4_dimension_22_crash_form(frame):
         return DESTRUCTIVE_FRAME_REASON
     if is_who18_dimension_52_crash_form(frame):
         return DESTRUCTIVE_DIM52_REASON
+    if is_who22_bare_power_frame(frame):
+        return DESTRUCTIVE_WHO22_REASON
     return None
 
 

@@ -166,7 +166,8 @@ class AsyncSerialTransport(OWNTransport):
         reason = destructive_frame_reason(text)
         if reason is not None:
             # Never written, whatever the caller: the same classifier as the
-            # command session (WHO 4 dimension 22, WHO 18 dimension 52).
+            # command session (WHO 4 dimension 22, WHO 18 dimension 52, bare
+            # WHO 22 power frame).
             err: OWNError = destructive_frame_error(text, reason)
             self._last_error = err
             self._logger.error(

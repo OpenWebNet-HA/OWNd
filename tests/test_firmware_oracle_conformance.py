@@ -72,7 +72,7 @@ def test_firmware_oracle_integrity():
         f"Verdicts SHA-256 digest mismatch: {calculated_hash} != {data['verdicts_sha256']}"
     )
 
-    assert data["total_unique_inputs"] == len(verdicts) == 509
+    assert data["total_unique_inputs"] == len(verdicts) == 520
     assert len(data["gateways"]) == 17
 
     gateway_names = {f"{g['product']} {g['version']}" for g in data["gateways"]}
@@ -97,7 +97,7 @@ def test_firmware_oracle_integrity():
     }
     assert gateway_names == expected_gateways
 
-    # Verify 12 emulated gateways × 540-544 rows across 22 test suites (6,500 rows total)
+    # Verify 12 emulated gateways × 552-556 rows across 23 test suites (6,644 rows total)
     emulated_gateways = [g for g in data["gateways"] if g["status"] == "emulated"]
     assert len(emulated_gateways) == 12
     catalogued_gateways = [g for g in data["gateways"] if g["status"] == "catalogued"]
@@ -111,13 +111,13 @@ def test_firmware_oracle_integrity():
     }
 
     total_rows = sum(len(entries) for entries in verdicts.values())
-    assert total_rows == 6500
+    assert total_rows == 6644
 
     for g in emulated_gateways:
         prod = g["product"]
         rows = [k for k, entries in verdicts.items() for e in entries if e.get("product") == prod]
-        assert len(rows) in (540, 544)
-        assert len(g["suites"]) == 22
+        assert len(rows) in (552, 556)
+        assert len(g["suites"]) == 23
 
 
 def test_emitted_own_frames_parseable_by_ownd():
@@ -229,7 +229,7 @@ def test_oracle_input_frames_ownd_parser_resilience():
         else:
             unparsed_count += 1
 
-    assert parsed_count == 509
+    assert parsed_count == 520
     assert unparsed_count == 0
 
 
@@ -323,8 +323,11 @@ def test_harness_limitations_classification():
     """Explicitly identify and categorize test-harness limitations vs protocol verdicts.
 
     With the upstream fix in own-firmware-oracle#48 (pruning boot-exiting translators and creating
-    /var/volatile/tmp/upnp), MH202 and F450 no longer segfault or crash. Across all 6,500 empirical
-    verdict rows for the 12 emulated gateways in the fleet, exactly 0 crashes and 0 timeouts are recorded.
+    /var/volatile/tmp/upnp), MH202 and F450 no longer segfault or crash on the earlier suites. The
+    only crash rows in the fixture are the 64 of the ``sound-who22-bare-power`` suite: the bare WHO 22
+    power frame (``*22*1*WHERE##`` / ``*22*0*WHERE##``, no ``#mmtype#area``) on F453, F453AV, F454,
+    F459, F460, F461, MH200N and MyHomeServer1, which is why ``is_who22_bare_power_frame`` refuses it
+    in the send layer; 0 timeouts are recorded.
     """
     crashes: list[tuple[str, str, str]] = []
     timeouts: list[tuple[str, str, str]] = []
@@ -337,7 +340,13 @@ def test_harness_limitations_classification():
             elif verdict == "timeout":
                 timeouts.append((e["product"], e["suite"], frame))
 
-    assert len(crashes) == 0
+    bare_who22 = re.compile(r"^\*22\*[01]\*[^*]+##$")
+    assert len(crashes) == 64
+    assert {s for _, s, _ in crashes} == {"sound-who22-bare-power"}
+    assert all(bare_who22.match(f) for _, _, f in crashes)
+    assert {p for p, _, _ in crashes} == {
+        "F453", "F453AV", "F454", "F459", "F460", "F461", "MH200N", "MyHomeServer1",
+    }
     assert len(timeouts) == 0
 
 
@@ -498,13 +507,13 @@ def test_firmware_nack_with_bus_forwarding():
                     entry.get("emitted_own", []),
                 ))
 
-    assert len(nack_and_out) == 1081
+    assert len(nack_and_out) == 1085
 
     counts = Counter(item[0] for item in nack_and_out)
     assert counts["F460"] == 228
     assert counts["F461"] == 228
     assert counts["MyHomeServer1"] == 228
-    assert counts["MH202"] == 70
+    assert counts["MH202"] == 74
     assert counts["F453"] == 53
     assert counts["F453AV"] == 53
     assert counts["MH200N"] == 53
@@ -608,7 +617,7 @@ def test_multi_gateway_emulation_coverage():
     }
     for p in emulated_products:
         assert gateways[p]["status"] == "emulated"
-        assert len(gateways[p]["suites"]) == 22
+        assert len(gateways[p]["suites"]) == 23
         assert len(gateways[p]["image_sha256"]) == 64
 
     # Catalogued auxiliary/bare-metal packages pending emulation:
