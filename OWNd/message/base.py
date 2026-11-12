@@ -353,16 +353,33 @@ class OWNMessage:
         """The 'where' ID of the subject of this message"""
         return self._where  # [1:] if self._where.startswith('#') else self._where
 
+    def _interface_and_where_params(self) -> tuple[str | None, list[str]]:
+        """Split ``_where_param`` into ``(interface, remaining_where_params)``.
+
+        On WHO 0, 1, 2, 14, 15 and 1001, ``#4#IF`` starts at index 0.
+        On WHO 4 (excluding Dimension 22 split-unit ``3#Z#N`` addresses where
+        ``Z`` can be ``4``), ``#4#IF`` sits either after a bare zone/central
+        address (``Z#4#IF``, length 2) or after an actuator/central-unit index
+        (``Z#N#4#IF`` / ``#0#C#4#IF``, length 3), so an actuator ``4`` address
+        ``Z#4`` (length 1) is never misread as an incomplete interface token.
+        """
+        if (
+            self._who in (0, 1, 2, 14, 15, 1001)
+            and len(self._where_param) > 1
+            and self._where_param[0] == "4"
+        ):
+            return self._where_param[1], self._where_param[2:]
+        if self._who == 4 and self._dimension != 22:
+            if len(self._where_param) == 2 and self._where_param[0] == "4":
+                return self._where_param[1], []
+            if len(self._where_param) == 3 and self._where_param[1] == "4":
+                return self._where_param[2], [self._where_param[0]]
+        return None, self._where_param
+
     @property
     def interface(self) -> str | None:
         """The 'where' parameter corresponding to the bus interface of the subject of this message"""
-        return (
-            self._where_param[1]
-            if self._who in [0, 1, 2, 14, 15, 1001]
-            and len(self._where_param) > 1
-            and self._where_param[0] == "4"
-            else None
-        )
+        return self._interface_and_where_params()[0]
 
     @property
     def what(self) -> int | None:
@@ -420,12 +437,11 @@ class OWNMessage:
         }
         if self._where:
             _event.update({"where": self._where})
-        if self.interface:
-            _event.update({"interface": self.interface})
-            if self._where_param and len(self._where_param) > 2:
-                _event.update({"where parameters": self._where_param[2:]})
-        elif self._where_param:
-            _event.update({"where parameters": self._where_param})
+        interface, where_params = self._interface_and_where_params()
+        if interface:
+            _event.update({"interface": interface})
+        if where_params:
+            _event.update({"where parameters": where_params})
         # Explicit None checks: 0 is meaningful (what=0 is OFF, dimension=0
         # is temperature) and must not be dropped from the event payload.
         if self._what is not None:

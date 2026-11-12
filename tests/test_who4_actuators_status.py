@@ -162,5 +162,105 @@ def test_actuators_status_replies_from_the_f461(
     assert isinstance(event, OWNHeatingEvent)
     assert event.zone == int(reply.split("*")[2].split("#")[0])
     assert event._actuator == actuator
+    assert event.actuator == actuator
     assert event.is_active() is active
     assert event.fan_on is fan_on
+
+
+@pytest.mark.parametrize(
+    ("frame", "expected_zone", "expected_actuator", "expected_interface", "expected_where_params"),
+    [
+        # Bare zone (implicit actuator 1)
+        ("*#4*30*20*1##", 30, "1", None, None),
+        # Explicit actuator 1..9, including actuator #4 (MyHOME#863)
+        ("*#4*30#1*20*1##", 30, "1", None, ["1"]),
+        ("*#4*30#4*20*1##", 30, "4", None, ["4"]),
+        ("*#4*30#4*20*0##", 30, "4", None, ["4"]),
+        # Zone behind F422 interface #4#IF (implicit actuator 1)
+        ("*#4*30#4#01*20*1##", 30, "1", "01", None),
+        ("*#4*0#4#01*20*1##", 0, "1", "01", None),
+        # Explicit actuator behind F422 interface #4#IF, including actuator #4
+        ("*#4*2#1#4#01*20*0##", 2, "1", "01", ["1"]),
+        ("*#4*30#4#4#01*20*1##", 30, "4", "01", ["4"]),
+        ("*#4*30#4#4#4*20*1##", 30, "4", "4", ["4"]),
+    ],
+)
+def test_who4_dim20_actuator_and_interface_disambiguation(
+    frame: str,
+    expected_zone: int,
+    expected_actuator: str,
+    expected_interface: str | None,
+    expected_where_params: list[str] | None,
+) -> None:
+    """Disambiguate WHO 4 actuator #4 (Z#4) from F422 bus routing (#4#IF)."""
+    event = OWNMessage.parse(frame)
+
+    assert isinstance(event, OWNHeatingEvent)
+    assert event.zone == expected_zone
+    assert event.actuator == expected_actuator
+    assert event.interface == expected_interface
+    content = event.event_content
+    assert content.get("interface") == expected_interface
+    assert content.get("where parameters") == expected_where_params
+    if expected_zone > 0:
+        assert f"Zone {expected_zone}'s actuator {expected_actuator} is " in event.human_readable_log
+
+
+@pytest.mark.parametrize(
+    ("frame", "expected_actuator", "expected_interface"),
+    [
+        ("*#4*30*20##", "1", None),
+        ("*#4*30#4*20##", "4", None),
+        ("*#4*30#4#01*20##", "1", "01"),
+        ("*#4*30#4#4#01*20##", "4", "01"),
+        # MyHomeServer1 Dimension 20 write frames (*#4*Z#N*#20*VAL##, MyHOME#863)
+        ("*#4*30*#20*1##", "1", None),
+        ("*#4*30#4*#20*1##", "4", None),
+        ("*#4*30#4#01*#20*0##", "1", "01"),
+        ("*#4*30#4#4#01*#20*1##", "4", "01"),
+        # Non-Dimension-20 WHO 4 commands have no actuator
+        ("*#4*30*0##", None, None),
+        ("*#4*30*#14*0200*3##", None, None),
+        ("*#4*3#4#1*22##", None, None),
+        ("*#4*3#4#1*#22*1*0215*2*0##", None, None),
+    ],
+)
+def test_who4_command_actuator_and_dim22_split_non_collision(
+    frame: str,
+    expected_actuator: str | None,
+    expected_interface: str | None,
+) -> None:
+    """OWNHeatingCommand exposes .actuator on Dim 20 and keeps Dim 22 split 3#4#1 unrouted."""
+    cmd = OWNMessage.parse(frame)
+
+    assert isinstance(cmd, OWNHeatingCommand)
+    assert cmd.actuator == expected_actuator
+    assert cmd.interface == expected_interface
+    turn_off = OWNHeatingCommand.turn_off(30, standalone=True)
+    assert turn_off is not None and turn_off.actuator is None
+
+
+def test_who4_non_dim20_events_and_central_interface_disambiguation() -> None:
+    """Non-Dim-20 events keep actuator None; #0#4 stays zone 4 while #0#4#01 stays #0 on IF 01."""
+    temp_evt = OWNMessage.parse("*#4*30#4#01*0*0215##")
+    assert isinstance(temp_evt, OWNHeatingEvent)
+    assert temp_evt.zone == 30
+    assert temp_evt.actuator is None
+    assert temp_evt.interface == "01"
+
+    central_4 = OWNMessage.parse("*4*101*#0#4##")
+    assert isinstance(central_4, OWNHeatingEvent)
+    assert central_4.zone == 4
+    assert central_4.interface is None
+
+    central_if = OWNMessage.parse("*4*1*#0#4#01##")
+    assert isinstance(central_if, OWNHeatingEvent)
+    assert central_if.zone == 0
+    assert central_if.interface == "01"
+
+    central_4_if = OWNMessage.parse("*4*101*#0#4#4#01##")
+    assert isinstance(central_4_if, OWNHeatingEvent)
+    assert central_4_if.zone == 4
+    assert central_4_if.interface == "01"
+    assert central_4_if.event_content.get("where parameters") == ["4"]
+
