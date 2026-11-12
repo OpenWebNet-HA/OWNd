@@ -2898,9 +2898,9 @@
     "what": null,
     "where": "1",
     "dimension": 1,
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Energy Management: Request instantaneous active power from meter 1",
+    "mcp_notes": "Grammar-only: DIMENSION 1 is not defined for SCS WHO 18 (active power is DIMENSION 113) and WHERE 1 is outside the 1N / 5N / 7N#0 families; parsed with message_type None",
     "roundtrip": true,
     "_file": "who18_energy.yaml"
   },
@@ -2915,9 +2915,9 @@
     "dimension_values": [
       "1450"
     ],
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Energy Management: Meter 1 reports 1450 Watts instantaneous active power",
+    "mcp_notes": "Grammar-only: DIMENSION 1 is not defined for SCS WHO 18, so 1450 carries no documented unit; parsed with message_type None",
     "roundtrip": true,
     "_file": "who18_energy.yaml"
   },
@@ -2929,9 +2929,9 @@
     "what": null,
     "where": "1",
     "dimension": 11,
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Energy Management: Request cumulative energy totalizer for meter 1",
+    "mcp_notes": "Grammar-only: DIMENSION 11 is the ZigBee variant's Voltage dimension, not an SCS totalizer (DIMENSION 51); parsed with message_type None",
     "roundtrip": true,
     "_file": "who18_energy.yaml"
   },
@@ -2946,9 +2946,9 @@
     "dimension_values": [
       "00452300"
     ],
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Energy Management: Cumulative energy reports 45,230.0 kWh",
+    "mcp_notes": "Grammar-only: DIMENSION 11 is the ZigBee variant's Voltage dimension; 00452300 is kept raw without a unit (SCS WHO 18 energy values are Wh); parsed with message_type None",
     "roundtrip": true,
     "_file": "who18_energy.yaml"
   },
