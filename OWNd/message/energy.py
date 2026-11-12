@@ -248,20 +248,32 @@ class OWNEnergyEvent(OWNEvent):
 
     @property
     def update_interval(self) -> int | None:
-        """Time field of a 1200 reply (stream duration in minutes per Legrand WHO 18), 0 when stopped.
+        """Time field of a 1200 reply, 0 when the automatic updates are stopped.
 
-        Retained for backward compatibility; prefer :attr:`stream_duration`.
+        The published WHO 18 text defines ``Time`` (1..255 minutes) as "after
+        how many minutes consumption/status is sent when it changes", a
+        report-on-change parameter rather than an unconditional sampling
+        interval (Encyclopedia who-18 dimensions.md "DIMENSION 1200 -
+        automatic active-power updates"). On an F520 behind an F454 2.0 the
+        updates stop ``Time`` minutes after the start (``*#18*56*1200#1*0##``
+        about 126 s after ``*#18*56*#1200#1*2##``, MyHOME#661), so the field
+        also bounds the stream. Retained for backward compatibility; prefer
+        :attr:`stream_duration`.
         """
         return self._update_interval
 
     @property
     def stream_duration(self) -> int | None:
-        """Time field of a 1200 reply (stream duration in minutes, 0..255 per Legrand WHO 18), 0 when stopped."""
+        """Time field of a 1200 reply (0..255 minutes), 0 when stopped.
+
+        See :attr:`update_interval` for the published report-on-change meaning
+        of ``Time`` and the capture showing it bounds the stream.
+        """
         return self._update_interval
 
     @property
     def is_streaming_active(self) -> bool | None:
-        """True if automatic updates are streaming (> 0 minutes), False if stopped (0 minutes), None if not a 1200 event."""
+        """True if automatic updates are active (Time > 0), False if stopped (Time = 0), None if not a 1200 event."""
         if self._update_interval is None:
             return None
         return self._update_interval > 0
@@ -322,6 +334,90 @@ class OWNEnergyEvent(OWNEvent):
         return self._human_readable_log
 
 
+# WHO 18 DIMENSION 52 (monthly energy): ``*#18*51*52#2026#10##`` and the
+# value-field form ``*#18*51*52#2026#10*100##`` crash the F460 020012, the F461
+# 020011 and the 3488 030205 (HOMETOUCH) after the telegram went out, while
+# the documented two-digit form ``*#18*51*52#26#9##`` went out without a crash
+# (OpenWebNet-HA/own-firmware-oracle, suite ``ownd-audit-frames``, index
+# SHA-256 db03cc878d84d514b9e324c2d01d050264f2e4ccd0c1aad33937683c30e472ca,
+# ``findings/audit-crash-frames.md`` and ``tools/expected_divergences.yaml``
+# ``crash_frames``; emulated firmware, ``harness=full``, not yet replayed on
+# physical hardware). The firmware reads the year of ``52#Y#M`` with atoi()
+# into a one-byte slot (``26`` -> ``1A`` in ``$06D1A1023350161A09``), and
+# ``2026`` (0x7EA) overflows that formatter (``$006D1A1023350167EA0``), so every
+# spelling atoi() reads as a wide year does the same (``02026``, ``256``);
+# leading zeros on WHO or DIMENSION (``*#018*``, ``*052``), a ``#52`` write, an
+# extra ``#`` parameter, an empty WHERE, a non-ASCII digit or more than one
+# value field were not replayed. As for WHO 4 dimension 22
+# (``is_who4_dimension_22_crash_form``), the allowance is the tested forms,
+# not the complement of the crash set. No builder emits a refused form; the
+# send paths refuse one handed in as a raw frame.
+#
+# ``_WHO18_DIMENSION_52_REGEX`` recognises every DIMENSION 52 spelling, anchored
+# to the first ``*`` of each ``##``-delimited chunk (mid-frame ``*#18*`` is a
+# WHERE or DIMENSION ``#18``); WHO and DIMENSION accept what the gateway's
+# atoi() reads as 18 / 52 (leading zeros, whitespace, a ``+`` sign).
+_WHO18_DIMENSION_52_REGEX = re.compile(
+    r"^[^*]*\*#\s*\+?0*18\s*\*[^*]*\*\s*#?\s*\+?0*52(?:\s*\Z|[#*\s])"
+)
+# The forms that go out, spelled canonically: WHO ``18``, a non-empty ASCII
+# WHERE of the published families (digits, ``#0`` suffix for an actuator),
+# DIMENSION ``52`` as a request or report (``*52``, ``*52*Wh``) or with the
+# documented year and month (``52#YY#M``, ``YY`` 0..99 as one or two digits,
+# ``M`` 1..12, optionally ``*Wh``). ``\Z`` on the end (``$`` also matches
+# before a trailing newline); ASCII only.
+_WHO18_DIMENSION_52_SENDABLE_REGEX = re.compile(
+    r"^\*#18\*[0-9]+(?:#0)?\*52(?:#[0-9]{1,2}#(?:0?[1-9]|1[0-2]))?(?:\*[0-9]+)?\Z",
+    re.ASCII,
+)
+
+
+def _decode_frame(frame: object) -> str:
+    return (
+        bytes(frame).decode("latin-1")
+        if isinstance(frame, (bytes, bytearray, memoryview))
+        else str(frame)
+    )
+
+
+def is_who18_dimension_52(frame: object) -> bool:
+    """True if ``frame`` (or any ``##``-delimited frame in it) is WHO 18 DIMENSION 52.
+
+    Every spelling, the safe forms included. The send paths refuse the narrower
+    :func:`is_who18_dimension_52_crash_form`. ``bytes``, ``bytearray`` and
+    ``memoryview`` are decoded as latin-1 (the wire encoding); anything else is
+    checked through ``str()``.
+    """
+    raw = _decode_frame(frame)
+    return any(_WHO18_DIMENSION_52_REGEX.search(chunk) for chunk in raw.split("##"))
+
+
+def is_who18_dimension_52_crash_form(frame: object) -> bool:
+    """True if ``frame`` holds a WHO 18 DIMENSION 52 frame that every send path refuses.
+
+    That is every DIMENSION 52 spelling except the canonical forms the firmware
+    oracle replayed without a crash or that the builders emit: ``*#18*WHERE*52##``,
+    ``*#18*WHERE*52*Wh##``, ``*#18*WHERE*52#YY#M##`` and ``*#18*WHERE*52#YY#M*Wh##``
+    with a one- or two-digit year and a month 1..12. Refused: a four-digit or
+    wider year (``52#2026#10`` crashes the F460, F461 and 3488; ``02026`` and
+    ``256`` reach the same one-byte formatter), a month outside 1..12 or with
+    three digits, leading zeros, whitespace or ``+`` on WHO or DIMENSION, a
+    ``#52`` write, an extra ``#`` parameter, an empty or non-digit WHERE, a
+    non-ASCII digit and more than one value field. Buffers are decoded like
+    :func:`is_who18_dimension_52`.
+    """
+    raw = _decode_frame(frame)
+    return any(
+        _WHO18_DIMENSION_52_REGEX.search(chunk)
+        and not _WHO18_DIMENSION_52_SENDABLE_REGEX.match(chunk)
+        for chunk in raw.split("##")
+    )
+
+
+# The name of the first release of the guard, kept for its callers.
+is_who18_dimension_52_four_digit_year = is_who18_dimension_52_crash_form
+
+
 def _normalize_actuator_where(where: str | int) -> str:
     """Normalize actuator address by ensuring #0 suffix per WHO 18 specification."""
     target = require_non_empty_where(where)
@@ -337,9 +433,16 @@ class OWNEnergyCommand(OWNCommand):
     ) -> OWNEnergyCommand:
         """Start automatic updates: *#18*W*#1200#type*time##.
 
-        ``duration`` is the Time field (1..255, minutes per Legrand WHO 18;
-        the meter answers *#18*W*1200#type*time##). ``energy_type`` 1 is
-        electricity, 2 gas, 3 heat, 4 water (libqtdevices energy_device.cpp:50-56).
+        ``duration`` is the Time field (1..255 minutes): the published text
+        says "after how many minutes consumption/status is sent when it
+        changes", a report-on-change parameter and not an unconditional
+        sampling interval (Encyclopedia who-18 dimensions.md "DIMENSION 1200 -
+        automatic active-power updates"); the meter answers
+        *#18*W*1200#type*time## and, on the F520 capture of MyHOME#661,
+        reports ``*#18*W*1200#type*0##`` once Time minutes have elapsed.
+        ``energy_type`` 1 is the published active power; 2 gas, 3 heat, 4 water
+        are libqtdevices extensions (dimensions.md "Measurement families and
+        automatic updates").
         """
         where = _normalize_actuator_where(where)
         etype = int(energy_type)
@@ -488,7 +591,7 @@ class OWNEnergyCommand(OWNCommand):
 
     @property
     def stream_duration(self) -> int | None:
-        """Decoded stream duration in minutes (0..255) for a Dimension 1200 command, or None."""
+        """Time field (0..255 minutes, the report-on-change parameter of DIMENSION 1200) of a 1200 write, or None."""
         if self._dimension == 1200 and self._dimension_value:
             return max(0, min(255, _integer_value(self._dimension_value, 0)))
         return None
@@ -527,7 +630,18 @@ class OWNEnergyCommand(OWNCommand):
         year: int | None = None,
         month: int | None = None,
     ) -> OWNEnergyCommand:
-        """Build a WHO 18 Dimension 52 monthly energy report (*#18*WHERE*52[#YY#M]*Wh##)."""
+        """Build a WHO 18 Dimension 52 monthly energy report (*#18*WHERE*52[#YY#M]*Wh##).
+
+        With ``year`` and ``month`` the documented ``52#YY#M`` form is built
+        with a two-digit year (``*#18*51*52#26#9*100##``); WHO_18.pdf defines
+        DIMENSION 52 only with the year and month parameters. A four-digit
+        year is never emitted: ``52#2026#10`` crashed the F460, F461 and 3488
+        in the firmware oracle (``ownd-audit-frames``), and the send layer
+        refuses every untested spelling
+        (:func:`is_who18_dimension_52_crash_form`). With both omitted
+        the parameter-less ``*#18*WHERE*52*Wh##`` is built as before, for the
+        existing callers (MyHOME ``expose.py``).
+        """
         target = _normalize_actuator_where(where)
         val = _validate_non_negative_energy(wh, "wh")
         if (year is None) != (month is None):
@@ -556,7 +670,14 @@ class OWNEnergyCommand(OWNCommand):
     def report_partial_month_energy(
         cls, where: str | int, wh: int | float, month: int | None = None
     ) -> OWNEnergyCommand:
-        """Build a WHO 18 Dimension 53 current-month partial energy report (*#18*WHERE*53[#M]*Wh##)."""
+        """Build a WHO 18 Dimension 53 current-month partial energy report (*#18*WHERE*53[#M]*Wh##).
+
+        WHO_18.pdf lists DIMENSION 53 as a parameter-less scalar (capture:
+        ``*#18*52*53*1##``, F454 2.0.51, MyHOME#466); the ``53#M`` form built
+        when ``month`` is given is the TS10 touchscreen's parameterised
+        variant, not a form of the PDF. Both forms are kept on the wire as
+        before, pending a committed plant trace of the parameterised reply.
+        """
         target = _normalize_actuator_where(where)
         val = _validate_non_negative_energy(wh, "wh")
         if month is not None:
@@ -578,7 +699,14 @@ class OWNEnergyCommand(OWNCommand):
     def report_partial_day_energy(
         cls, where: str | int, wh: int | float, day: int | None = None
     ) -> OWNEnergyCommand:
-        """Build a WHO 18 Dimension 54 current-day partial energy report (*#18*WHERE*54[#D]*Wh##)."""
+        """Build a WHO 18 Dimension 54 current-day partial energy report (*#18*WHERE*54[#D]*Wh##).
+
+        WHO_18.pdf lists DIMENSION 54 as a parameter-less scalar (capture:
+        ``*#18*51*54*13165##``, F454 2.0, MyHOME#661); the ``54#D`` form built
+        when ``day`` is given is the TS10 touchscreen's parameterised variant,
+        not a form of the PDF. Both forms are kept on the wire as before,
+        pending a committed plant trace of the parameterised reply.
+        """
         target = _normalize_actuator_where(where)
         val = _validate_non_negative_energy(wh, "wh")
         if day is not None:
@@ -631,7 +759,14 @@ def _validate_non_negative_energy(value: int | float, name: str) -> int:
 
 
 def _normalize_stop_and_go_where(where: str | int) -> str:
-    """Normalize Stop&Go line address to 1N format (11..19)."""
+    """Normalize Stop&Go line address to 1N format (11..19).
+
+    WHO_18.pdf's WHERE table publishes the Stop&Go family as ``1N`` with
+    N = 1..127; the builders accept lines 1..9 / addresses 11..19 only,
+    master's range (derived from the firmware oracle ``energy-ts10`` suite; no
+    physical Stop&Go trace is committed), kept until a plant trace of a wider
+    address is committed.
+    """
     target = str(where).strip()
     if target.isdigit():
         val = int(target)
@@ -655,7 +790,10 @@ class OWNStopAndGoEvent(OWNEvent):
         - Self-test frequency: *#18*1N*212*DAYS## (read response)
         - Status mask: *#18*1N*250*MASK##
         - Individual status flags: *#18*1N*251..263*BIT##
-    Addresses are formatted as 1N (11..19, where line is 1..9).
+    Addresses are formatted as 1N (11..19, where line is 1..9). WHO_18.pdf
+    publishes the family as 1N with N = 1..127; ``line`` is decoded for the
+    single-digit addresses only, master's range from the firmware oracle
+    ``energy-ts10`` suite, kept until a physical Stop&Go trace is committed.
     """
 
     def __init__(self, data: str) -> None:
@@ -770,7 +908,7 @@ class OWNStopAndGoEvent(OWNEvent):
 
     @property
     def line(self) -> int | None:
-        """Line number (1..9) corresponding to address 1N, or None if non-standard."""
+        """Line number (1..9) corresponding to address 1N, or None if non-standard (WHO_18.pdf publishes N = 1..127; wider addresses are not decoded until a physical Stop&Go trace is committed)."""
         return self._line
 
     @property
@@ -925,6 +1063,12 @@ class OWNStopAndGoCommand(OWNCommand):
 
     @classmethod
     def set_test_frequency(cls, where: str | int, days: int) -> OWNStopAndGoCommand:
+        """Set the self-test interval: *#18*1N*#212*DAYS## (1..255).
+
+        DIMENSION 212 is not in WHO_18.pdf; the TS10 touchscreen client
+        (``TS10_1_0_23``) that defines it uses DAYS = 1..180. The accepted
+        range stays 1..255 as before, pending a committed plant trace.
+        """
         target = _normalize_stop_and_go_where(where)
         if days < 1 or days > 255:
             raise ValueError(

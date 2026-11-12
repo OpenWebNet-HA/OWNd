@@ -931,14 +931,14 @@
     "dimension_values": [
       "75"
     ],
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Automation dimension write: Set shutter position to 75%",
+    "mcp_notes": "Grammar-only: a DIMENSION 10 write. WHO_2.pdf / Encyclopedia who-2-automation/dimensions.md define DIMENSION 10 as request / response / event only (shutter status); the position write is DIMENSION 11 (*#2*WHERE*#11#PRIORITY*LEVEL##). Was labelled legrand-spec as 'Set shutter position to 75%'; no committed plant trace carries this frame, so it pins parser shape only and claims no meaning.",
     "roundtrip": true,
     "_file": "who02_automation.yaml"
   },
   {
-    "id": "cover.dim.write.tilt.30",
+    "id": "cover.dim.write.level.30.no_priority",
     "frame": "*#2*93*#11*30##",
     "direction": "dimension_write",
     "who": 2,
@@ -950,7 +950,7 @@
     ],
     "source": "legrand-spec",
     "mcp_valid": true,
-    "mcp_notes": "Automation dimension write: Set slat tilt angle to 30%",
+    "mcp_notes": "Automation dimension write: Go to level 30% without the priority parameter. Dimension 11 is absolute position (no slat-angle dimension exists in WHO 2); the SCS write form carries #PRIORITY (*#2*WHERE*#11#PRIORITY*LEVEL##, Encyclopedia who-2-automation/dimensions.md#dimension-11---go-to-level) and only the ZigBee variant omits it. Grammar fixture only; no builder emits this form.",
     "roundtrip": true,
     "_file": "who02_automation.yaml"
   },
@@ -2195,7 +2195,7 @@
     "where": "2",
     "source": "openwebnet4j",
     "mcp_valid": true,
-    "mcp_notes": "Burglar Alarm: Status request for zone 2",
+    "mcp_notes": "Burglar Alarm: openwebnet4j spelling of a zone 2 status request. The published zone request is *#5*#2## (Encyclopedia functional/who-5-alarm/protocol.md#zone-status-request, zone selector #N) and this prefix-less form is not on the page; OWNd accepts it and keeps WHERE 2 as given",
     "roundtrip": true,
     "_file": "who05_alarm.yaml"
   },
@@ -2221,7 +2221,7 @@
     "where": "0",
     "source": "openwebnet4j",
     "mcp_valid": true,
-    "mcp_notes": "Burglar Alarm: Silent alarm event for zone 0",
+    "mcp_notes": "Burglar Alarm: WHAT 2 is Disactivation (Encyclopedia functional/who-5-alarm/what.md); the silent alarm is WHAT 31. WHERE 0 is the central unit. The earlier label 'Silent alarm event for zone 0' was the judge catalog wording, not the published meaning; the record id is kept for stability",
     "roundtrip": true,
     "_file": "who05_alarm.yaml"
   },
@@ -2247,7 +2247,7 @@
     "where": "0",
     "source": "community-plant-capture",
     "mcp_valid": true,
-    "mcp_notes": "Burglar Alarm: Arm system total/away captured on MH202 (MyHOME#564 comment 5917195080)",
+    "mcp_notes": "Burglar Alarm: WHAT 1 Activation (central-unit state, Encyclopedia functional/who-5-alarm/what.md), captured on MH202 (MyHOME#564 comment 5917195080). Not by itself an arm: the F454 trace (MyHOME#311) sends it on every disarm and only WHAT 8 means armed",
     "roundtrip": true,
     "_file": "who05_alarm.yaml"
   },
@@ -3016,9 +3016,9 @@
     "what": null,
     "where": "1",
     "dimension": 1,
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Energy Management: Request instantaneous active power from meter 1",
+    "mcp_notes": "Grammar-only: DIMENSION 1 is not defined for SCS WHO 18 (active power is DIMENSION 113) and WHERE 1 is outside the 1N / 5N / 7N#0 families; parsed with message_type None",
     "roundtrip": true,
     "_file": "who18_energy.yaml"
   },
@@ -3033,9 +3033,9 @@
     "dimension_values": [
       "1450"
     ],
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Energy Management: Meter 1 reports 1450 Watts instantaneous active power",
+    "mcp_notes": "Grammar-only: DIMENSION 1 is not defined for SCS WHO 18, so 1450 carries no documented unit; parsed with message_type None",
     "roundtrip": true,
     "_file": "who18_energy.yaml"
   },
@@ -3047,9 +3047,9 @@
     "what": null,
     "where": "1",
     "dimension": 11,
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Energy Management: Request cumulative energy totalizer for meter 1",
+    "mcp_notes": "Grammar-only: DIMENSION 11 is the ZigBee variant's Voltage dimension, not an SCS totalizer (DIMENSION 51); parsed with message_type None",
     "roundtrip": true,
     "_file": "who18_energy.yaml"
   },
@@ -3064,9 +3064,9 @@
     "dimension_values": [
       "00452300"
     ],
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Energy Management: Cumulative energy reports 45,230.0 kWh",
+    "mcp_notes": "Grammar-only: DIMENSION 11 is the ZigBee variant's Voltage dimension; 00452300 is kept raw without a unit (SCS WHO 18 energy values are Wh); parsed with message_type None",
     "roundtrip": true,
     "_file": "who18_energy.yaml"
   },
