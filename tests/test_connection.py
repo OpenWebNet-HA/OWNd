@@ -40,6 +40,25 @@ class FakeWriter:
         return None
 
 
+class LostOnReadReader(asyncio.StreamReader):
+    """A reader that looks live before the write and loses the socket on the read.
+
+    ``feed_eof()`` before ``send()`` would model a gateway that closed the
+    socket while the session sat idle, which ``send()`` now detects and reopens
+    before writing. The tests below model the other case: the connection drops
+    after the frame went out, while the acknowledgement is awaited.
+    """
+
+    def at_eof(self) -> bool:
+        return False
+
+    def exception(self) -> BaseException | None:
+        return None
+
+    async def readuntil(self, separator: bytes = b"\n") -> bytes:
+        raise asyncio.IncompleteReadError(b"", None)
+
+
 def make_session(
     session_type: type[OWNSession] = OWNSession,
     password: str | None = "12345",
@@ -301,8 +320,7 @@ async def test_large_status_sweep_is_drained_before_ack() -> None:
 async def test_written_command_is_not_replayed_after_lost_ack() -> None:
     session, writer = make_session(OWNCommandSession)
     assert isinstance(session, OWNCommandSession)
-    assert session._stream_reader is not None
-    session._stream_reader.feed_eof()
+    session._stream_reader = LostOnReadReader()
 
     with patch.object(session, "connect", new_callable=AsyncMock) as connect:
         result = await session.send("*1*1*11##")
@@ -316,14 +334,12 @@ async def test_written_command_is_not_replayed_after_lost_ack() -> None:
 async def test_disconnected_status_request_retries_once() -> None:
     session, original_writer = make_session(OWNCommandSession)
     assert isinstance(session, OWNCommandSession)
-    assert session._stream_reader is not None
-    session._stream_reader.feed_eof()
+    session._stream_reader = LostOnReadReader()
 
     retry_writer = FakeWriter()
 
     async def reconnect() -> dict:
-        session._stream_reader = asyncio.StreamReader()
-        session._stream_reader.feed_eof()
+        session._stream_reader = LostOnReadReader()
         session._stream_writer = retry_writer  # type: ignore[assignment]
         return {"Success": True, "Message": None}
 
@@ -350,8 +366,7 @@ async def test_written_non_query_with_status_request_flag_is_not_replayed_after_
 ) -> None:
     session, writer = make_session(OWNCommandSession)
     assert isinstance(session, OWNCommandSession)
-    assert session._stream_reader is not None
-    session._stream_reader.feed_eof()
+    session._stream_reader = LostOnReadReader()
 
     with patch.object(session, "connect", new_callable=AsyncMock) as connect:
         result = await session.send(frame, is_status_request=True)
@@ -365,14 +380,12 @@ async def test_written_non_query_with_status_request_flag_is_not_replayed_after_
 async def test_disconnected_dimension_request_retries_once() -> None:
     session, original_writer = make_session(OWNCommandSession)
     assert isinstance(session, OWNCommandSession)
-    assert session._stream_reader is not None
-    session._stream_reader.feed_eof()
+    session._stream_reader = LostOnReadReader()
 
     retry_writer = FakeWriter()
 
     async def reconnect() -> dict[str, object]:
-        session._stream_reader = asyncio.StreamReader()
-        session._stream_reader.feed_eof()
+        session._stream_reader = LostOnReadReader()
         session._stream_writer = retry_writer  # type: ignore[assignment]
         return {"Success": True, "Message": None}
 
@@ -963,8 +976,7 @@ async def test_session_and_command_error_paths_with_raise_on_error() -> None:
 
     s_lost, _ = make_session(OWNCommandSession)
     assert isinstance(s_lost, OWNCommandSession)
-    assert s_lost._stream_reader is not None
-    s_lost._stream_reader.feed_eof()
+    s_lost._stream_reader = LostOnReadReader()
     with pytest.raises(OWNConnectionError) as lost_exc:
         await s_lost.send("*1*1*11##", raise_on_error=True)
     assert lost_exc.value.reason == "connection_lost"

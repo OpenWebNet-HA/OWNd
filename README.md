@@ -341,6 +341,7 @@ OWNd maintains an automated test suite with strict **100.0% line coverage** veri
 | [`OWNd/connection/gateway.py`](OWNd/connection/gateway.py) | **100%** | Gateway configuration container, endpoint discovery, and profile mapping |
 | [`OWNd/connection/session.py`](OWNd/connection/session.py) | **100%** | Base TCP transport, negotiation state machine, and frame buffering |
 | [`OWNd/discovery.py`](OWNd/discovery.py) | **100%** | SSDP multicast and UPnP XML gateway discovery and descriptor parsing |
+| [`OWNd/exceptions.py`](OWNd/exceptions.py) | **100%** | Core OWNd library component |
 | [`OWNd/message/__init__.py`](OWNd/message/__init__.py) | **100%** | OpenWebNet message package exports & WHO subsystem registries |
 | [`OWNd/message/actuator_lock.py`](OWNd/message/actuator_lock.py) | **100%** | WHO 14: Special commands and actuator lock/unlock events and commands |
 | [`OWNd/message/alarm.py`](OWNd/message/alarm.py) | **100%** | WHO 5: Intrusion and technical alarm subsystem events and commands |

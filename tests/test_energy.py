@@ -56,3 +56,40 @@ def test_energy_command_infeasible_inputs() -> None:
     for bad_month in (0, 13, -1):
         with pytest.raises(ValueError, match="month must be between 1 and 12"):
             OWNEnergyCommand.get_monthly_consumption("51", 2026, bad_month)
+
+
+def test_energy_event_out_of_calendar_day_is_dropped_with_a_reason() -> None:
+    """WHO 18 PDF 5.1.5 / 5.1.6: the 513 / 514 series carries tags 1..31 whatever the month.
+
+    A live F461 2.0.11 answers ``*#18*51*513#11##`` with a day 31 for November
+    (plant run 2026-11-11). The sample is not a date: it stays untyped, and the
+    log says why instead of echoing the raw frame.
+    """
+    from OWNd.message import OWNEnergyEvent
+
+    day_31 = OWNEnergyEvent.parse("*#18*51*513#11*31*0##")
+    assert day_31 is not None
+    assert day_31.message_type is None
+    assert day_31.human_readable_log == (
+        "Sensor 1 is reporting dimension 513 for day 31 of month 11, "
+        "which is not a calendar date; sample ignored."
+    )
+
+    day_32_last_year = OWNEnergyEvent.parse("*#18*51*514#4*32*0##")
+    assert day_32_last_year is not None
+    assert day_32_last_year.message_type is None
+    assert "dimension 514 for day 32 of month 4" in day_32_last_year.human_readable_log
+
+    hourly_feb_30 = OWNEnergyEvent.parse("*#18*51*511#2#30*1*0##")
+    assert hourly_feb_30 is not None
+    assert hourly_feb_30.message_type is None
+    assert hourly_feb_30.human_readable_log == (
+        "Sensor 1 is reporting dimension 511 for month/day 2/30, "
+        "which is not a calendar date; sample ignored."
+    )
+
+    # A real day of the series decodes as before.
+    day_11 = OWNEnergyEvent.parse("*#18*51*513#11*11*20##")
+    assert day_11 is not None
+    assert day_11.message_type == "daily_consumption"
+    assert day_11.daily_consumption["value"] == 20
