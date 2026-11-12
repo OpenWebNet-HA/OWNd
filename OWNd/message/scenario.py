@@ -87,6 +87,18 @@ class OWNScenarioEvent(OWNEvent):
 
 
 class OWNAuxEvent(OWNEvent):
+    """WHO 9 auxiliary channel indication, ``*9*WHAT*WHERE##``.
+
+    Encyclopedia ``who-9-auxiliaries/README.md#corpus-status`` establishes only
+    ``*#9*WHERE##`` (status request), ``*9*1*WHERE##`` (ON) and ``*9*0*WHERE##``
+    (OFF), and "does not establish an auxiliary-address range": ``channel`` is
+    the WHERE as sent, not a 1..9 number. The WHAT 2..10 names in the log
+    lines (TOGGLE, STOP, UP, DOWN, ENABLED, DISABLED, RESET_GEN, RESET_BI,
+    RESET_TRI) come from openwebnet4j; the Encyclopedia leaves them
+    unspecified ("Unknown values remain unspecified rather than inferred")
+    and no committed plant trace carries them. They are kept as they were.
+    """
+
     def __init__(self, data: str) -> None:
         super().__init__(data)
 
@@ -147,6 +159,7 @@ class OWNAuxEvent(OWNEvent):
 
     @property
     def channel(self) -> str | None:
+        """The WHERE as sent; the Encyclopedia establishes no auxiliary-address range."""
         return self._channel
 
     @property
