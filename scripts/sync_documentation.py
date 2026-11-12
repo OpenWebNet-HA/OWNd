@@ -114,7 +114,7 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
     WhoCatalogDefinition(
         who="**2**",
         name="Automation",
-        description="Shutters, blinds, motorized curtains, tilt angles, short & full replies",
+        description="Shutters, blinds and motorized curtains: Up/Down/Stop, Dimension 10 status replies (state, position), Dimension 11 go-to-level position (`*#2*WHERE*#11#PRIORITY*LEVEL##`), short & full replies",
         dispatch_who_keys=(2,),
     ),
     WhoCatalogDefinition(
@@ -150,7 +150,7 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
     WhoCatalogDefinition(
         who="**9**",
         name="Auxiliary",
-        description="Auxiliary channel status (aux 1–9) for remote relays and inter-system signaling",
+        description="Auxiliary channel ON/OFF indications (`*9*1*WHERE##` / `*9*0*WHERE##`, WHERE as sent) for remote relays and inter-system signaling",
         dispatch_who_keys=(9,),
     ),
     WhoCatalogDefinition(
@@ -187,7 +187,7 @@ WHO_DEFINITIONS: tuple[WhoCatalogDefinition, ...] = (
     WhoCatalogDefinition(
         who="**18**",
         name="Energy Management",
-        description="Active power (W), hourly/daily/monthly consumption (kWh), Stop & Go breaker diagnostics",
+        description="Active power (W), hourly/daily/monthly consumption (Wh) as OWNd and MyHOME read them (the PDF labels DIMENSION 51..54 'Watt' and only 72 'Wh'), Stop & Go breaker diagnostics",
         dispatch_who_keys=(18,),
         explicit_classes=(
             "OWNEnergyCommand",

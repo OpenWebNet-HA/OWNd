@@ -931,14 +931,14 @@
     "dimension_values": [
       "75"
     ],
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Automation dimension write: Set shutter position to 75%",
+    "mcp_notes": "Grammar-only: a DIMENSION 10 write. WHO_2.pdf / Encyclopedia who-2-automation/dimensions.md define DIMENSION 10 as request / response / event only (shutter status); the position write is DIMENSION 11 (*#2*WHERE*#11#PRIORITY*LEVEL##). Was labelled legrand-spec as 'Set shutter position to 75%'; no committed plant trace carries this frame, so it pins parser shape only and claims no meaning.",
     "roundtrip": true,
     "_file": "who02_automation.yaml"
   },
   {
-    "id": "cover.dim.write.tilt.30",
+    "id": "cover.dim.write.level.30.no_priority",
     "frame": "*#2*93*#11*30##",
     "direction": "dimension_write",
     "who": 2,
@@ -950,7 +950,7 @@
     ],
     "source": "legrand-spec",
     "mcp_valid": true,
-    "mcp_notes": "Automation dimension write: Set slat tilt angle to 30%",
+    "mcp_notes": "Automation dimension write: Go to level 30% without the priority parameter. Dimension 11 is absolute position (no slat-angle dimension exists in WHO 2); the SCS write form carries #PRIORITY (*#2*WHERE*#11#PRIORITY*LEVEL##, Encyclopedia who-2-automation/dimensions.md#dimension-11---go-to-level) and only the ZigBee variant omits it. Grammar fixture only; no builder emits this form.",
     "roundtrip": true,
     "_file": "who02_automation.yaml"
   },
@@ -2195,7 +2195,7 @@
     "where": "2",
     "source": "openwebnet4j",
     "mcp_valid": true,
-    "mcp_notes": "Burglar Alarm: Status request for zone 2",
+    "mcp_notes": "Burglar Alarm: openwebnet4j spelling of a zone 2 status request. The published zone request is *#5*#2## (Encyclopedia functional/who-5-alarm/protocol.md#zone-status-request, zone selector #N) and this prefix-less form is not on the page; OWNd accepts it and keeps WHERE 2 as given",
     "roundtrip": true,
     "_file": "who05_alarm.yaml"
   },
@@ -2221,7 +2221,7 @@
     "where": "0",
     "source": "openwebnet4j",
     "mcp_valid": true,
-    "mcp_notes": "Burglar Alarm: Silent alarm event for zone 0",
+    "mcp_notes": "Burglar Alarm: WHAT 2 is Disactivation (Encyclopedia functional/who-5-alarm/what.md); the silent alarm is WHAT 31. WHERE 0 is the central unit. The earlier label 'Silent alarm event for zone 0' was the judge catalog wording, not the published meaning; the record id is kept for stability",
     "roundtrip": true,
     "_file": "who05_alarm.yaml"
   },
@@ -2247,7 +2247,7 @@
     "where": "0",
     "source": "community-plant-capture",
     "mcp_valid": true,
-    "mcp_notes": "Burglar Alarm: Arm system total/away captured on MH202 (MyHOME#564 comment 5917195080)",
+    "mcp_notes": "Burglar Alarm: WHAT 1 Activation (central-unit state, Encyclopedia functional/who-5-alarm/what.md), captured on MH202 (MyHOME#564 comment 5917195080). Not by itself an arm: the F454 trace (MyHOME#311) sends it on every disarm and only WHAT 8 means armed",
     "roundtrip": true,
     "_file": "who05_alarm.yaml"
   },
@@ -2773,6 +2773,124 @@
     "_file": "who13_gateway.yaml"
   },
   {
+    "id": "gateway.resp.internal.time.f461.999",
+    "frame": "*#13**0*17*45*24*999##",
+    "direction": "dimension_response",
+    "who": 13,
+    "what": null,
+    "where": "",
+    "dimension": 0,
+    "dimension_values": [
+      "17",
+      "45",
+      "24",
+      "999"
+    ],
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Gateway Management: BTicino F461 FW 2.0.11 answers *#13**0## with the time and the timezone field 999 (no timezone configured), decoded as a naive 17:45:24 (MyHOME#865, tests/fixtures/traces/f461_live_2026-11-04/myhome_sweep_F461_all_2026-11-04T15-45-56.json)",
+    "roundtrip": true,
+    "_file": "who13_gateway.yaml"
+  },
+  {
+    "id": "gateway.resp.internal.datetime.f461.999",
+    "frame": "*#13**22*22*59*16*999*01*26*10*2026##",
+    "direction": "dimension_response",
+    "who": 13,
+    "what": null,
+    "where": "",
+    "dimension": 22,
+    "dimension_values": [
+      "22",
+      "59",
+      "16",
+      "999",
+      "01",
+      "26",
+      "10",
+      "2026"
+    ],
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Gateway Management: BTicino F461 FW 2.0.11 reports Dimension 22 with the timezone field 999 (no timezone configured), weekday Monday (01) 2026-10-26 22:59:16, decoded as a naive datetime (MyHOME, tests/fixtures/traces/f461_who13_clock_tz_live_2026-10-26/myhome_trace_F461_who13_clock_tz_live_2026-10-26.json)",
+    "roundtrip": true,
+    "_file": "who13_gateway.yaml"
+  },
+  {
+    "id": "gateway.resp.firmware.version.f461",
+    "frame": "*#13**16*2*0*11##",
+    "direction": "dimension_response",
+    "who": 13,
+    "what": null,
+    "where": "",
+    "dimension": 16,
+    "dimension_values": [
+      "2",
+      "0",
+      "11"
+    ],
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Gateway Management: BTicino F461 reports firmware 2.0.11 on Dimension 16 (MyHOME#865, f461_live_2026-11-04 sweep)",
+    "roundtrip": true,
+    "_file": "who13_gateway.yaml"
+  },
+  {
+    "id": "gateway.resp.kernel.version.f461",
+    "frame": "*#13**23*5*10*35##",
+    "direction": "dimension_response",
+    "who": 13,
+    "what": null,
+    "where": "",
+    "dimension": 23,
+    "dimension_values": [
+      "5",
+      "10",
+      "35"
+    ],
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Gateway Management: BTicino F461 FW 2.0.11 reports kernel 5.10.35 on Dimension 23 (MyHOME#865, f461_live_2026-11-04 sweep)",
+    "roundtrip": true,
+    "_file": "who13_gateway.yaml"
+  },
+  {
+    "id": "gateway.resp.distribution.version.f461",
+    "frame": "*#13**24*2*26*4##",
+    "direction": "dimension_response",
+    "who": 13,
+    "what": null,
+    "where": "",
+    "dimension": 24,
+    "dimension_values": [
+      "2",
+      "26",
+      "4"
+    ],
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Gateway Management: BTicino F461 FW 2.0.11 reports distribution 2.26.4 on Dimension 24 (MyHOME#865, f461_live_2026-11-04 sweep)",
+    "roundtrip": true,
+    "_file": "who13_gateway.yaml"
+  },
+  {
+    "id": "gateway.resp.model.device_type.hl4684.23",
+    "frame": "*#13**15*23##",
+    "direction": "dimension_response",
+    "who": 13,
+    "what": null,
+    "where": "",
+    "dimension": 15,
+    "dimension_values": [
+      "23"
+    ],
+    "source": "community-plant-capture",
+    "mcp_valid": true,
+    "mcp_notes": "Gateway Management: BTicino H/L4684 FW 6.0.11 answers *#13**15## with code 23 (MyHOME#466, tests/fixtures/traces/issue_466/config_entry-myhome_HL4684_fw6_0_11.json); decoded through WHO13_DEVICE_TYPES",
+    "roundtrip": true,
+    "_file": "who13_gateway.yaml"
+  },
+  {
     "id": "cen.event.press.btn2.11",
     "frame": "*15*02*11##",
     "direction": "event",
@@ -2898,9 +3016,9 @@
     "what": null,
     "where": "1",
     "dimension": 1,
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Energy Management: Request instantaneous active power from meter 1",
+    "mcp_notes": "Grammar-only: DIMENSION 1 is not defined for SCS WHO 18 (active power is DIMENSION 113) and WHERE 1 is outside the 1N / 5N / 7N#0 families; parsed with message_type None",
     "roundtrip": true,
     "_file": "who18_energy.yaml"
   },
@@ -2915,9 +3033,9 @@
     "dimension_values": [
       "1450"
     ],
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Energy Management: Meter 1 reports 1450 Watts instantaneous active power",
+    "mcp_notes": "Grammar-only: DIMENSION 1 is not defined for SCS WHO 18, so 1450 carries no documented unit; parsed with message_type None",
     "roundtrip": true,
     "_file": "who18_energy.yaml"
   },
@@ -2929,9 +3047,9 @@
     "what": null,
     "where": "1",
     "dimension": 11,
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Energy Management: Request cumulative energy totalizer for meter 1",
+    "mcp_notes": "Grammar-only: DIMENSION 11 is the ZigBee variant's Voltage dimension, not an SCS totalizer (DIMENSION 51); parsed with message_type None",
     "roundtrip": true,
     "_file": "who18_energy.yaml"
   },
@@ -2946,9 +3064,9 @@
     "dimension_values": [
       "00452300"
     ],
-    "source": "legrand-spec",
+    "source": "conflict",
     "mcp_valid": true,
-    "mcp_notes": "Energy Management: Cumulative energy reports 45,230.0 kWh",
+    "mcp_notes": "Grammar-only: DIMENSION 11 is the ZigBee variant's Voltage dimension; 00452300 is kept raw without a unit (SCS WHO 18 energy values are Wh); parsed with message_type None",
     "roundtrip": true,
     "_file": "who18_energy.yaml"
   },

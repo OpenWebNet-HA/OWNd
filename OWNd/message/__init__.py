@@ -84,6 +84,9 @@ from .door_entry import (
     PTZ_MOVE_UP,
 )
 from .energy import (
+    is_who18_dimension_52,
+    is_who18_dimension_52_crash_form,
+    is_who18_dimension_52_four_digit_year,
     MESSAGE_TYPE_ACTIVE_POWER,
     MESSAGE_TYPE_AUTO_UPDATE_INTERVAL,
     MESSAGE_TYPE_CURRENT_DAY_CONSUMPTION,
@@ -321,6 +324,9 @@ __all__ = [
     "_zone_state",
     "_zone_state_text",
     "is_who4_dimension_22",
+    "is_who18_dimension_52",
+    "is_who18_dimension_52_crash_form",
+    "is_who18_dimension_52_four_digit_year",
     "is_who4_dimension_22_crash_form",
     "OWNHeatingEvent",
     "OWNHeatingCommand",

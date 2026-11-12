@@ -265,6 +265,47 @@ def test_malformed_gateway_clock_is_rejected(frame: str) -> None:
         OWNMessage.parse(frame)
 
 
+def test_gateway_parsed_clock_frames_keep_the_broadcasting_log() -> None:
+    """Parsed write and reply frames keep the historical log text.
+
+    MyHOME pins "Gateway broadcasting internal time: 22:50:00." for the write
+    form ``*#13**#0*22*50*00*##`` (tests/test_f461_who13_clock_tz_live_2026_10_26_trace.py);
+    the builders keep their own "Setting gateway ..." text. No behaviour change.
+    """
+    assert (
+        OWNMessage.parse("*#13**#0*11*30*00*002##").human_readable_log
+        == "Gateway broadcasting internal time: 11:30:00+02:00."
+    )
+    assert (
+        OWNMessage.parse("*#13**#1*03*07*10*2026##").human_readable_log
+        == "Gateway broadcasting internal date: 2026-10-07."
+    )
+    assert (
+        OWNMessage.parse("*#13**#22*17*33*54*002*05*11*09*2026##").human_readable_log
+        == "Gateway broadcasting internal datetime: 2026-09-11 17:33:54+02:00."
+    )
+    assert (
+        OWNMessage.parse("*#13**#0*22*50*00*##").human_readable_log
+        == "Gateway broadcasting internal time: 22:50:00."
+    )
+    assert (
+        OWNGatewayCommand("*#13**0*20*54*00*002##").human_readable_log
+        == "Gateway broadcasting internal time: 20:54:00+02:00."
+    )
+    assert (
+        OWNGatewayCommand("*#13**1*04*15*10*2026##").human_readable_log
+        == "Gateway broadcasting internal date: 2026-10-15."
+    )
+    assert (
+        OWNGatewayCommand("*#13**22*16*37*03*001*05*25*09*2026##").human_readable_log
+        == "Gateway broadcasting internal datetime: 2026-09-25 16:37:03+01:00."
+    )
+    assert (
+        OWNGatewayCommand.set_time(datetime.time(11, 30, tzinfo=datetime.timezone.utc)).human_readable_log
+        == "Setting gateway time to: 11:30:00+00:00."
+    )
+
+
 def test_gateway_time_command_has_no_empty_trailing_value() -> None:
     message = OWNGatewayCommand.set_time_to_now("UTC")
 
