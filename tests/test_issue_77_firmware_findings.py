@@ -105,14 +105,27 @@ def test_fix1_central_auto_restores_the_last_weekly_program_on_the_99_zone_unit(
     and forwarded on the bus, but ``*#4*#0##`` still answered ``*4*203*#0##`` 2 s and 8 s
     later; ``*4*3100*#0##`` (ACK 97 ms / 111 ms) was answered within 0.15 s by
     ``*4*2101*#0##``, ``*4*21*#0##``, ``*4*31*#0##``, ``*4*22*#0##`` and the zones went
-    back under the program. The 4-zone central form ``#0#C`` keeps 311 (no trace).
+    back under the program. The 4-zone central form ``#0#C`` gets the same command:
+    no live trace exists for it, but the firmware replay of 2026-11-13 shows
+    ``*4*3100*#0#2##`` leaving all 13 emulated gateways with the central command byte
+    ``C1``, while ``*4*311*#0#2##`` leaves with the zone byte ``C2`` and is dropped by
+    H4684 020054 and MH200 020102 (firmware oracle ``thermo-central-mode``).
+
+    OWNd's own parser reads the frame back as automatic with no program number, as
+    the other modes of ``test_fix1_central_mode_uses_the_who4_what_table`` are read
+    back (``tests/test_who4_central_restore_whats.py``).
     """
     command = OWNHeatingCommand.set_central_mode("#0", CLIMATE_MODE_AUTO)
     assert str(command) == "*4*3100*#0##"
     assert command.human_readable_log == (
         "Setting Central Unit #0 back to its last weekly program (code 3100)."
     )
-    assert str(OWNHeatingCommand.set_central_mode("#0#2", CLIMATE_MODE_AUTO)) == "*4*311*#0#2##"
+    sent = OWNHeatingEvent(str(command))
+    assert sent.mode == CLIMATE_MODE_AUTO
+    assert sent.program is None
+    four_zone = OWNHeatingCommand.set_central_mode("#0#2", CLIMATE_MODE_AUTO)
+    assert str(four_zone) == "*4*3100*#0#2##"
+    assert OWNHeatingEvent(str(four_zone)).mode == CLIMATE_MODE_AUTO
     assert OWNHeatingEvent("*4*311*#0#2##").mode == CLIMATE_MODE_AUTO
 
     answer = OWNHeatingEvent("*4*2101*#0##")
