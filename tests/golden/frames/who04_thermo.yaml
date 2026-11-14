@@ -239,6 +239,7 @@
   who: 4
   what: 1
   where: "#0"
+  where_param: ["1"]
   source: encyclopedia
   mcp_valid: true
   mcp_notes: "Set 4-zone Central Unit to Heating mode, WHAT 1 = heating (WHO 4 table in Encyclopedia functional/who-4-temperature-control/what.md; MyHomeServer1 firmware emits a bus frame for it (OWNd#77); libqtdevices TS10_1_0_23 sends WHAT 1 to a 4-zone central too, but its test addresses that central as #1#2, not #0#1. The judge warns that the WHAT is not standard: its WHO 4 catalog still has the 100..103 reading this replaced)"
@@ -247,13 +248,6 @@
     class: OWNHeatingCommand
     method: set_central_mode
     args: ["#0#1", "heat"]
-
-# ── DIMENSION 7 zone state and DIMENSION 5, MyHomeServer1 + Home+Control (MyHOME#429, OWNd#58) ──
-# Dimension 7 is not in WHO_4 2.pdf; openwebnet-mcp accepts the grammar and
-# warns that it is undocumented. Meaning per the MyHOME_Suite ScenarioDevices
-# templates (Encyclopedia who-4-temperature-control/dimensions.md):
-# *#4*ZONE*7*CONTEXT*STATE[*TTTT]##, context 1 heating / 2 cooling,
-# state 1 setpoint / 2 protection.
 
 - id: thermo.capture.dim7.cooling_setpoint.z2
   frame: "*#4*2*7*2*1*0260##"
@@ -475,4 +469,654 @@
     method: write_temperature
     args: ["50", 21.5]
 
+- id: thermo.resp.central.status.cu99.off
+  frame: "*4*202*#0##"
+  direction: event
+  who: 4
+  what: 202
+  where: "#0"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Central Unit #0 conditional OFF mode response to *#4*#0## (F454 FW 1.0.34, issue #629 trace 11:14:00)"
+  roundtrip: true
 
+- id: thermo.resp.central.status.cu99.flag21
+  frame: "*4*21*#0##"
+  direction: event
+  who: 4
+  what: 21
+  where: "#0"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Central Unit #0 remote control enabled operational flag (F454 FW 1.0.34, issue #629 trace 11:14:00)"
+  roundtrip: true
+
+- id: thermo.resp.central.status.cu99.flag22
+  frame: "*4*22*#0##"
+  direction: event
+  who: 4
+  what: 22
+  where: "#0"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Central Unit #0 operational status flag (F454 FW 1.0.34, issue #629 trace 11:14:00)"
+  roundtrip: true
+
+- id: thermo.resp.central.status.cu99.flag24
+  frame: "*4*24*#0##"
+  direction: event
+  who: 4
+  what: 24
+  where: "#0"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Central Unit #0 operational status flag (F454 FW 1.0.34, issue #629 trace 11:14:00)"
+  roundtrip: true
+
+- id: thermo.resp.actuator.status.on.zone2.act1
+  frame: "*#4*2#1*20*1##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "2"
+  where_param: ["1"]
+  dimension: 20
+  dimension_values: ["1"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 2 actuator 1 status ON (heating)"
+  roundtrip: true
+
+- id: thermo.resp.actuator.status.off.zone2.act1
+  frame: "*#4*2#1*20*0##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "2"
+  where_param: ["1"]
+  dimension: 20
+  dimension_values: ["0"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 2 actuator 1 status OFF (idle)"
+  roundtrip: true
+
+- id: thermo.resp.probe.status.zone2.heat.280
+  frame: "*#4*2*12*0280*3##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "2"
+  dimension: 12
+  dimension_values: ["0280", "3"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 2 complete probe status target 28.0°C in Heating mode"
+  roundtrip: true
+
+- id: thermo.resp.setpoint.zone2.heat.280
+  frame: "*#4*2*14*0280*3##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "2"
+  dimension: 14
+  dimension_values: ["0280", "3"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 2 probe setpoint 28.0°C in Heating mode"
+  roundtrip: true
+
+- id: thermo.resp.temp.zone2.262
+  frame: "*#4*2*0*0262##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "2"
+  dimension: 0
+  dimension_values: ["0262"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 2 measured temperature 26.2°C"
+  roundtrip: true
+
+- id: thermo.resp.setpoint.zone2.heat.170
+  frame: "*#4*2*14*0170*3##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "2"
+  dimension: 14
+  dimension_values: ["0170", "3"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 2 configured comfort setpoint 17.0°C"
+  roundtrip: true
+
+- id: thermo.resp.offset.zone2.0
+  frame: "*#4*2*13*00##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "2"
+  dimension: 13
+  dimension_values: ["00"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 2 local knob offset 0.0°C"
+  roundtrip: true
+
+- id: thermo.resp.offset.zone4.plus1
+  frame: "*#4*4*13*01##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "4"
+  dimension: 13
+  dimension_values: ["01"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 4 local knob offset +1.0°C (issue #466 capture)"
+  roundtrip: true
+
+- id: thermo.resp.offset.zone4.minus1
+  frame: "*#4*4*13*11##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "4"
+  dimension: 13
+  dimension_values: ["11"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 4 local knob offset -1.0°C (issue #466 capture)"
+  roundtrip: true
+
+- id: thermo.capture.dim20.write.fancoil_0pct.z1.act3
+  frame: "*#4*1#3*#20*100##"
+  direction: dimension_write
+  who: 4
+  what: null
+  where: "1"
+  where_param: ["3"]
+  dimension: 20
+  dimension_values: ["100"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "MyHomeServer1 (2.87.13) spontaneous #20 write form preceding *#4*1#3*20*100## by ~45 ms for Zone 1 actuator 3 (Sabiana 0-10 V fan coil via F459 interface at 0% OFF, MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.capture.dim20.status.fancoil_0pct.z1.act3
+  frame: "*#4*1#3*20*100##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "1"
+  where_param: ["3"]
+  dimension: 20
+  dimension_values: ["100"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Zone 1 actuator 3 status 100 (0% 0-10 V proportional output = stopped/idle; Sabiana fan coil via F459 interface on MyHomeServer1 2.87.13, MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.capture.dim20.write.fancoil_0pct.z2.act3
+  frame: "*#4*2#3*#20*100##"
+  direction: dimension_write
+  who: 4
+  what: null
+  where: "2"
+  where_param: ["3"]
+  dimension: 20
+  dimension_values: ["100"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "MyHomeServer1 (2.87.13) spontaneous #20 write form preceding *#4*2#3*20*100## by ~45 ms for Zone 2 actuator 3 at 100 (0% 0-10 V OFF, MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.capture.dim20.status.fancoil_0pct.z2.act3
+  frame: "*#4*2#3*20*100##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "2"
+  where_param: ["3"]
+  dimension: 20
+  dimension_values: ["100"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Zone 2 actuator 3 status 100 (0% 0-10 V proportional output = stopped/idle; Sabiana fan coil via F459 interface on MyHomeServer1 2.87.13, MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.capture.dim20.write.valve_off.z2.act1
+  frame: "*#4*2#1*#20*0##"
+  direction: dimension_write
+  who: 4
+  what: null
+  where: "2"
+  where_param: ["1"]
+  dimension: 20
+  dimension_values: ["0"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "MyHomeServer1 (2.87.13) spontaneous #20 write form preceding *#4*2#1*20*0## by 49 ms when Zone 2 floor-heating valve #1 closes (MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.capture.pump_release.zone2.pump1
+  frame: "*4*4002#2*0#1##"
+  direction: event
+  who: 4
+  what: "4002#2"
+  where: "0"
+  where_param: ["1"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Circulation pump 0#1 demand-release frame naming Zone 2 (WHAT=4002#2, WHERE=0#1), emitted ~1.2 s before Zone 2 valve #1 reports OFF (MyHomeServer1 2.87.13 capture, MyHOME#908; openwebnet-mcp accepts grammar and warns 4002#2 is non-standard)"
+  roundtrip: true
+
+- id: thermo.capture.pump_release.zone2
+  frame: "*4*4002*2##"
+  direction: event
+  who: 4
+  what: 4002
+  where: "2"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Zone 2 circulation-pump demand release (WHAT=4002, WHERE=2), emitted 59 ms after *4*4002#2*0#1## (MyHomeServer1 2.87.13 capture, MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.capture.humidity.zone1.60
+  frame: "*#4*1*60*60##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "1"
+  dimension: 60
+  dimension_values: ["60"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Zone 1 relative humidity 60% reported by H4691 room probe (Dimension 60, MyHomeServer1 2.87.13 capture, MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.resp.valves.extended_fancoil_off_speed1.zone1
+  frame: "*#4*1*19*0*14##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "1"
+  dimension: 19
+  dimension_values: ["0", "14"]
+  source: encyclopedia
+  mcp_valid: true
+  mcp_notes: "Zone 1 valve status: cooling OFF (0) and heating fan-coil OFF at speed 1 (14; MyHomeServer1 bt_termo 0x11e34..0x11e8c extended range 14..16 <-> SCS '24'..'26', ownkb:claim:c003275, MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.capture.req.offset.zone88
+  frame: "*#4*88*13##"
+  direction: dimension_request
+  who: 4
+  what: null
+  where: "88"
+  dimension: 13
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Startup local knob offset poll (Dimension 13) on zone 88; answered in 83-92 ms on H/L4684 FW 6.0.11 (@andrea-mag, MyHOME#466 comment 6846511850)"
+  roundtrip: true
+
+- id: thermo.capture.resp.offset.zone88.minus3
+  frame: "*#4*88*13*13##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "88"
+  dimension: 13
+  dimension_values: ["13"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 88 local knob offset reply OL=13 (-3 offset in normal mode) on H/L4684 FW 6.0.11 (@andrea-mag, MyHOME#466 comment 6846511850)"
+  roundtrip: true
+
+- id: thermo.capture.event.manual_heating.subordinate_zone33
+  frame: "*4*110*#33##"
+  direction: event
+  who: 4
+  what: 110
+  where: "#33"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Manual heating mode broadcast on subordinate central-unit zone #33 on H/L4684 FW 6.0.11 (@andrea-mag, MyHOME#466 comment 6846511850)"
+  roundtrip: true
+
+- id: thermo.capture.actuator.status.off.addr0.act3
+  frame: "*#4*0#3*20*0##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "0"
+  where_param: ["3"]
+  dimension: 20
+  dimension_values: ["0"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: General/zone-0 actuator 3 status OFF (Dimension 20 = 0) on H/L4684 FW 6.0.11 (@andrea-mag, MyHOME#466 comment 6846511850)"
+  roundtrip: true
+
+- id: thermo.capture.actuator.status.valve_off_5.zone33.act1
+  frame: "*#4*33#1*20*5##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "33"
+  where_param: ["1"]
+  dimension: 20
+  dimension_values: ["5"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 33 actuator 1 status OFF_5 (Dimension 20 = 5, closed/releasing) on H/L4684 FW 6.0.11 (@andrea-mag, MyHOME#466 comment 6846511850)"
+  roundtrip: true
+
+- id: thermo.capture.resp.fan_coil_speed.auto.zone1
+  frame: "*#4*1*5*0##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "1"
+  dimension: 5
+  dimension_values: ["0"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 1 fan-coil speed AUTO (Dimension 5 = 0) on MyHomeServer1 2.87.13 (@xmavgithub, MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.capture.dim20.write.valve_off_5.z2.act1
+  frame: "*#4*2#1*#20*5##"
+  direction: dimension_write
+  who: 4
+  what: null
+  where: "2"
+  where_param: ["1"]
+  dimension: 20
+  dimension_values: ["5"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Paired #20 actuator status write OFF_5 (5) on zone 2 actuator 1 (F461 FW 2.0.11 + 3550 central unit capture, MyHOME#912)"
+  roundtrip: true
+
+- id: thermo.capture.dim20.write.valve_open_8.z2.act1
+  frame: "*#4*2#1*#20*8##"
+  direction: dimension_write
+  who: 4
+  what: null
+  where: "2"
+  where_param: ["1"]
+  dimension: 20
+  dimension_values: ["8"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Paired #20 actuator status write OPEN_8 (8, opening valve) on zone 2 actuator 1 (F461 FW 2.0.11 + 3550 central unit capture, MyHOME#912)"
+  roundtrip: true
+
+- id: thermo.capture.dim20.status.valve_open_8.z2.act1
+  frame: "*#4*2#1*20*8##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "2"
+  where_param: ["1"]
+  dimension: 20
+  dimension_values: ["8"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 2 actuator 1 status OPEN_8 (Dimension 20 = 8) on F455/F461 + 3550 central unit (MyHOME#912)"
+  roundtrip: true
+
+- id: thermo.capture.dim20.write.actuator_on_6.z4.act2
+  frame: "*#4*4#2*#20*6##"
+  direction: dimension_write
+  who: 4
+  what: null
+  where: "4"
+  where_param: ["2"]
+  dimension: 20
+  dimension_values: ["6"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Paired #20 actuator status write ON_6 (6) on zone 4 actuator 2 (F461 FW 2.0.11 + 3550 central unit capture, MyHOME#912)"
+  roundtrip: true
+
+- id: thermo.capture.dim20.status.actuator_on_6.z4.act2
+  frame: "*#4*4#2*20*6##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "4"
+  where_param: ["2"]
+  dimension: 20
+  dimension_values: ["6"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 4 actuator 2 status ON_6 (Dimension 20 = 6) on F455/F461 + 3550 central unit (MyHOME#912)"
+  roundtrip: true
+
+- id: thermo.capture.write.setpoint.cool.zone2.200
+  frame: "*#4*2*#14*0200*2##"
+  direction: dimension_write
+  who: 4
+  what: null
+  where: "2"
+  dimension: 14
+  dimension_values: ["0200", "2"]
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Standalone zone 2 manual cooling setpoint write 20.0C (Dimension #14, M=2; F455/F461 + 3550 central unit capture, MyHOME#912)"
+  roundtrip: true
+  builder:
+    class: OWNHeatingCommand
+    method: set_temperature
+    args: ["2", 20.0, "cool", true]
+
+- id: thermo.capture.central.off_conditioning.cu99
+  frame: "*4*203*#0##"
+  direction: event
+  who: 4
+  what: 203
+  where: "#0"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: 99-zone central unit (#0) reports conditioning OFF (WHAT 203; F455/F461 + 3550 capture, MyHOME#912)"
+  roundtrip: true
+
+- id: thermo.capture.central.thermal_protection.cu99
+  frame: "*4*31*#0##"
+  direction: event
+  who: 4
+  what: 31
+  where: "#0"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: 99-zone central unit (#0) reports central unit thermal protection / status code 31 (F455/F461 + 3550 capture, MyHOME#912)"
+  roundtrip: true
+
+- id: thermo.capture.event.auto_cooling.subordinate_zone2
+  frame: "*4*211*#2##"
+  direction: event
+  who: 4
+  what: 211
+  where: "#2"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Automatic cooling weekly-program broadcast (WHAT 211) on subordinate zone #2 (F455/F461 + 3550 capture, MyHOME#912)"
+  roundtrip: true
+
+- id: thermo.capture.event.auto_generic.subordinate_zone2
+  frame: "*4*311*#2##"
+  direction: event
+  who: 4
+  what: 311
+  where: "#2"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Automatic generic mode broadcast (WHAT 311) on subordinate zone #2 (F455/F461 + 3550 capture, MyHOME#912)"
+  roundtrip: true
+
+- id: thermo.capture.event.off_generic.zone2
+  frame: "*4*303*2##"
+  direction: event
+  who: 4
+  what: 303
+  where: "2"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 2 reports generic OFF mode (WHAT 303; F455/F461 + 3550 capture, MyHOME#912)"
+  roundtrip: true
+
+- id: thermo.capture.event.heating.zone1
+  frame: "*4*1*1##"
+  direction: event
+  who: 4
+  what: 1
+  where: "1"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 1 reports heating mode active (WHAT 1; MyHomeServer1 2.87.13 Sabiana fan-coil capture, MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.capture.event.cooling.zone2
+  frame: "*4*0*2##"
+  direction: event
+  who: 4
+  what: 0
+  where: "2"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Zone 2 reports conditioning/cooling mode active (WHAT 0; F455/F461 + 3550 capture, MyHOME#912)"
+  roundtrip: true
+
+- id: thermo.capture.req.status.zone1
+  frame: "*#4*1##"
+  direction: status_request
+  who: 4
+  what: null
+  where: "1"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Dimensionless zone 1 status request (*#4*1##; F459/F461 zone status sweep, MyHOME#908)"
+  roundtrip: true
+  builder:
+    class: OWNHeatingCommand
+    method: status
+    args: ["1"]
+
+- id: thermo.capture.req.valves.zone1
+  frame: "*#4*1*19##"
+  direction: dimension_request
+  who: 4
+  what: null
+  where: "1"
+  dimension: 19
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Request Dimension 19 valve status on zone 1 (MyHOME#908)"
+  roundtrip: true
+  builder:
+    class: OWNHeatingCommand
+    method: valves_status
+    args: ["1"]
+
+- id: thermo.capture.req.actuators.zone1
+  frame: "*#4*1*20##"
+  direction: dimension_request
+  who: 4
+  what: null
+  where: "1"
+  dimension: 20
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Request Dimension 20 actuator status on zone 1 (MyHOME#908)"
+  roundtrip: true
+  builder:
+    class: OWNHeatingCommand
+    method: actuators_status
+    args: ["1"]
+
+- id: thermo.resp.valves.both_off.zone1
+  frame: "*#4*1*19*0*0##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "1"
+  dimension: 19
+  dimension_values: ["0", "0"]
+  source: encyclopedia
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Dimension 19 conditioning=0 OFF, heating=0 OFF on zone 1 (MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.resp.valves.cond_fancoil_off.zone2
+  frame: "*#4*2*19*5*0##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "2"
+  dimension: 19
+  dimension_values: ["5", "0"]
+  source: encyclopedia
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Dimension 19 conditioning=5 fan-coil OFF, heating=0 OFF on zone 2 (MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.resp.dim20.proportional_55pct.zone1.act3
+  frame: "*#4*1#3*20*155##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "1"
+  where_param: ["3"]
+  dimension: 20
+  dimension_values: ["155"]
+  source: encyclopedia
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Dimension 20 proportional 0-10 V 55% active output (code 155 in 101..200) on zone 1 actuator 3 (MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.write.dim20.proportional_100pct.zone7.act1
+  frame: "*#4*7#1*#20*200##"
+  direction: dimension_write
+  who: 4
+  what: null
+  where: "7"
+  where_param: ["1"]
+  dimension: 20
+  dimension_values: ["200"]
+  source: encyclopedia
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: Dimension 20 write setting proportional 0-10 V 100% output (code 200) on zone 7 actuator 1 (MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.resp.dim20.extended_fancoil_off_speed2.zone1.act2
+  frame: "*#4*1#2*20*15##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "1"
+  where_param: ["2"]
+  dimension: 20
+  dimension_values: ["15"]
+  source: encyclopedia
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: MyHomeServer1 extended fan-coil OFF speed 2 (code 15, SCS 25) on zone 1 actuator 2 (MyHOME#908)"
+  roundtrip: true
+
+- id: thermo.resp.dim20.extended_fancoil_off_speed3.zone1.act2
+  frame: "*#4*1#2*20*16##"
+  direction: dimension_response
+  who: 4
+  what: null
+  where: "1"
+  where_param: ["2"]
+  dimension: 20
+  dimension_values: ["16"]
+  source: encyclopedia
+  mcp_valid: true
+  mcp_notes: "Thermoregulation: MyHomeServer1 extended fan-coil OFF speed 3 (code 16, SCS 26) on zone 1 actuator 2 (MyHOME#908)"
+  roundtrip: true

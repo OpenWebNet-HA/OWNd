@@ -308,7 +308,12 @@ def test_every_golden_dimension_7_capture_is_a_zone_state(frame: str) -> None:
     assert isinstance(event, OWNHeatingEvent)
     assert event.message_type == MESSAGE_TYPE_ZONE_STATE
     assert event.zone_context in (ZONE_CONTEXT_HEATING, ZONE_CONTEXT_COOLING)
-    assert event.zone_state in (ZONE_STATE_SETPOINT, ZONE_STATE_PROTECTION)
+    assert event.zone_state in (
+        ZONE_STATE_SETPOINT,
+        ZONE_STATE_PROTECTION,
+        ZONE_STATE_COMFORT,
+        ZONE_STATE_ECO,
+    )
     assert (event.set_temperature is not None) == (event.zone_state == ZONE_STATE_SETPOINT)
 
 

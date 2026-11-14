@@ -118,3 +118,51 @@
   mcp_valid: true
   mcp_notes: "Burglar Alarm: documented star form of the system address; OWNd normalises * to 0 so it shares an identity with *5*1*0##"
   roundtrip: true
+
+- id: alarm.req.status.cu
+  frame: "*#5*0##"
+  direction: status_request
+  who: 5
+  what: null
+  where: "0"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Plant A: Burglar Alarm status request for central unit (WHERE 0, captured on live MH200)"
+  roundtrip: true
+  builder:
+    class: OWNAlarmCommand
+    method: status
+    args: ["0"]
+
+- id: alarm.event.engage.cu
+  frame: "*5*8*0##"
+  direction: event
+  who: 5
+  what: 8
+  where: "0"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Burglar Alarm: Central unit system engaged"
+  roundtrip: true
+
+- id: alarm.event.intrusion.zone3
+  frame: "*5*15*#3##"
+  direction: event
+  who: 5
+  what: 15
+  where: "#3"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Burglar Alarm: Zone #3 intrusion alarm event"
+  roundtrip: true
+
+- id: alarm.req.status.zone_cu_1
+  frame: "*#5*#1##"
+  direction: status_request
+  who: 5
+  what: null
+  where: "#1"
+  source: community-plant-capture
+  mcp_valid: true
+  mcp_notes: "Burglar Alarm: Status request for central unit zone #1"
+  roundtrip: true
