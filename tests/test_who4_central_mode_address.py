@@ -81,21 +81,25 @@ def test_set_central_mode_refuses_a_plain_zone_for_every_mode(mode: str) -> None
     ("where", "frame"),
     [
         # ``#0``: the 3550 99-zone central unit (golden corpus
-        # ``thermo.cmd.central.mode.*.cu99``).
-        ("#0", "*4*311*#0##"),
+        # ``thermo.cmd.central.mode.*.cu99``); ``auto`` is the published program
+        # restore 3100 (``thermo.capture.central.restore_last_program.cu99``).
+        ("#0", "*4*3100*#0##"),
         # ``#0#C``: the 4695 4-zone central unit ``C``, 1..99 or 01..99
         # (MyHOME_Suite ``#0#[ZA][ZB]``, MHCatalogue 4695 ``ZAZB_CENTRAL``,
-        # golden corpus ``#0#1``).
-        ("#0#1", "*4*311*#0#1##"),
-        ("#0#4", "*4*311*#0#4##"),
-        ("#0#5", "*4*311*#0#5##"),
-        ("#0#05", "*4*311*#0#05##"),
-        ("#0#12", "*4*311*#0#12##"),
-        ("#0#99", "*4*311*#0#99##"),
+        # golden corpus ``#0#1``). Same command: 311 is a zone WHAT that the
+        # gateways translate with the zone command byte C2 and that H4684 /
+        # MH200 drop, 3100 is translated with the central command byte C1 on
+        # all 13 emulated gateways (firmware replay 2026-11-13, no live trace).
+        ("#0#1", "*4*3100*#0#1##"),
+        ("#0#4", "*4*3100*#0#4##"),
+        ("#0#5", "*4*3100*#0#5##"),
+        ("#0#05", "*4*3100*#0#05##"),
+        ("#0#12", "*4*3100*#0#12##"),
+        ("#0#99", "*4*3100*#0#99##"),
         # Surrounding whitespace is stripped, as ``actuators_status`` does.
-        (" #0 ", "*4*311*#0##"),
-        ("#0\n", "*4*311*#0##"),
-        (" #0#1\t", "*4*311*#0#1##"),
+        (" #0 ", "*4*3100*#0##"),
+        ("#0\n", "*4*3100*#0##"),
+        (" #0#1\t", "*4*3100*#0#1##"),
     ],
 )
 def test_set_central_mode_keeps_central_addresses(where: str, frame: str) -> None:
@@ -103,7 +107,7 @@ def test_set_central_mode_keeps_central_addresses(where: str, frame: str) -> Non
 
     assert str(command) == frame
     assert command.human_readable_log == (
-        f"Setting Central Unit {where.strip()} mode to 'auto' (code 311)."
+        f"Setting Central Unit {where.strip()} back to its last weekly program (code 3100)."
     )
 
 

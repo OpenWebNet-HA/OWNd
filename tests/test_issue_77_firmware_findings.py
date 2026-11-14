@@ -60,7 +60,6 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
         (CLIMATE_MODE_OFF, 303, CLIMATE_MODE_OFF),
         (CLIMATE_MODE_HEAT, 1, None),
         (CLIMATE_MODE_COOL, 0, None),
-        (CLIMATE_MODE_AUTO, 311, CLIMATE_MODE_AUTO),
         ("antifreeze", 102, CLIMATE_MODE_OFF),
         ("protection", 302, CLIMATE_MODE_OFF),
     ],
@@ -68,7 +67,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 def test_fix1_central_mode_uses_the_who4_what_table(
     where: str, mode: str, what: int, parsed_mode: str | None
 ) -> None:
-    """Central-unit modes use WHAT 303 / 1 / 0 / 311 / 102 / 302.
+    """Central-unit modes use WHAT 303 / 1 / 0 / 102 / 302 (``auto``: see the 3100 test).
 
     Firmware: 303, 1, 0, 311 and 102 produce a bus frame for ``#0`` and ``#0#2``;
     the old 100 / 101 / 110 produce none, and the old 102 (cool), 103 and 111
@@ -97,6 +96,41 @@ def test_fix1_central_mode_uses_the_who4_what_table(
     if what in (1, 0):
         assert event.message_type == MESSAGE_TYPE_SEASON
         assert event.season == (SEASON_HEATING if what == 1 else SEASON_CONDITIONING)
+
+
+def test_fix1_central_auto_restores_the_last_weekly_program_on_the_99_zone_unit() -> None:
+    """``auto`` on ``#0`` is ``*4*3100*#0##`` (WHO_4 2.pdf 1.6.8 p. 33, Encyclopedia what.md 3100).
+
+    Live 3550 behind an F461 2.0.11 (2026-11-12, two rounds): ``*4*311*#0##`` was ACKed
+    and forwarded on the bus, but ``*#4*#0##`` still answered ``*4*203*#0##`` 2 s and 8 s
+    later; ``*4*3100*#0##`` (ACK 97 ms / 111 ms) was answered within 0.15 s by
+    ``*4*2101*#0##``, ``*4*21*#0##``, ``*4*31*#0##``, ``*4*22*#0##`` and the zones went
+    back under the program. The 4-zone central form ``#0#C`` gets the same command:
+    no live trace exists for it, but the firmware replay of 2026-11-13 shows
+    ``*4*3100*#0#2##`` leaving all 13 emulated gateways with the central command byte
+    ``C1``, while ``*4*311*#0#2##`` leaves with the zone byte ``C2`` and is dropped by
+    H4684 020054 and MH200 020102 (firmware oracle ``thermo-central-mode``).
+
+    OWNd's own parser reads the frame back as automatic with no program number, as
+    the other modes of ``test_fix1_central_mode_uses_the_who4_what_table`` are read
+    back (``tests/test_who4_central_restore_whats.py``).
+    """
+    command = OWNHeatingCommand.set_central_mode("#0", CLIMATE_MODE_AUTO)
+    assert str(command) == "*4*3100*#0##"
+    assert command.human_readable_log == (
+        "Setting Central Unit #0 back to its last weekly program (code 3100)."
+    )
+    sent = OWNHeatingEvent(str(command))
+    assert sent.mode == CLIMATE_MODE_AUTO
+    assert sent.program is None
+    four_zone = OWNHeatingCommand.set_central_mode("#0#2", CLIMATE_MODE_AUTO)
+    assert str(four_zone) == "*4*3100*#0#2##"
+    assert OWNHeatingEvent(str(four_zone)).mode == CLIMATE_MODE_AUTO
+    assert OWNHeatingEvent("*4*311*#0#2##").mode == CLIMATE_MODE_AUTO
+
+    answer = OWNHeatingEvent("*4*2101*#0##")
+    assert answer.mode == CLIMATE_MODE_COOL
+    assert answer.program == 1
 
 
 def test_fix1_captured_central_unit_mode_parses_as_cooling() -> None:
