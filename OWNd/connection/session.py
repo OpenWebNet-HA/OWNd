@@ -154,6 +154,9 @@ class OWNSession:
         self._on_auth_error = on_auth_error
         self._last_error: OWNError | None = None
         self._connect_max_attempts_override: int | None = None
+        # True while connect() negotiates an attempt that a retry follows and
+        # that is the first of its loop: see _negotiate_exchange().
+        self._negotiation_close_is_routine = False
         self._connected = False
         # Enable OS-level TCP keepalive on the socket (event session only).
         self._tcp_keepalive = False
@@ -439,6 +442,13 @@ class OWNSession:
         )
 
         while True:
+            # A gateway that closes one negotiation and takes the next attempt
+            # a second later is routine (an MH201 3.6.36 event session,
+            # OpenWebNet-HA/MyHOME#916: twice in 24 h, with nothing lost). That
+            # one attempt is logged at DEBUG, like a routine event-session
+            # drop. A second failure in a row, and an attempt that no retry
+            # follows, keep their WARNING.
+            routine_close = False
             try:
                 # Bound the connect: open_connection has no timeout of its own.
                 (
@@ -449,7 +459,13 @@ class OWNSession:
                     timeout=CONNECT_TIMEOUT,
                 )
                 self._apply_tcp_keepalive()
-                result = await self._negotiate()
+                self._negotiation_close_is_routine = (
+                    retry_count == 0 and max_attempts > 1
+                )
+                try:
+                    result = await self._negotiate()
+                finally:
+                    self._negotiation_close_is_routine = False
                 if result.get("Success"):
                     self._last_error = None
                     self._set_connected(True)
@@ -477,6 +493,7 @@ class OWNSession:
                     return result
                 reason = f"negotiation failed ({msg})"
                 wait = max(1, retry_count * 2)
+                routine_close = msg == "connection_closed" and retry_count == 0
             except ConnectionResetError:
                 reason, wait = "connection reset", 60
                 last_attempt_error = OWNConnectionError(
@@ -525,7 +542,8 @@ class OWNSession:
                 if raise_on_error:
                     raise last_attempt_error
                 return None
-            self._logger.warning(
+            log_retry = self._logger.debug if routine_close else self._logger.warning
+            log_retry(
                 "%s %s session: %s. Retrying in %ss (attempt %d/%d).",
                 self._log_id,
                 self._type.capitalize(),
@@ -868,7 +886,12 @@ class OWNSession:
             # as a fatal error — so connect() retries it with back-off.
             error = True
             error_message = "connection_closed"
-            self._logger.warning(
+            log_close = (
+                self._logger.debug
+                if self._negotiation_close_is_routine
+                else self._logger.warning
+            )
+            log_close(
                 "%s Connection closed by the gateway while negotiating %s "
                 "session (busy or out of session slots?); will retry.",
                 self._log_id,

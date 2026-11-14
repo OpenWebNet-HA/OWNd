@@ -488,6 +488,147 @@ async def test_event_connection_loss_is_logged_at_debug() -> None:
     )
 
 
+_NEGOTIATION_CLOSE_LOG = (
+    "%s Connection closed by the gateway while negotiating %s "
+    "session (busy or out of session slots?); will retry."
+)
+_RETRY_LOG = "%s %s session: %s. Retrying in %ss (attempt %d/%d)."
+
+
+def _gateway_connections(*accepted: bool, before_close: bytes = b"") -> AsyncMock:
+    """``open_connection`` stand-in: one TCP connection per item.
+
+    ``False`` is a gateway that accepts the connection and closes it during the
+    negotiation, after sending ``before_close`` (OWNd reads the close as
+    ``IncompleteReadError``); ``True`` one that greets and accepts the session
+    of an open-range client.
+    """
+    connections = []
+    for accept in accepted:
+        reader = asyncio.StreamReader()
+        if accept:
+            reader.feed_data(b"*#*1##*#*1##")
+        else:
+            reader.feed_data(before_close)
+            reader.feed_eof()
+        connections.append((reader, FakeWriter()))
+    return AsyncMock(side_effect=connections)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("before_close", [b"", b"*#*1##"], ids=["before-greeting", "after-greeting"])
+async def test_one_negotiation_close_that_the_retry_recovers_is_logged_at_debug(
+    before_close: bytes,
+) -> None:
+    """MyHOME#916: an MH201 closed one event session negotiation, the retry 1 s later got in.
+
+    Nothing was lost, and Home Assistant showed two warnings for it.
+    """
+    session, _ = make_session(OWNEventSession, password=None)
+    logger = MagicMock()
+    session._logger = logger
+    sleep = AsyncMock()
+
+    with (
+        patch(
+            "OWNd.connection.session.asyncio.open_connection",
+            new=_gateway_connections(False, True, before_close=before_close),
+        ),
+        patch("OWNd.connection.session.asyncio.sleep", new=sleep),
+    ):
+        result = await session.connect()
+    try:
+        assert result == {"Success": True, "Message": None}
+        assert session.is_connected
+        sleep.assert_awaited_once_with(1)
+        logger.warning.assert_not_called()
+        logger.error.assert_not_called()
+        logger.debug.assert_any_call(_NEGOTIATION_CLOSE_LOG, session._log_id, "event")
+        logger.debug.assert_any_call(
+            _RETRY_LOG, session._log_id, "Event", "negotiation failed (connection_closed)", 1, 1, 5
+        )
+        assert session._negotiation_close_is_routine is False
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_second_negotiation_close_in_a_row_is_a_warning() -> None:
+    session, _ = make_session(OWNEventSession, password=None)
+    logger = MagicMock()
+    session._logger = logger
+
+    with (
+        patch(
+            "OWNd.connection.session.asyncio.open_connection",
+            new=_gateway_connections(False, False, True),
+        ),
+        patch("OWNd.connection.session.asyncio.sleep", new=AsyncMock()),
+    ):
+        result = await session.connect()
+    try:
+        assert result == {"Success": True, "Message": None}
+        assert [call.args for call in logger.warning.call_args_list] == [
+            (_NEGOTIATION_CLOSE_LOG, session._log_id, "event"),
+            (_RETRY_LOG, session._log_id, "Event", "negotiation failed (connection_closed)", 2, 2, 5),
+        ]
+        logger.debug.assert_any_call(_NEGOTIATION_CLOSE_LOG, session._log_id, "event")
+        logger.debug.assert_any_call(
+            _RETRY_LOG, session._log_id, "Event", "negotiation failed (connection_closed)", 1, 1, 5
+        )
+    finally:
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_negotiation_close_that_no_retry_follows_keeps_its_warning() -> None:
+    """The single fast attempt of ``OWNCommandSession.send`` and the config-flow test."""
+    session, _ = make_session(OWNCommandSession, password=None)
+    logger = MagicMock()
+    session._logger = logger
+
+    with patch(
+        "OWNd.connection.session.asyncio.open_connection",
+        new=_gateway_connections(False, False),
+    ):
+        session._connect_max_attempts_override = 1
+        assert await session.connect() is None
+        session._connect_max_attempts_override = None
+        assert await session.test_connection() == {
+            "Success": False,
+            "Message": "connection_closed",
+        }
+
+    assert [call.args for call in logger.warning.call_args_list] == [
+        (_NEGOTIATION_CLOSE_LOG, session._log_id, "command"),
+        (_NEGOTIATION_CLOSE_LOG, session._log_id, "command"),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_first_attempt_that_fails_otherwise_keeps_its_warning() -> None:
+    session, _ = make_session(OWNEventSession, password=None)
+    logger = MagicMock()
+    session._logger = logger
+    accepted = _gateway_connections(True)
+
+    with (
+        patch(
+            "OWNd.connection.session.asyncio.open_connection",
+            new=AsyncMock(side_effect=[ConnectionRefusedError(), *accepted.side_effect]),
+        ),
+        patch("OWNd.connection.session.asyncio.sleep", new=AsyncMock()),
+    ):
+        result = await session.connect()
+    try:
+        assert result == {"Success": True, "Message": None}
+        logger.warning.assert_called_once_with(
+            _RETRY_LOG, session._log_id, "Event", "connection refused", 1, 1, 5
+        )
+    finally:
+        await session.close()
+
+
 @pytest.mark.asyncio
 async def test_event_connection_loss_oversized_frame_is_warning() -> None:
     """An over-long frame is a protocol signal, not a session recycle."""

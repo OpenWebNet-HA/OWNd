@@ -4,6 +4,9 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Sessions (`OWNSession.connect`)**: one negotiation that the gateway closes and that the next attempt recovers is logged at `DEBUG` instead of `WARNING`, the way a routine event-session drop already is. An MH201 3.6.36 closed the negotiation of its event session twice in 24 h, the retry 1 s later got in and nothing was lost, and Home Assistant showed two warnings each time: "Connection closed by the gateway while negotiating event session (busy or out of session slots?); will retry." and "Event session: negotiation failed (connection_closed). Retrying in 1s (attempt 1/5)." (OpenWebNet-HA/MyHOME#916). The Encyclopedia lists a connection close among the accepted answers while a client awaits the session result (`protocol/sessions.md`, "State-machine requirements"). Unchanged: a second close in a row warns from attempt 2 on, a close that no retry follows (the single attempt of `OWNCommandSession.send`, `test_connection`) warns, every other first-attempt failure warns, and "could not be established after 5 attempts" warns. No change to the retry timing or to what `connect()` returns.
+
 ## [2.0.0b14] - 2026-11-14
 
 ### Added
