@@ -193,6 +193,12 @@ authorities:
         date: "2026-10-18"
         gateway: "BTicino F461, firmware 2.0.11 (WHO=13 code 200, WHO=1013 134.15.5.0)"
         devices: "BT-F411/4 lights (WHERE 06, 07, Group #1 Dim 15, General 0), BT-F411/2 5s timed shutter (WHERE 05) + unpopulated virtual cover (WHERE 25) command-translation bursts (*2*1000#0/1/2*W##), KW4691 Zone 2 (*#4*2*0*0249##) + Dimension #0 temperature write (*#4*50*#0*0215## ACKed in 155 ms), WHO=13 clock sync, and WHO=18 virtual energy meter (WHERE 51)"
+      - name: "Physical Bus Capture (BTicino F461 + Legrand F455 Live Plant, WHO 4 99-zone central unit 3550)"
+        reference: "https://github.com/OpenWebNet-HA/OWNd/pull/169"
+        author: "@gdluck"
+        date: "2026-11-12"
+        gateway: "BTicino F461, firmware 2.0.11 (command sessions and event monitor) and Legrand F455 Basic Gateway, firmware 1.0.76 (event monitor) on the same SCS bus"
+        devices: "99-zone central unit 3550 (#0), conditioning season, switched OFF first (*4*203*#0##): *4*311*#0## ACKed and forwarded (F455 monitor 16:08:35.04 UTC), no 3550 frame, *#4*#0## still *4*203*#0## 2 s and 8 s later; *4*3100*#0## ACKed after 97 / 111 ms and answered within 0.15 s by *4*2101*#0##, *4*21*#0##, *4*31*#0##, *4*22*#0## (16:08:55 and 16:09:35 UTC). Fixtures thermo.capture.central.restore_last_program.cu99, .program1.conditioning.cu99, .auto_generic.cu99.no_effect"
     role: "Provides authentic on-wire bus frames and status replies captured from live physical hardware."
 
   community_capture_cen_plus:
