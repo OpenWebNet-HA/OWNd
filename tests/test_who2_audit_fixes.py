@@ -84,7 +84,7 @@ def test_golden_corpus_dimension_10_write_is_conflict_and_no_tilt() -> None:
     golden_readme = (REPO_ROOT / "tests" / "golden" / "README.md").read_text(encoding="utf-8")
     match = re.search(r"## Supported Subsystems Catalog \((\d+) Fixtures\)", golden_readme)
     assert match is not None
-    assert int(match.group(1)) == len(frames) == 172
+    assert int(match.group(1)) == len(frames) == 175
 
 
 @pytest.mark.parametrize("builder", BUILDERS)

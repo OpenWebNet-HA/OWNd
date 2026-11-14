@@ -475,11 +475,21 @@ class OWNHeatingEvent(OWNEvent):
                     f"Zone {self._zone}'s mode is set to '{self._mode_name}'"
                 )
             elif (
-                self._mode in [310, 311, 312, 315]
-                or (self._mode >= 3101 and self._mode <= 3116)
-                or (self._mode >= 3201 and self._mode <= 3216)
+                self._mode in [310, 311, 312, 315, 3000]
+                or (self._mode >= 3100 and self._mode <= 3116)
+                or (self._mode >= 3200 and self._mode <= 3216)
                 or (self._mode >= 33001 and self._mode <= 33255)
             ):
+                # 3100 "last set up weekly program", 3200 "last set up
+                # scenario" and 3000 / 3000#31PP "holiday mode deactivation"
+                # (Legrand WHO 4 1.6.8 p. 33, 1.6.12 p. 39, 1.6.20 p. 52,
+                # 1.6.19 p. 51) put the central unit back under a program or
+                # scenario it chooses itself: automatic, with no program /
+                # scenario number in the frame (3000#31PP names the program
+                # in its parameter, read below). set_central_mode("#0",
+                # "auto") builds 3100 and an F455 1.0.76 hands the command
+                # back on its own event session (test plant, 2026-11-12
+                # 17:55:13 and 17:55:53 UTC), so it has to be read here.
                 self._type = MESSAGE_TYPE_MODE
                 self._mode_name = CLIMATE_MODE_AUTO
                 if self._mode >= 33001:
@@ -536,7 +546,7 @@ class OWNHeatingEvent(OWNEvent):
 
             if (
                 (
-                    self._mode in (115, 215, 315)
+                    self._mode in (115, 215, 315, 3000)
                     or 13001 <= self._mode <= 13255
                     or 23001 <= self._mode <= 23255
                     or 33001 <= self._mode <= 33255
@@ -1313,9 +1323,40 @@ class OWNHeatingCommand(OWNCommand):
         unit (libqtdevices ``thermal_device.cpp``): 303 generic off, 1 winter,
         0 summer, 302 generic protection. 102 is the winter (antifreeze)
         protection; 202, the summer protection, is not offered because it
-        would also switch the plant to summer. 311 is the generic automatic
-        command libqtdevices sends to zones; on ``#0`` it puts every zone back
-        on the central unit's program.
+        would also switch the plant to summer.
+
+        ``auto`` is the published "last set up weekly program activation
+        command" ``*4*3100*#0##`` (WHO_4 2.pdf 1.6.8 p. 33; Encyclopedia
+        ``who-4-temperature-control/what.md`` "Restore last weekly program"
+        3100), for the 99-zone unit ``#0`` and for a 4-zone unit ``#0#C``.
+
+        ``#0``, live: a 3550 behind an F461 2.0.11 answered ``*4*3100*#0##``
+        within 0.15 s with ``*4*2101*#0##``, ``*4*21*#0##``, ``*4*31*#0##``,
+        ``*4*22*#0##`` and put the zones back under the program (2026-11-12
+        16:08:55 and 16:09:35 UTC, twice), while ``*4*311*#0##`` sent 20 s earlier
+        was ACKed and forwarded on the bus but changed nothing (``*#4*#0##`` still
+        answered ``*4*203*#0##`` 2 s and 8 s later, both rounds).
+
+        ``#0#C``, firmware only (no 4-zone central unit has been traced live):
+        311 is the zone form (``*4*311*#Z##``, what.md "automatic generic
+        operation ... for the selected zone"; libqtdevices sends it from
+        ``ControlledProbeDevice`` and has no 311 in ``ThermalDevice``, the
+        class both central units share, whose ``WEEK_PROGRAM`` is 3100). The
+        gateways translate ``*4*311*#0##`` / ``*4*311*#0#2##`` with the zone
+        command byte ``C2`` for zone 0 (``D1 00 03 02 C2 00 00 00`` /
+        ``D1 02 ...``), and H4684 020054 and MH200 020102 refuse them with no
+        bus frame (firmware oracle ``thermo-central-mode``). ``*4*3100*#0##``
+        and ``*4*3100*#0#2##`` replayed on the same 13 gateways (2026-11-13)
+        put the central-unit command byte ``C1`` on the bus on every one of
+        them (``D1 00 03 02 C1 01 FF 00`` and ``D1 02 03 02 C1 01 FF 00``;
+        ``*4*3101*#0##`` is ``... C1 01 00 00``), ACKed by H4684 and MH200
+        as well. Those two send the address byte ``00`` for ``#0#2`` too, as
+        they do for ``*4*3101*#0#1##``.
+
+        ``heat`` / ``cool`` build ``*4*1*#0##`` / ``*4*0*#0##``, the season values
+        of the 1.9.2 / 1.9.3 operation-mode tables (p. 63-64): a 3550 already in
+        the conditioning season answered nothing to ``*4*0*#0##`` (same run,
+        16:08:46 and 16:09:26 UTC); a season switch was not tried. Unchanged.
 
         ``where`` is the central unit itself: ``#0`` (3550, 99 zones) or
         ``#0#C`` with ``C`` the 4695 unit's configured zone 1..99 or
@@ -1339,13 +1380,21 @@ class OWNHeatingCommand(OWNCommand):
             CLIMATE_MODE_OFF: 303,
             CLIMATE_MODE_HEAT: 1,
             CLIMATE_MODE_COOL: 0,
-            CLIMATE_MODE_AUTO: 311,
+            CLIMATE_MODE_AUTO: 3100,
             "antifreeze": 102,
             "protection": 302,
         }
         mode_code = mode_map.get(mode)
         if mode_code is None:
             raise ValueError(f"Unsupported central unit mode: {mode}")
+        if mode == CLIMATE_MODE_AUTO:
+            # Live 3550 (2026-11-12): *4*311*#0## changes nothing, *4*3100*#0## restores
+            # the last weekly program (WHO_4 2.pdf 1.6.8). 311 is a zone command.
+            message = cls(f"*4*{mode_code}*{where}##")
+            message._human_readable_log = (
+                f"Setting Central Unit {where} back to its last weekly program (code 3100)."
+            )
+            return message
         message = cls(f"*4*{mode_code}*{where}##")
         message._human_readable_log = (
             f"Setting Central Unit {where} mode to '{mode}' (code {mode_code})."
