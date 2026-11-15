@@ -870,7 +870,7 @@
   mcp_notes: "Thermoregulation: Zone 2 actuator 1 status 8 (Dimension 20 = 8, 'ON Vel 3' = fan-coil ON at speed 3; WHO 4 PDF dimension 20 table, p. 22) on F455/F461 + 3550 central unit (MyHOME#912)"
   roundtrip: true
 
-- id: thermo.capture.dim20.write.actuator_on_6.z4.act2
+- id: thermo.capture.dim20.write.fancoil_on_speed1.z4.act2
   frame: "*#4*4#2*#20*6##"
   direction: dimension_write
   who: 4
@@ -881,10 +881,10 @@
   dimension_values: ["6"]
   source: community-plant-capture
   mcp_valid: true
-  mcp_notes: "Thermoregulation: Paired #20 actuator status write ON_6 (6) on zone 4 actuator 2 (F461 FW 2.0.11 + 3550 central unit capture, MyHOME#912)"
+  mcp_notes: "Thermoregulation: Paired #20 actuator status write, value 6 = 'ON Vel 1' (fan-coil ON at speed 1; WHO 4 PDF dimension 20 table, p. 22) on zone 4 actuator 2 (F461 FW 2.0.11 + 3550 central unit capture, MyHOME#912)"
   roundtrip: true
 
-- id: thermo.capture.dim20.status.actuator_on_6.z4.act2
+- id: thermo.capture.dim20.status.fancoil_on_speed1.z4.act2
   frame: "*#4*4#2*20*6##"
   direction: dimension_response
   who: 4
@@ -895,7 +895,7 @@
   dimension_values: ["6"]
   source: community-plant-capture
   mcp_valid: true
-  mcp_notes: "Thermoregulation: Zone 4 actuator 2 status ON_6 (Dimension 20 = 6) on F455/F461 + 3550 central unit (MyHOME#912)"
+  mcp_notes: "Thermoregulation: Zone 4 actuator 2 status 6 (Dimension 20 = 6, 'ON Vel 1' = fan-coil ON at speed 1; WHO 4 PDF dimension 20 table, p. 22) on F455/F461 + 3550 central unit (MyHOME#912)"
   roundtrip: true
 
 - id: thermo.capture.write.setpoint.cool.zone2.200
