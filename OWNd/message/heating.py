@@ -250,15 +250,35 @@ _WHO4_WHERE_REGEX = re.compile(r"#?[0-9]{1,2}(?:#[0-9])?(?:#4#[0-9]{2})?", re.AS
 #   OFF-speed states `14`, `15`, and `16`"; MyHOME#908 reads them from the
 #   MyHomeServer1 firmware table).
 # * ``100..200``: proportional 0-10 V output at 0 %..100 % (MyHOME#908, from
-#   the gateway firmware: code = 100 + percent). ``100`` is a stopped output,
-#   received from a MyHomeServer1 2.87.13 with 0-10 V Sabiana fan coils
-#   (``*#4*1#3*20*100##``, ``*#4*2#3*20*100##``); ``101..200`` is a running
-#   one. A 0-10 V output can be a plain valve, so no fan is claimed for it.
+#   the gateway firmware: code = 100 + percent; in neither the PDF nor the
+#   Encyclopedia). ``100`` is a stopped output, received from a MyHomeServer1
+#   2.87.13 with 0-10 V Sabiana fan coils (``*#4*1#3*20*100##``,
+#   ``*#4*2#3*20*100##``); ``101..200`` is a running one, seen only in the
+#   firmware translation, in no plant capture. A 0-10 V output can be a plain
+#   valve, so no fan is claimed for it.
 #
-# Every other value (``10..13``, ``17..99``, ``201`` and above) is in no
-# source: it is reported as unknown instead of being read as "value - 5 = fan
-# speed", which made a fan running at speed 9, 95 or 994 out of ``14``,
-# ``100`` and ``999``.
+# Which gateway sends which code. own-firmware-oracle emulation of the bus
+# telegram "actuator status" (zone 1, actuator 3, DIMENSION 20; local probe of
+# 2026-11-15, firmware image codes in brackets):
+#
+# * MH200N (010108): ``0..13`` only; the telegram values of ``14..22`` and of
+#   ``100..200`` are dropped.
+# * MH202 (010024), F459 (020105): ``0..13`` and ``100..200``.
+# * MyHomeServer1 (028206), F461 (020011): ``0..22`` and ``100..200``
+#   (``14..16`` and ``17..22`` only on these two).
+#
+# The maintainer's reading of the firmware (OWNd#174, 2026-11-15) says the
+# same, puts the F454 (020051) with the MH202, and adds that the F454 and the
+# MH202 send ``100..200`` on DIMENSION 20 only, not on DIMENSION 19; the
+# emulation gave no F454 output and has no DIMENSION 19 telegram, so those two
+# points are his reading, not measured here.
+#
+# ``10..13`` and ``17..22`` therefore exist on the wire of these gateways but
+# are not decoded: no published table, Encyclopedia page or plant capture
+# gives their meaning. ``23..99`` and ``201`` and above are in no source at
+# all. Both groups are reported as unknown instead of being read as
+# "value - 5 = fan speed", which made a fan running at speed 9, 95 or 994 out
+# of ``14``, ``100`` and ``999``.
 _FANCOIL_OFF_SPEED_CODES = {14: 1, 15: 2, 16: 3}
 _FANCOIL_ON_SPEED_CODES = {6: 1, 7: 2, 8: 3}
 _FANCOIL_ON_AUTO_CODE = 9
@@ -800,7 +820,7 @@ class OWNHeatingEvent(OWNEvent):
             _heating_value = int(self._dimension_value[1])
             _cooling = _decode_thermo_output_code(_cooling_value)
             _heating = _decode_thermo_output_code(_heating_value)
-            # A code that no source defines on either side leaves the whole
+            # A code that is not decoded on either side leaves the whole
             # status unknown (``None``), as MyHOME reads it: the frame keeps
             # its type and only the log names the unknown value.
             if _cooling is not None and _heating is not None:

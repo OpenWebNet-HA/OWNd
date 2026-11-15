@@ -33,16 +33,19 @@ Review of the fix (OWNd#174) added the rest of that table:
 * ``101..200``: the same proportional output at 1 %..100 %, running, with no
   fan claim (a 0-10 V output can be a plain valve). ``*#4*1#3*20*155##`` is
   golden record ``thermo.resp.dim20.proportional_55pct.zone1.act3`` (source
-  ``encyclopedia``); no plant capture carries a value above ``100``. Read
+  ``mcp-draft``: from the gateway firmware translation, in neither the PDF
+  nor the Encyclopedia); no plant capture carries a value above ``100``. Read
   as "value - 5" it was a fan at 'Auto' speed on DIMENSION 20 and a fan at
   speed 150 with ``is_heating() = False`` on DIMENSION 19.
 * ``9`` on DIMENSION 19: the PDF table of DIMENSION 19 ends at ``8`` and ``9``
   ("ON Fan Coil") is in the DIMENSION 20 table; it is read the same way on
   both (fan on, no speed), where DIMENSION 19 gave "speed 4" and an inactive
   side.
-* every other value (``10..13``, ``17..99``, ``201`` and above) is in no
-  source: the event keeps its type and its actuator, the state accessors stay
-  ``None`` and the log names the value. MyHOME reads such a frame the same
+* every other value is not decoded: ``10..13`` and ``17..22`` are sent by
+  some gateways (table in ``OWNd/message/heating.py``) but no source gives
+  their meaning, and ``23..99`` and ``201`` and above are in no source. The
+  event keeps its type and its actuator, the state accessors stay ``None``
+  and the log names the value. MyHOME reads such a frame the same
   way (``where_grammar._decode_thermo_output_code`` returns ``None``) and its
   tests send ``*#4*1#3*20*999##``, ``*#4*7#1*20*250##`` and
   ``*#4*1*19*0*999##`` as typed events.
