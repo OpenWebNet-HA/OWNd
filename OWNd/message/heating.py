@@ -239,6 +239,23 @@ def _validate_central_where(where: object, purpose: str = "Central unit command"
 _WHO4_WHERE_REGEX = re.compile(r"#?[0-9]{1,2}(?:#[0-9])?(?:#4#[0-9]{2})?", re.ASCII)
 
 
+# DIMENSION 19 / 20 output codes above the published ``0..9`` table that are
+# NOT a running fan (MyHOME#908):
+#
+# * ``14`` / ``15`` / ``16``: fan coil OFF at speed 1 / 2 / 3 (Encyclopedia
+#   ``who-4-temperature-control/dimensions.md``, "additional fan-coil
+#   OFF-speed states `14`, `15`, and `16`"; MyHOME#908 reads them from the
+#   MyHomeServer1 firmware table).
+# * ``100``: proportional 0-10 V output at 0 % (stopped; ``101..200`` are
+#   1 %..100 % per MyHOME#908). Received from a MyHomeServer1 2.87.13 with
+#   0-10 V Sabiana fan coils: ``*#4*1#3*20*100##``, ``*#4*2#3*20*100##``.
+#
+# Read as "value - 5 = fan speed" they came out as a fan running at speed 9,
+# 10, 11 and 95 (DIMENSION 19) or at 'Auto' speed (DIMENSION 20).
+_FANCOIL_OFF_SPEED_CODES = {14: 1, 15: 2, 16: 3}
+_PROPORTIONAL_OFF_CODE = 100
+
+
 def who4_temperature(raw: str) -> float | None:
     """Decode WHO 4 temperature ``SXXX`` (tenths of a degree)."""
     if not _WHO4_TEMP_REGEX.match(raw):
@@ -752,6 +769,16 @@ class OWNHeatingEvent(OWNEvent):
                 self._human_readable_log = (
                     f"Zone {self._zone}'s cooling valve is stopped"
                 )
+            elif _cooling_value in _FANCOIL_OFF_SPEED_CODES:
+                self._cooling_fan_on = False
+                self._human_readable_log = (
+                    f"Zone {self._zone}'s cooling fan is off"
+                    f" (OFF speed {_FANCOIL_OFF_SPEED_CODES[_cooling_value]})"
+                )
+            elif _cooling_value == _PROPORTIONAL_OFF_CODE:
+                self._human_readable_log = (
+                    f"Zone {self._zone}'s cooling output is at 0%"
+                )
             else:
                 _fan_mode = _cooling_value - 5
                 if _fan_mode > 0:
@@ -773,6 +800,14 @@ class OWNHeatingEvent(OWNEvent):
                 self._human_readable_log += "; heating valve is closed."
             elif _heating_value == 4:
                 self._human_readable_log += "; heating valve is stopped."
+            elif _heating_value in _FANCOIL_OFF_SPEED_CODES:
+                self._fan_on = False
+                self._human_readable_log += (
+                    "; heating fan is off"
+                    f" (OFF speed {_FANCOIL_OFF_SPEED_CODES[_heating_value]})."
+                )
+            elif _heating_value == _PROPORTIONAL_OFF_CODE:
+                self._human_readable_log += "; heating output is at 0%."
             else:
                 _fan_mode = _heating_value - 5
                 if _fan_mode > 0:
@@ -822,6 +857,18 @@ class OWNHeatingEvent(OWNEvent):
             elif _value == 4:
                 self._human_readable_log = (
                     f"Zone {self._zone}'s actuator {self._actuator} is stopped."
+                )
+            elif _value in _FANCOIL_OFF_SPEED_CODES:
+                self._fan_on = False
+                self._is_active = False
+                self._human_readable_log = (
+                    f"Zone {self._zone}'s fan is off"
+                    f" (OFF speed {_FANCOIL_OFF_SPEED_CODES[_value]})."
+                )
+            elif _value == _PROPORTIONAL_OFF_CODE:
+                self._is_active = False
+                self._human_readable_log = (
+                    f"Zone {self._zone}'s actuator {self._actuator} output is at 0%."
                 )
             else:
                 _fan_mode = _value - 5
