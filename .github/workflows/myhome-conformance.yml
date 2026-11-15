@@ -5,7 +5,7 @@ name: MyHOME conformance
 # checked against MyHOME's development branch, with this checkout installed
 # in place of the pinned release:
 #
-#   corpus  - the 255-vector golden corpus (tests/golden) plus MyHOME's own
+#   corpus  - the 451-vector golden corpus (tests/golden) plus MyHOME's own
 #             smoke gates: the parser must produce the same objects for the
 #             same frames. Fast and required.
 #   suite   - MyHOME's full test suite. Catches the behavioural coupling
@@ -56,6 +56,19 @@ jobs:
           python -m pip install pytest-homeassistant-custom-component pytest-cov pytest-socket time-machine python-dateutil pytz freezegun requests-mock respx paho-mqtt tqdm jsonschema pyyaml packaging
           python -c "import OWNd, importlib.metadata as m; print('OWNd', m.version('OWNd'), 'from', OWNd.__file__)"
           python -c "import homeassistant.const as c; print('Home Assistant', c.__version__)"
+      - name: Validate OWNd Golden Corpus sync
+        working-directory: OWNd
+        run: python tools/golden/validate_corpus.py --check
+      - name: Verify cross-repo Golden Corpus Staged-Superset compatibility
+        working-directory: MyHOME
+        run: |
+          if [ -f scripts/sync_golden_corpus.py ]; then
+            python scripts/sync_golden_corpus.py --from-ownd --ownd-dir ../OWNd
+            python scripts/sync_golden_corpus.py --check --ownd-dir ../OWNd --require-ownd
+          fi
+          if [ -f tools/golden/check_trace_shape_coverage.py ]; then
+            python tools/golden/check_trace_shape_coverage.py
+          fi
       - name: Golden corpus and smoke gates against this checkout
         working-directory: MyHOME
         run: python scripts/run_ownd_smoke.py --target dev --skip-install

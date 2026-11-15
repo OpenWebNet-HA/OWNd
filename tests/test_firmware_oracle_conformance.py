@@ -202,12 +202,12 @@ def test_emitted_own_frames_parseable_by_ownd():
 
 
 def test_oracle_input_frames_ownd_parser_resilience():
-    """Verify OWNd parser resilience across all 509 unique input frames in the oracle index.
+    """Verify OWNd parser resilience across all 520 unique input frames in the oracle index.
 
     Guarantees that:
     1. Zero input frames cause unhandled parser crashes (AttributeError, IndexError, ValueError).
-    2. All 509 frames parse into valid typed OWNMessage instances across all subsystems.
-    3. For all 509 parsed frames, msg.who matches the subsystem extracted from the frame syntax.
+    2. All 520 frames parse into valid typed OWNMessage instances across all subsystems.
+    3. For all 520 parsed frames, msg.who matches the subsystem extracted from the frame syntax.
     """
     parsed_count = 0
     unparsed_count = 0
@@ -273,9 +273,13 @@ def test_golden_corpus_bidirectional_cross_validation():
         # 2. OWNd SUT Builder verification
         builder_spec = fixture.get("builder")
         if builder_spec is not None:
+            from tests.test_golden_conformance import coerce_builder_args
+
             cls = getattr(msg_module, builder_spec["class"])
             method = getattr(cls, builder_spec["method"])
-            built = method(*builder_spec["args"])
+            coerced_args = coerce_builder_args(cls, builder_spec["method"], builder_spec["args"])
+            kwargs = builder_spec.get("kwargs") or {}
+            built = method(*coerced_args, **kwargs)
             assert str(built) == frame, (
                 f"Builder {builder_spec['class']}.{builder_spec['method']} produced {built}, expected {frame}"
             )

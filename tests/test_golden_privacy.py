@@ -7,11 +7,12 @@ maintain strict 'privacy first' standards:
 - No user-specific file paths (/home/, C:\\Users\\)
 - No cleartext household identities or credentials
 """
-import json
+# privacy-check: allow-samples - the inputs below are what the check must catch
+
+from __future__ import annotations
+
 import re
 from pathlib import Path
-
-import pytest
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 GOLDEN_DIR = REPO_ROOT / "tests" / "golden"
@@ -19,7 +20,7 @@ FRAMES_DIR = GOLDEN_DIR / "frames"
 
 PRIVATE_IP = re.compile(r"\b(10\.\d+|172\.(1[6-9]|2\d|3[01])|192\.168)\.\d+\.\d+\b")
 MAC = re.compile(r"\b(?:[0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}\b")
-LOCAL_PATH = re.compile(r"[A-Za-z]:[\\/]|/home/|/Users/", re.IGNORECASE)
+LOCAL_PATH = re.compile(r"(?<![A-Za-z])[A-Za-z]:[\\/]|/home/|/Users/", re.IGNORECASE)
 
 
 def test_golden_corpus_carries_no_private_ips() -> None:
@@ -58,8 +59,13 @@ def test_golden_corpus_mac_addresses_are_synthetic() -> None:
 
 
 def test_golden_corpus_no_personal_paths() -> None:
-    """Verify no local filesystem user paths leak into golden fixtures or corpus."""
-    for yf in FRAMES_DIR.glob("*.yaml"):
+    """Verify no local filesystem user paths leak into golden fixtures, manifest, or corpus."""
+    files_to_check = list(FRAMES_DIR.glob("*.yaml"))
+    for extra in ("corpus.json", "SOURCE.yaml", "README.md"):
+        extra_path = GOLDEN_DIR / extra
+        if extra_path.is_file():
+            files_to_check.append(extra_path)
+    for yf in files_to_check:
         text = yf.read_text(encoding="utf-8")
         assert not LOCAL_PATH.search(text), (
             f"Privacy leak in {yf.name}: personal filesystem path detected."
