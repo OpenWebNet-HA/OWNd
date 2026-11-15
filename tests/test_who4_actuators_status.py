@@ -9,7 +9,7 @@ answers ``*#4*2*20##`` with ``*#4*2#1*20*0##`` on the command session and
 
 Dimension 20 values (WHO 4 spec, ``OWNHeatingEvent``): 0 off, 1 on, 2 opened,
 3 closed, 4 stop, 5 fan coil off, 6-8 fan speeds, 9 fan auto;
-``_actuator_active_states`` is ``1, 2, 6, 7, 8, 9``, so value 5 is inactive.
+the active values are ``1, 2, 6, 7, 8, 9``, so value 5 is inactive.
 
 Bus-interface routed addresses (``Z#4#NN``, ``#Z#4#NN``, ``Z#N#4#NN``) are
 accepted since the MyHOME#792 review as spec-legal grammar, not because any

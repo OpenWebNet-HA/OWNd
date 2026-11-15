@@ -239,21 +239,71 @@ def _validate_central_where(where: object, purpose: str = "Central unit command"
 _WHO4_WHERE_REGEX = re.compile(r"#?[0-9]{1,2}(?:#[0-9])?(?:#4#[0-9]{2})?", re.ASCII)
 
 
-# DIMENSION 19 / 20 output codes above the published ``0..9`` table that are
-# NOT a running fan (MyHOME#908):
+# DIMENSION 19 / 20 output codes (``*#4*WHERE*19*CV*HV##``, ``*#4*Z#N*20*VAL##``).
 #
+# * ``0..8``: WHO 4 PDF, "N zone valves status" / "Actuator status" tables
+#   (0 OFF, 1 ON, 2 Opened, 3 Closed, 4 Stop, 5 OFF Fan Coil, 6 / 7 / 8 ON
+#   speed 1 / 2 / 3); ``9`` "ON Fan Coil" is in the DIMENSION 20 table only and
+#   is read the same way on DIMENSION 19.
 # * ``14`` / ``15`` / ``16``: fan coil OFF at speed 1 / 2 / 3 (Encyclopedia
 #   ``who-4-temperature-control/dimensions.md``, "additional fan-coil
 #   OFF-speed states `14`, `15`, and `16`"; MyHOME#908 reads them from the
 #   MyHomeServer1 firmware table).
-# * ``100``: proportional 0-10 V output at 0 % (stopped; ``101..200`` are
-#   1 %..100 % per MyHOME#908). Received from a MyHomeServer1 2.87.13 with
-#   0-10 V Sabiana fan coils: ``*#4*1#3*20*100##``, ``*#4*2#3*20*100##``.
+# * ``100..200``: proportional 0-10 V output at 0 %..100 % (MyHOME#908, from
+#   the gateway firmware: code = 100 + percent). ``100`` is a stopped output,
+#   received from a MyHomeServer1 2.87.13 with 0-10 V Sabiana fan coils
+#   (``*#4*1#3*20*100##``, ``*#4*2#3*20*100##``); ``101..200`` is a running
+#   one. A 0-10 V output can be a plain valve, so no fan is claimed for it.
 #
-# Read as "value - 5 = fan speed" they came out as a fan running at speed 9,
-# 10, 11 and 95 (DIMENSION 19) or at 'Auto' speed (DIMENSION 20).
+# Every other value (``10..13``, ``17..99``, ``201`` and above) is in no
+# source: it is reported as unknown instead of being read as "value - 5 = fan
+# speed", which made a fan running at speed 9, 95 or 994 out of ``14``,
+# ``100`` and ``999``.
 _FANCOIL_OFF_SPEED_CODES = {14: 1, 15: 2, 16: 3}
+_FANCOIL_ON_SPEED_CODES = {6: 1, 7: 2, 8: 3}
+_FANCOIL_ON_AUTO_CODE = 9
+_VALVE_STATE_TEXT = {0: "off", 1: "on", 2: "opened", 3: "closed", 4: "stopped"}
 _PROPORTIONAL_OFF_CODE = 100
+_PROPORTIONAL_FULL_CODE = 200
+
+
+def _decode_thermo_output_code(code: int) -> tuple[bool, bool | None, int | None] | None:
+    """Return ``(is_active, fan_on, fan_speed)`` of a DIMENSION 19 / 20 code, ``None`` if unknown.
+
+    ``fan_on`` is ``None`` for a code that says nothing about a fan (valve
+    states, proportional output) and ``fan_speed`` is ``None`` unless the fan
+    runs at speed 1..3. Same table as MyHOME ``where_grammar.py``.
+    """
+    if code in (1, 2):
+        return (True, None, None)
+    if code in (0, 3, 4):
+        return (False, None, None)
+    if code == 5 or code in _FANCOIL_OFF_SPEED_CODES:
+        return (False, False, None)
+    if code in _FANCOIL_ON_SPEED_CODES:
+        return (True, True, _FANCOIL_ON_SPEED_CODES[code])
+    if code == _FANCOIL_ON_AUTO_CODE:
+        return (True, True, None)
+    if _PROPORTIONAL_OFF_CODE <= code <= _PROPORTIONAL_FULL_CODE:
+        return (code > _PROPORTIONAL_OFF_CODE, None, None)
+    return None
+
+
+def _thermo_output_text(code: int, valve: str, fan: str, output: str) -> str:
+    """Log phrase of a DIMENSION 19 / 20 code; ``valve``, ``fan`` and ``output`` name its subject."""
+    if code in _VALVE_STATE_TEXT:
+        return f"{valve} is {_VALVE_STATE_TEXT[code]}"
+    if code == 5:
+        return f"{fan} is off"
+    if code in _FANCOIL_OFF_SPEED_CODES:
+        return f"{fan} is off (OFF speed {_FANCOIL_OFF_SPEED_CODES[code]})"
+    if code in _FANCOIL_ON_SPEED_CODES:
+        return f"{fan} is on at speed {_FANCOIL_ON_SPEED_CODES[code]}"
+    if code == _FANCOIL_ON_AUTO_CODE:
+        return f"{fan} is on at 'Auto' speed"
+    if _PROPORTIONAL_OFF_CODE <= code <= _PROPORTIONAL_FULL_CODE:
+        return f"{output} is at {code - _PROPORTIONAL_OFF_CODE}%"
+    return f"{valve} reports an unknown status {code}"
 
 
 def who4_temperature(raw: str) -> float | None:
@@ -422,9 +472,6 @@ class OWNHeatingEvent(OWNEvent):
         self._fan_speed = None
         self._cooling_fan_on = None
         self._cooling_fan_speed = None
-
-        _valve_active_states = ["1", "2", "6", "7", "8"]
-        _actuator_active_states = ["1", "2", "6", "7", "8", "9"]
 
         if self._what is not None:
             self._mode = int(self._what)
@@ -749,85 +796,31 @@ class OWNHeatingEvent(OWNEvent):
             and _ascii_ints(self._dimension_value[:2])
         ):  # Valves status
             self._type = MESSAGE_TYPE_ACTION
-            self._is_cooling = self._dimension_value[0] in _valve_active_states
-            self._is_heating = self._dimension_value[1] in _valve_active_states
-            # Handle cooling valve status relative to fan speed/status
             _cooling_value = int(self._dimension_value[0])
-            if _cooling_value == 0:
-                self._human_readable_log = f"Zone {self._zone}'s cooling valve is off"
-            elif _cooling_value == 1:
-                self._human_readable_log = f"Zone {self._zone}'s cooling valve is on"
-            elif _cooling_value == 2:
-                self._human_readable_log = (
-                    f"Zone {self._zone}'s cooling valve is opened"
-                )
-            elif _cooling_value == 3:
-                self._human_readable_log = (
-                    f"Zone {self._zone}'s cooling valve is closed"
-                )
-            elif _cooling_value == 4:
-                self._human_readable_log = (
-                    f"Zone {self._zone}'s cooling valve is stopped"
-                )
-            elif _cooling_value in _FANCOIL_OFF_SPEED_CODES:
-                self._cooling_fan_on = False
-                self._human_readable_log = (
-                    f"Zone {self._zone}'s cooling fan is off"
-                    f" (OFF speed {_FANCOIL_OFF_SPEED_CODES[_cooling_value]})"
-                )
-            elif _cooling_value == _PROPORTIONAL_OFF_CODE:
-                self._human_readable_log = (
-                    f"Zone {self._zone}'s cooling output is at 0%"
-                )
-            else:
-                _fan_mode = _cooling_value - 5
-                if _fan_mode > 0:
-                    self._cooling_fan_on = True
-                    self._cooling_fan_speed = _fan_mode
-                    self._human_readable_log = f"Zone {self._zone}'s cooling fan is on at speed {self._cooling_fan_speed}"  # pylint: disable=line-too-long
-                else:
-                    self._cooling_fan_on = False
-                    self._human_readable_log = f"Zone {self._zone}'s cooling fan is off"
-            # Handle heating valve status relative to fan speed/status
             _heating_value = int(self._dimension_value[1])
-            if _heating_value == 0:
-                self._human_readable_log += "; heating valve is off."
-            elif _heating_value == 1:
-                self._human_readable_log += "; heating valve is on."
-            elif _heating_value == 2:
-                self._human_readable_log += "; heating valve is opened."
-            elif _heating_value == 3:
-                self._human_readable_log += "; heating valve is closed."
-            elif _heating_value == 4:
-                self._human_readable_log += "; heating valve is stopped."
-            elif _heating_value in _FANCOIL_OFF_SPEED_CODES:
-                self._fan_on = False
-                self._human_readable_log += (
-                    "; heating fan is off"
-                    f" (OFF speed {_FANCOIL_OFF_SPEED_CODES[_heating_value]})."
-                )
-            elif _heating_value == _PROPORTIONAL_OFF_CODE:
-                self._human_readable_log += "; heating output is at 0%."
-            else:
-                _fan_mode = _heating_value - 5
-                if _fan_mode > 0:
-                    self._fan_on = True
-                    self._fan_speed = _fan_mode
-                    self._human_readable_log += (
-                        f"; heating fan is on at speed {self._fan_speed}."
-                    )
-                else:
-                    self._fan_on = False
-                    self._human_readable_log += "; heating fan is off."
-            # A fan-coil value on one side must not hide an open valve or a running fan
-            # on the other side: *#4*2*19*5*1## (cooling fan off, heating valve on) is an
-            # active zone (F461 plant capture, tests/test_f461_live_plant.py).
-            self._is_active = bool(
-                self._is_cooling
-                or self._is_heating
-                or self._cooling_fan_on
-                or self._fan_on
+            _cooling = _decode_thermo_output_code(_cooling_value)
+            _heating = _decode_thermo_output_code(_heating_value)
+            # A code that no source defines on either side leaves the whole
+            # status unknown (``None``), as MyHOME reads it: the frame keeps
+            # its type and only the log names the unknown value.
+            if _cooling is not None and _heating is not None:
+                self._is_cooling, self._cooling_fan_on, self._cooling_fan_speed = _cooling
+                self._is_heating, self._fan_on, self._fan_speed = _heating
+                # A fan-coil value on one side must not hide an open valve or a
+                # running fan on the other side: *#4*2*19*5*1## (cooling fan off,
+                # heating valve on) is an active zone (F461 plant capture,
+                # tests/test_f461_live_plant.py).
+                self._is_active = self._is_cooling or self._is_heating
+            _cooling_text = _thermo_output_text(
+                _cooling_value,
+                f"Zone {self._zone}'s cooling valve",
+                f"Zone {self._zone}'s cooling fan",
+                f"Zone {self._zone}'s cooling output",
             )
+            _heating_text = _thermo_output_text(
+                _heating_value, "heating valve", "heating fan", "heating output"
+            )
+            self._human_readable_log = f"{_cooling_text}; {_heating_text}."
 
         elif (
             self._dimension == 20
@@ -835,59 +828,18 @@ class OWNHeatingEvent(OWNEvent):
             and _WHO4_INT_REGEX.fullmatch(self._dimension_value[0])
         ):  # Actuator status
             self._type = MESSAGE_TYPE_ACTION
-            self._is_active = self._dimension_value[0] in _actuator_active_states
             self._actuator = where_params[0] if where_params else "1"
             _value = int(self._dimension_value[0])
-            if _value == 0:
-                self._human_readable_log = (
-                    f"Zone {self._zone}'s actuator {self._actuator} is off."
-                )
-            elif _value == 1:
-                self._human_readable_log = (
-                    f"Zone {self._zone}'s actuator {self._actuator} is on."
-                )
-            elif _value == 2:
-                self._human_readable_log = (
-                    f"Zone {self._zone}'s actuator {self._actuator} is opened."
-                )
-            elif _value == 3:
-                self._human_readable_log = (
-                    f"Zone {self._zone}'s actuator {self._actuator} is closed."
-                )
-            elif _value == 4:
-                self._human_readable_log = (
-                    f"Zone {self._zone}'s actuator {self._actuator} is stopped."
-                )
-            elif _value in _FANCOIL_OFF_SPEED_CODES:
-                self._fan_on = False
-                self._is_active = False
-                self._human_readable_log = (
-                    f"Zone {self._zone}'s fan is off"
-                    f" (OFF speed {_FANCOIL_OFF_SPEED_CODES[_value]})."
-                )
-            elif _value == _PROPORTIONAL_OFF_CODE:
-                self._is_active = False
-                self._human_readable_log = (
-                    f"Zone {self._zone}'s actuator {self._actuator} output is at 0%."
-                )
-            else:
-                _fan_mode = _value - 5
-                if _fan_mode > 0:
-                    self._fan_on = True
-                    self._is_active = True
-                    if _fan_mode < 4:
-                        self._fan_speed = _fan_mode
-                        self._human_readable_log = (
-                            f"Zone {self._zone}'s fan is on at speed {self._fan_speed}."
-                        )
-                    else:
-                        self._human_readable_log = (
-                            f"Zone {self._zone}'s fan is on at 'Auto' speed."
-                        )
-                else:
-                    self._fan_on = False
-                    self._is_active = False
-                    self._human_readable_log = f"Zone {self._zone}'s fan is off."
+            _status = _decode_thermo_output_code(_value)
+            if _status is not None:
+                self._is_active, self._fan_on, self._fan_speed = _status
+            _text = _thermo_output_text(
+                _value,
+                f"Zone {self._zone}'s actuator {self._actuator}",
+                f"Zone {self._zone}'s fan",
+                f"Zone {self._zone}'s actuator {self._actuator} output",
+            )
+            self._human_readable_log = f"{_text}."
 
         elif (
             self._dimension == 30
