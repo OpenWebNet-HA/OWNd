@@ -7,6 +7,17 @@ All notable changes to `OWNd` are documented in this file.
 ### Changed
 - **Sessions (`OWNSession.connect`)**: one negotiation that the gateway closes and that the next attempt recovers is logged at `DEBUG` instead of `WARNING`, the way a routine event-session drop already is. An MH201 3.6.36 closed the negotiation of its event session twice in 24 h, the retry 1 s later got in and nothing was lost, and Home Assistant showed two warnings each time: "Connection closed by the gateway while negotiating event session (busy or out of session slots?); will retry." and "Event session: negotiation failed (connection_closed). Retrying in 1s (attempt 1/5)." (OpenWebNet-HA/MyHOME#916). The Encyclopedia lists a connection close among the accepted answers while a client awaits the session result (`protocol/sessions.md`, "State-machine requirements"). Unchanged: a second close in a row warns from attempt 2 on, a close that no retry follows (the single attempt of `OWNCommandSession.send`, `test_connection`) warns, every other first-attempt failure warns, and "could not be established after 5 attempts" warns. No change to the retry timing or to what `connect()` returns.
 
+### Fixed
+- **WHO 4 (`OWNHeatingEvent`, DIMENSION 19 / 20)**: the output code is decoded from one table instead of "every value above 5 is a fan at speed value - 5". That rule gave `fan_on = True` ("fan is on at 'Auto' speed") for `*#4*1#2*20*15##`, `*#4*1#3*20*100##` and `*#4*1#3*20*155##`, a heating fan at speed 9 for `*#4*1*19*0*14##`, at speed 150 with `is_heating() = False` for `*#4*1*19*0*155##`, and at speed 994 for `*#4*1*19*0*999##`. Now:
+  - `14`, `15`, `16` (fan coil OFF at speed 1 / 2 / 3; Encyclopedia `who-4-temperature-control/dimensions.md`, read from the MyHomeServer1 firmware table in `MyHOME#908`): `fan_on = False` (`cooling_fan_on = False` on the cooling side of DIMENSION 19), inactive.
+  - `100` (proportional 0-10 V output at 0 %; received from a MyHomeServer1 2.87.13 with 0-10 V Sabiana fan coils, `MyHOME#908`): inactive, no fan claim (`fan_on` stays `None`).
+  - `101..200` (the same output at 1 %..100 %, `MyHOME#908`; golden record `thermo.resp.dim20.proportional_55pct.zone1.act3`, no plant capture): active (`is_heating()` / `is_cooling()` on its DIMENSION 19 side), no fan claim, logged as "output is at N%".
+  - `9` on DIMENSION 19 is read as on DIMENSION 20 (fan coil on, no speed) instead of "speed 4" on an inactive side; the WHO 4 PDF lists `9` in the DIMENSION 20 table only.
+  - any other value (`10..13`, `17..99`, `201` and above), which no source defines: the event keeps `message_type` and `actuator`, while `is_active()`, `is_heating()`, `is_cooling()`, `fan_on`, `fan_speed`, `cooling_fan_on` and `cooling_fan_speed` stay `None` and the log names the value; on DIMENSION 19 one unknown side leaves the whole status `None`.
+  - a zero-padded value (`*#4*1*20*01##`) is read as its number: the state was a string comparison (inactive) next to an integer log line ("is on").
+
+  Values `0..8`, and `9` on DIMENSION 20, decode and log as before. MyHOME already decodes these values itself with the same table (`where_grammar.py`), so its behaviour does not change.
+
 ## [2.0.0b14] - 2026-11-14
 
 ### Added
