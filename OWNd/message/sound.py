@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import re
+import warnings
 
 from .base import (
     OWNCommand,
@@ -600,6 +601,7 @@ class OWNSoundDiffusionEvent(OWNEvent):
         self._rds_text: str | None = None
         self._is_rds_blank: bool = False
         self._source_request: int | None = None
+        self._output_area: int | None = None
         self._matrix_area: int | None = None
 
         target = (
@@ -648,9 +650,15 @@ class OWNSoundDiffusionEvent(OWNEvent):
             else:
                 self._volume_step = 1
 
-        # Source named by a power-on (1#TYPE#SOURCE) or a matrix route (35#TYPE#AREA#SOURCE)
+        # Output area of a power-on (1#TYPE#AREA) and source of a matrix route
+        # (35#TYPE#AREA#SOURCE). The WHO 22 PDF (version 1.1) defines the second
+        # parameter of WHAT 1 as <area>, "the output area where the source is
+        # ON" (section 1.1; frames in 3.1.2 and 3.2.2); the source of a power-on
+        # is the WHERE (2#sourceID). Real captures agree: one source (2#1) is
+        # switched on with areas 1 to 8 (MyHOME issue 466 H4890 sweep, issue 746
+        # MH200N trace).
         if self._what == 1 and len(self._what_param) >= 2 and self._what_param[1].isdigit():
-            self._source_request = int(self._what_param[1])
+            self._output_area = int(self._what_param[1])
         elif self._what == 35 and len(self._what_param) >= 3:
             if self._what_param[0].isdigit():
                 self._multimedia_type = int(self._what_param[0])
@@ -751,8 +759,8 @@ class OWNSoundDiffusionEvent(OWNEvent):
             self._human_readable_log = f"{subject} RDS text: '{self._rds_text or ''}'."
         elif self._dimension is not None:
             self._human_readable_log = f"{subject} reported dimension {self._dimension}."
-        elif self._what == 1 and self._source_request is not None:
-            self._human_readable_log = f"{subject} is switched ON with source {self._source_request}."
+        elif self._what == 1 and self._output_area is not None:
+            self._human_readable_log = f"{subject} is switched ON (output area {self._output_area})."
         elif self._what in (1, 2):
             self._human_readable_log = f"{subject} is switched ON."
         elif self.is_atomic_off:
@@ -920,8 +928,33 @@ class OWNSoundDiffusionEvent(OWNEvent):
         return self._what == 34
 
     @property
+    def output_area(self) -> int | None:
+        """Output area of a power-on, the ``A`` of WHAT ``1#TYPE#A``, else ``None``.
+
+        The WHO 22 PDF (version 1.1, section 1.1) defines it as "the output area
+        where the source is ON" [1-9]. It is not the source: the source of
+        ``*22*1#TYPE#A*2#S##`` is the WHERE (:attr:`source_id`). :attr:`area`
+        is the area of the WHERE (``3#AREA#POINT``, ``4#AREA``), which a plant
+        may number differently (``*22*1#4#1*3#7#5##`` on a matrix plant).
+        """
+        return self._output_area
+
+    @property
     def requested_source(self) -> int | None:
-        """Source named by a command: ``1#TYPE#S`` (power on with source) or ``35#TYPE#AREA#S`` (route)."""
+        """Source named by a matrix route, the ``S`` of WHAT ``35#TYPE#AREA#S``, else ``None``.
+
+        Deprecated for a power-on: WHAT ``1#TYPE#A`` names the output area, not
+        a source. For one release this still returns ``A`` for that frame, with
+        a ``DeprecationWarning``; read :attr:`output_area` instead.
+        """
+        if self._what == 1 and self._output_area is not None:
+            warnings.warn(
+                "OWNSoundDiffusionEvent.requested_source on a power-on (WHAT 1#TYPE#A) "
+                "returns the output area, not a source; use output_area instead",
+                DeprecationWarning,
+                stacklevel=2,
+            )
+            return self._output_area
         return self._source_request
 
     @property
@@ -1104,7 +1137,7 @@ class OWNSoundDiffusionCommand(OWNCommand):
         on the oracle's main as well), so every send path refuses it with
         ``reason="destructive_frame"`` (:func:`is_who22_bare_power_frame`). The
         published power-on is :meth:`turn_on_with_source`
-        (``*22*1#TYPE#SOURCE*WHERE##``), or :meth:`route_source` on a matrix.
+        (``*22*1#TYPE#AREA*WHERE##``), or :meth:`route_source` on a matrix.
         """
         target = _require_non_empty_where(where)
         message = cls(f"*22*1*{target}##")
@@ -1127,18 +1160,25 @@ class OWNSoundDiffusionCommand(OWNCommand):
 
     @classmethod
     def turn_on_with_source(
-        cls, where: str | int, source_id: int | str, multimedia_type: int | str = 4
+        cls, where: str | int, output_area: int | str, multimedia_type: int | str = 4
     ) -> OWNSoundDiffusionCommand:
-        """Power a zone on and play a source: ``*22*1#TYPE#SOURCE*WHERE##`` (TYPE 4 on the traced plant)."""
+        """Power a source or an amplifier on: ``*22*1#TYPE#AREA*WHERE##`` (TYPE 4 on the traced plants).
+
+        ``output_area`` is the WHO 22 PDF's ``<area>``, "the output area where
+        the source is ON" (version 1.1, sections 1.1, 3.1.2 and 3.2.2), not a
+        source: to switch a source on, pass it as the WHERE (``2#SOURCE``). The
+        method keeps its historical name; the second parameter was called
+        ``source_id`` before.
+        """
         target = _require_non_empty_where(where)
-        source = int(source_id)
-        if source < 1:
-            raise ValueError("source must be positive")
+        area = int(output_area)
+        if area < 1:
+            raise ValueError("output area must be positive")
         mm_type = int(multimedia_type)
         if mm_type < 0:
             raise ValueError("multimedia_type must be non-negative")
-        message = cls(f"*22*1#{mm_type}#{source}*{target}##")
-        message._human_readable_log = f"Turning ON sound diffusion device {target} with source {source}."
+        message = cls(f"*22*1#{mm_type}#{area}*{target}##")
+        message._human_readable_log = f"Turning ON sound diffusion device {target} (output area {area})."
         return message
 
     @classmethod
