@@ -33,18 +33,25 @@ Review of the fix (OWNd#174) added the rest of that table:
 * ``101..200``: the same proportional output at 1 %..100 %, running, with no
   fan claim (a 0-10 V output can be a plain valve). ``*#4*1#3*20*155##`` is
   golden record ``thermo.resp.dim20.proportional_55pct.zone1.act3`` (source
-  ``encyclopedia``); no plant capture carries a value above ``100``. Read
+  ``mcp-draft``: from the gateway firmware translation, in neither the PDF
+  nor the Encyclopedia); no plant capture carries a value above ``100``. Read
   as "value - 5" it was a fan at 'Auto' speed on DIMENSION 20 and a fan at
   speed 150 with ``is_heating() = False`` on DIMENSION 19.
 * ``9`` on DIMENSION 19: the PDF table of DIMENSION 19 ends at ``8`` and ``9``
   ("ON Fan Coil") is in the DIMENSION 20 table; it is read the same way on
   both (fan on, no speed), where DIMENSION 19 gave "speed 4" and an inactive
   side.
-* every other value (``10..13``, ``17..99``, ``201`` and above) is in no
-  source: the event keeps its type and its actuator, the state accessors stay
-  ``None`` and the log names the value. MyHOME reads such a frame the same
-  way (``where_grammar._decode_thermo_output_code`` returns ``None``) and its
-  tests send ``*#4*1#3*20*999##``, ``*#4*7#1*20*250##`` and
+* ``10..13`` and ``17..22`` are sent by some gateways (table in
+  ``OWNd/message/heating.py``) and no source gives their label. Only "active
+  or not" is decoded, with no fan claim: ``10..12`` and ``18..22`` active,
+  ``13`` and ``17`` inactive (the maintainer's reading of the MyHomeServer1
+  ``bt_thermo_manager``, OWNd#174; the table of MyHOME#928). No stored frame
+  carries one of them.
+* every other value (``23..99``, ``201`` and above) is in no source and is
+  not decoded. The event keeps its type and its actuator, the state
+  accessors stay ``None`` and the log names the value. MyHOME reads such a
+  frame the same way (``where_grammar._decode_thermo_output_code`` returns
+  ``None``) and its tests send ``*#4*1#3*20*999##``, ``*#4*7#1*20*250##`` and
   ``*#4*1*19*0*999##`` as typed events.
 """
 
@@ -222,6 +229,9 @@ _KNOWN_CODES: dict[int, tuple[bool, bool | None, int | None]] = {
     7: (True, True, 2),
     8: (True, True, 3),
     9: (True, True, None),
+    **{code: (True, None, None) for code in (10, 11, 12, 18, 19, 20, 21, 22)},
+    13: (False, None, None),
+    17: (False, None, None),
     14: (False, False, None),
     15: (False, False, None),
     16: (False, False, None),
@@ -247,6 +257,49 @@ def test_dimension_20_every_code(code: int) -> None:
             event.human_readable_log
             == f"Zone 1's actuator 3 reports an unknown status {code}."
         )
+
+
+@pytest.mark.parametrize(
+    ("code", "state"),
+    [
+        (10, "active"),
+        (11, "active"),
+        (12, "active"),
+        (13, "inactive"),
+        (17, "inactive"),
+        (18, "active"),
+        (19, "active"),
+        (20, "active"),
+        (21, "active"),
+        (22, "active"),
+    ],
+)
+def test_unlabelled_codes_log_the_value_and_the_state(code: int, state: str) -> None:
+    """``10..13`` and ``17..22`` have no label: the log gives the value and active / inactive."""
+    assert (
+        _parse(f"*#4*1#3*20*{code}##").human_readable_log
+        == f"Zone 1's actuator 3 reports status {code} ({state})."
+    )
+    assert (
+        _parse(f"*#4*1*19*0*{code}##").human_readable_log
+        == f"Zone 1's cooling valve is off; heating valve reports status {code} ({state})."
+    )
+    assert (
+        _parse(f"*#4*1*19*{code}*0##").human_readable_log
+        == f"Zone 1's cooling valve reports status {code} ({state}); heating valve is off."
+    )
+
+
+def test_dimension_19_with_an_empty_field_stays_untyped() -> None:
+    """``*#4*1*19*0*##``: what an emulated MyHomeServer1 028206 and F461 020011 emit for an unassigned telegram value."""
+    event = _parse("*#4*1*19*0*##")
+    assert event.message_type is None
+    assert event.is_active() is None
+    assert event.is_heating() is None
+    assert event.is_cooling() is None
+    assert event.fan_on is None
+    assert event.cooling_fan_on is None
+    assert event.human_readable_log == "*#4*1*19*0*##"
 
 
 @pytest.mark.parametrize("code", _ALL_CODES)

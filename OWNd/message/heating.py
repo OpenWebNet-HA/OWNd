@@ -250,21 +250,53 @@ _WHO4_WHERE_REGEX = re.compile(r"#?[0-9]{1,2}(?:#[0-9])?(?:#4#[0-9]{2})?", re.AS
 #   OFF-speed states `14`, `15`, and `16`"; MyHOME#908 reads them from the
 #   MyHomeServer1 firmware table).
 # * ``100..200``: proportional 0-10 V output at 0 %..100 % (MyHOME#908, from
-#   the gateway firmware: code = 100 + percent). ``100`` is a stopped output,
-#   received from a MyHomeServer1 2.87.13 with 0-10 V Sabiana fan coils
-#   (``*#4*1#3*20*100##``, ``*#4*2#3*20*100##``); ``101..200`` is a running
-#   one. A 0-10 V output can be a plain valve, so no fan is claimed for it.
+#   the gateway firmware: code = 100 + percent; in neither the PDF nor the
+#   Encyclopedia). ``100`` is a stopped output, received from a MyHomeServer1
+#   2.87.13 with 0-10 V Sabiana fan coils (``*#4*1#3*20*100##``,
+#   ``*#4*2#3*20*100##``); ``101..200`` is a running one, seen only in the
+#   firmware translation, in no plant capture. A 0-10 V output can be a plain
+#   valve, so no fan is claimed for it.
 #
-# Every other value (``10..13``, ``17..99``, ``201`` and above) is in no
-# source: it is reported as unknown instead of being read as "value - 5 = fan
-# speed", which made a fan running at speed 9, 95 or 994 out of ``14``,
-# ``100`` and ``999``.
+# Which gateway sends which code. own-firmware-oracle emulation of the bus
+# telegram "actuator status" (zone 1, actuator 3, DIMENSION 20; local probe of
+# 2026-11-15, firmware image codes in brackets):
+#
+# * MH200N (010108): ``0..13`` only; the telegram values of ``14..22`` and of
+#   ``100..200`` are dropped.
+# * MH202 (010024), F459 (020105): ``0..13`` and ``100..200``.
+# * MyHomeServer1 (028206), F461 (020011): ``0..22`` and ``100..200``
+#   (``14..16`` and ``17..22`` only on these two).
+#
+# DIMENSION 19 (bus telegram "valves status", zone 1, heating and cooling
+# side; local probe of 2026-11-16 with the telegram values of ``0``, ``9``,
+# ``10..13``, ``14..16``, ``17``, ``22``, ``100``, ``101``, ``155`` and
+# ``200``): the same domains, except that the MH202 and the F459 drop
+# ``100..200`` there. ``9`` comes out on DIMENSION 19 from all five. For a
+# telegram value outside their table the MyHomeServer1 and the F461 emit the
+# frame with an empty field (``*#4*1*19*0*##``); it stays an untyped event.
+#
+# The maintainer's reading of the firmware (OWNd#174, 2026-11-15) says the
+# same and puts the F454 (020051) with the MH202; the emulated F454 gave no
+# output for any telegram, so the F454 is his reading, not measured here.
+#
+# ``10..13`` and ``17..22`` therefore exist on the wire of these gateways. No
+# published table, Encyclopedia page or plant capture gives their label, so
+# only "active or not" is decoded, with no fan claim: ``10..12`` and
+# ``18..22`` active, ``13`` and ``17`` inactive. That split is the
+# maintainer's reading of the MyHomeServer1 (028206) ``bt_thermo_manager``
+# (OWNd#174, 2026-11-15; not measured here) and is the table MyHOME uses
+# (MyHOME#928). ``23..99`` and ``201`` and above are in no source at all and
+# are reported as unknown instead of being read as "value - 5 = fan speed",
+# which made a fan running at speed 9, 95 or 994 out of ``14``, ``100`` and
+# ``999``.
 _FANCOIL_OFF_SPEED_CODES = {14: 1, 15: 2, 16: 3}
 _FANCOIL_ON_SPEED_CODES = {6: 1, 7: 2, 8: 3}
 _FANCOIL_ON_AUTO_CODE = 9
 _VALVE_STATE_TEXT = {0: "off", 1: "on", 2: "opened", 3: "closed", 4: "stopped"}
 _PROPORTIONAL_OFF_CODE = 100
 _PROPORTIONAL_FULL_CODE = 200
+_UNLABELLED_ACTIVE_CODES = frozenset({10, 11, 12, 18, 19, 20, 21, 22})
+_UNLABELLED_INACTIVE_CODES = frozenset({13, 17})
 
 
 def _decode_thermo_output_code(code: int) -> tuple[bool, bool | None, int | None] | None:
@@ -274,9 +306,9 @@ def _decode_thermo_output_code(code: int) -> tuple[bool, bool | None, int | None
     states, proportional output) and ``fan_speed`` is ``None`` unless the fan
     runs at speed 1..3. Same table as MyHOME ``where_grammar.py``.
     """
-    if code in (1, 2):
+    if code in (1, 2) or code in _UNLABELLED_ACTIVE_CODES:
         return (True, None, None)
-    if code in (0, 3, 4):
+    if code in (0, 3, 4) or code in _UNLABELLED_INACTIVE_CODES:
         return (False, None, None)
     if code == 5 or code in _FANCOIL_OFF_SPEED_CODES:
         return (False, False, None)
@@ -303,6 +335,10 @@ def _thermo_output_text(code: int, valve: str, fan: str, output: str) -> str:
         return f"{fan} is on at 'Auto' speed"
     if _PROPORTIONAL_OFF_CODE <= code <= _PROPORTIONAL_FULL_CODE:
         return f"{output} is at {code - _PROPORTIONAL_OFF_CODE}%"
+    if code in _UNLABELLED_ACTIVE_CODES:
+        return f"{valve} reports status {code} (active)"
+    if code in _UNLABELLED_INACTIVE_CODES:
+        return f"{valve} reports status {code} (inactive)"
     return f"{valve} reports an unknown status {code}"
 
 
@@ -800,7 +836,7 @@ class OWNHeatingEvent(OWNEvent):
             _heating_value = int(self._dimension_value[1])
             _cooling = _decode_thermo_output_code(_cooling_value)
             _heating = _decode_thermo_output_code(_heating_value)
-            # A code that no source defines on either side leaves the whole
+            # A code that is not decoded on either side leaves the whole
             # status unknown (``None``), as MyHOME reads it: the frame keeps
             # its type and only the log names the unknown value.
             if _cooling is not None and _heating is not None:
