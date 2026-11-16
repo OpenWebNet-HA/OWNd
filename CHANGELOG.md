@@ -17,6 +17,11 @@ All notable changes to `OWNd` are documented in this file.
   - a zero-padded value (`*#4*1*20*01##`) is read as its number: the state was a string comparison (inactive) next to an integer log line ("is on").
 
   Values `0..8`, and `9` on DIMENSION 20, decode and log as before. MyHOME already decodes these values itself with the same table (`where_grammar.py`), so its behaviour does not change.
+- **WHO 22 (`OWNSoundDiffusionEvent`, power-on WHAT `1#TYPE#AREA`)**: the second parameter of a power-on is decoded as the output area, not as a source (`MyHOME#924` A1). The WHO 22 specification (version 1.1) defines it as `<area>`, "the output area where the source is ON" [1-9] (section 1.1; `*22*1#<mmtype>#<area>*2#<sourceID>##` in 3.1.2), and the source of a power-on is the WHERE. Received frames agree: `*22*1#4#1*2#1##` to `*22*1#4#8*2#1##`, one source with eight areas, in the `MyHOME#466` H4890 sweep and the `MyHOME#746` MH200N trace. `*22*1#4#8*2#1##` was logged as "Audio Source 1 is switched ON with source 8." with `requested_source == 8`, and `*22*1#4#3*3#3#1##` as "Speaker 3#3#1 (Zone 31) is switched ON with source 3." although that frame names no source.
+  - New `OWNSoundDiffusionEvent.output_area`: the area of WHAT `1#TYPE#AREA`, else `None`. `area` stays the area of the WHERE (`3#AREA#POINT`, `4#AREA`); the two can differ (`*22*1#4#1*3#7#5##` on the MyHomeServer1 matrix plant).
+  - The log line reads "Audio Source 1 is switched ON (output area 8).".
+  - `requested_source` is the source of a matrix route (WHAT `35#TYPE#AREA#SOURCE`), which is unchanged. On a power-on it still returns the area for one release, with a `DeprecationWarning`; read `output_area` instead.
+  - `OWNSoundDiffusionCommand.turn_on_with_source(where, output_area, multimedia_type=4)`: the second parameter is renamed from `source_id` (a keyword call with `source_id=` must be updated; positional calls are unaffected), its error reads "output area must be positive" and its log "Turning ON sound diffusion device 3#7#5 (output area 1).". The frame it builds is unchanged, and so is the method name. MyHOME already passes the output area (`sound_source.py`), so its behaviour does not change.
 
 ## [2.0.0b14] - 2026-11-14
 
