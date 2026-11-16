@@ -370,14 +370,60 @@ def test_dimension_12_state_0_type_10_is_standby() -> None:
     assert plain.human_readable_log == "Speaker 3#1#1 (Zone 11) device state is OFF."
 
 
-def test_power_on_with_source() -> None:
+def test_power_on_names_the_output_area() -> None:
+    """WHAT ``1#TYPE#A``: ``A`` is the output area, the source stays in the WHERE.
+
+    WHO 22 PDF version 1.1: section 1.1 defines ``<area>`` as "the output area
+    where the source is ON" [1-9] and ``<sourceID>`` as the source address
+    [1-4]; 3.1.2 is ``*22*1#<mmtype>#<area>*2#<sourceID>##``. The frames below
+    are received frames of the MyHOME trace fixtures (matrix plant
+    ``who22_myhomeserver1_f500_h4562``, the issue 466 H4890 sweep and the
+    issue 746 MH200N trace).
+    """
     event = OWNMessage.parse("*22*1#4#1*3#7#5##")
     assert isinstance(event, OWNSoundDiffusionEvent)
     assert event.is_on is True
-    assert event.requested_source == 1
+    assert event.output_area == 1
+    # The WHERE area of that matrix plant is 7: it is not the output area.
+    assert (event.area, event.point) == (7, 5)
+    assert event.source_id is None
     assert event.is_atomic_off is False
-    assert event.human_readable_log == "Speaker 3#7#5 (Zone 75) is switched ON with source 1."
-    assert OWNMessage.parse("*22*1*3#7#5##").requested_source is None
+    assert event.human_readable_log == "Speaker 3#7#5 (Zone 75) is switched ON (output area 1)."
+
+    # One source (2#1) switched on for the output areas 1 to 8.
+    for area in range(1, 9):
+        source_on = OWNMessage.parse(f"*22*1#4#{area}*2#1##")
+        assert isinstance(source_on, OWNSoundDiffusionEvent)
+        assert source_on.target_type == "source"
+        assert source_on.source_id == 1
+        assert source_on.output_area == area
+        assert source_on.area is None
+        assert source_on.human_readable_log == f"Audio Source 1 is switched ON (output area {area})."
+
+    speaker_on = OWNMessage.parse("*22*1#4#3*3#3#1##")
+    assert (speaker_on.output_area, speaker_on.area, speaker_on.point) == (3, 3, 1)
+    assert speaker_on.human_readable_log == "Speaker 3#3#1 (Zone 31) is switched ON (output area 3)."
+
+    # Without the area parameter there is no output area, and nothing to warn about.
+    for frame in ("*22*1*3#7#5##", "*22*1#4*3#7#5##"):
+        bare = OWNMessage.parse(frame)
+        assert bare.output_area is None
+        assert bare.requested_source is None
+        assert bare.human_readable_log == "Speaker 3#7#5 (Zone 75) is switched ON."
+    # The other WHATs do not set it.
+    assert OWNMessage.parse("*22*35#4#1#2*3#7#5##").output_area is None
+    assert OWNMessage.parse("*22*0#4#0*3#7#5##").output_area is None
+
+
+def test_requested_source_on_a_power_on_is_a_deprecated_alias() -> None:
+    """``requested_source`` belongs to WHAT 35; on WHAT 1 it still returns the area for one release."""
+    event = OWNMessage.parse("*22*1#4#8*2#1##")
+    assert event.source_id == 1
+    with pytest.warns(DeprecationWarning, match=r"use output_area instead"):
+        assert event.requested_source == 8
+    # A matrix route names a source and does not warn (the suite turns the warning into an error).
+    route = OWNMessage.parse("*22*35#4#1#2*3#7#5##")
+    assert route.requested_source == 2
 
 
 def test_atomic_off() -> None:
@@ -457,8 +503,12 @@ def test_new_command_builders_match_the_traces() -> None:
     cmd = OWNSoundDiffusionCommand.route_source("3#7#5", 2)
     assert cmd.human_readable_log == "Routing sound diffusion device 3#7#5 to source 2."
     assert OWNSoundDiffusionCommand.turn_on_with_source("3#7#5", 1).human_readable_log == (
-        "Turning ON sound diffusion device 3#7#5 with source 1."
+        "Turning ON sound diffusion device 3#7#5 (output area 1)."
     )
+    # The second parameter is the output area (WHO 22 PDF 3.1.2): a source goes in the WHERE.
+    source_on = OWNSoundDiffusionCommand.turn_on_with_source("2#1", output_area=8)
+    assert str(source_on) == "*22*1#4#8*2#1##"
+    assert source_on.human_readable_log == "Turning ON sound diffusion device 2#1 (output area 8)."
     assert OWNSoundDiffusionCommand.turn_off_atomic("3#7#5").human_readable_log == (
         "Turning OFF sound diffusion device 3#7#5 (atomic)."
     )
@@ -469,7 +519,7 @@ def test_new_command_builders_match_the_traces() -> None:
 
 
 def test_builder_inputs_are_validated() -> None:
-    with pytest.raises(ValueError):
+    with pytest.raises(ValueError, match="output area must be positive"):
         OWNSoundDiffusionCommand.turn_on_with_source("3#7#5", 0)
     with pytest.raises(ValueError):
         OWNSoundDiffusionCommand.route_source("3#7#5", 0)
