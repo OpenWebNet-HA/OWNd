@@ -670,11 +670,14 @@ class OWNSoundDiffusionEvent(OWNEvent):
         # switches the amplifier 3#3#1 off, ``*22*2#4#3*5#2#3##`` reports source
         # 3 on in area 3. An area ``0`` is outside the PDF's [1-9]; it is kept as
         # sent (``0#4#0`` on a MyHomeServer1, ``2#4#0`` on an H/L4684).
-        if self._what in _WHO22_TYPE_AREA_WHATS and len(self._what_param) >= 2:
-            if self._what_param[0].isdigit():
-                self._multimedia_type = int(self._what_param[0])
-            if self._what_param[1].isdigit():
-                self._output_area = int(self._what_param[1])
+        if (
+            self._what in _WHO22_TYPE_AREA_WHATS
+            and len(self._what_param) >= 2
+            and self._what_param[0].isdigit()
+            and self._what_param[1].isdigit()
+        ):
+            self._multimedia_type = int(self._what_param[0])
+            self._output_area = int(self._what_param[1])
         elif self._what == 35 and len(self._what_param) >= 3:
             if self._what_param[0].isdigit():
                 self._multimedia_type = int(self._what_param[0])
