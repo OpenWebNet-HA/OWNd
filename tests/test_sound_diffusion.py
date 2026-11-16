@@ -410,9 +410,116 @@ def test_power_on_names_the_output_area() -> None:
         assert bare.output_area is None
         assert bare.requested_source is None
         assert bare.human_readable_log == "Speaker 3#7#5 (Zone 75) is switched ON."
-    # The other WHATs do not set it.
+    # A matrix route has matrix_area instead.
     assert OWNMessage.parse("*22*35#4#1#2*3#7#5##").output_area is None
-    assert OWNMessage.parse("*22*0#4#0*3#7#5##").output_area is None
+
+
+def test_power_off_names_the_output_area() -> None:
+    """WHAT ``0#TYPE#A``: the same ``<area>`` as the power-on.
+
+    WHO 22 PDF version 1.1: 3.1.1 is ``*22*0#<mmtype>#<area>*2#<sourceID>##``,
+    3.2.1 the amplifier form. The frames are received frames of the MyHOME
+    trace fixtures: the issue 466 H4890 sweep and trace, the MH202 trace of
+    ``mh202_sound_intercom_ducking``, and ``0#4#0`` from the MyHomeServer1
+    plant and an H/L4684.
+    """
+    # H4890: source 1 off for the output areas 1 to 8.
+    for area in range(1, 9):
+        source_off = OWNMessage.parse(f"*22*0#4#{area}*5#2#1##")
+        assert isinstance(source_off, OWNSoundDiffusionEvent)
+        assert source_off.is_off is True
+        assert source_off.source_id == 1
+        assert source_off.output_area == area
+        assert source_off.multimedia_type == 4
+        assert source_off.area is None
+        assert source_off.human_readable_log == f"Audio Source 1 is switched OFF (output area {area})."
+
+    speaker_off = OWNMessage.parse("*22*0#4#3*3#3#1##")
+    assert (speaker_off.output_area, speaker_off.area, speaker_off.point) == (3, 3, 1)
+    assert speaker_off.is_atomic_off is True
+    assert speaker_off.human_readable_log == "Speaker 3#3#1 (Zone 31) is switched OFF (output area 3)."
+
+    # MH202: every source off for the output area 4.
+    all_off = OWNMessage.parse("*22*0#4#4*6##")
+    assert all_off.target_type == "all_sources"
+    assert all_off.output_area == 4
+    assert all_off.human_readable_log == "Sound diffusion device 6 is switched OFF (output area 4)."
+
+    # Area 0 is outside the PDF's [1-9]; it is kept as sent and logged as before.
+    for frame, subject in (
+        ("*22*0#4#0*3#7#5##", "Speaker 3#7#5 (Zone 75)"),  # MyHomeServer1
+        ("*22*0#4#0*3#4#2##", "Speaker 3#4#2 (Zone 42)"),  # H/L4684
+    ):
+        atomic = OWNMessage.parse(frame)
+        assert atomic.output_area == 0
+        assert atomic.multimedia_type == 4
+        assert atomic.is_atomic_off is True
+        assert atomic.human_readable_log == f"{subject} is switched OFF (atomic)."
+
+    # Without the area parameter there is no output area.
+    bare = OWNMessage.parse("*22*0*3#7#5##")
+    assert (bare.output_area, bare.multimedia_type, bare.is_atomic_off) == (None, None, False)
+    assert bare.human_readable_log == "Speaker 3#7#5 (Zone 75) is switched OFF."
+    one_parameter = OWNMessage.parse("*22*0#4*3#7#5##")
+    assert (one_parameter.output_area, one_parameter.multimedia_type) == (None, None)
+    assert one_parameter.human_readable_log == "Speaker 3#7#5 (Zone 75) is switched OFF (atomic)."
+
+
+@pytest.mark.parametrize(
+    ("frame", "what", "area", "log"),
+    [
+        # WHAT 2 "Source turned on" and 21, the event frames of PDF 3.1.2 / 3.2.6
+        # (*22*2#<mmtype>#<area>*5#2#<sourceID>##). Received frames of the MyHOME
+        # trace fixtures: 2 on an H4890, an MH200N, an MH202 and an H/L4684, 21
+        # on the last three; the H/L4684 also sends area 0.
+        ("*22*2#4#3*5#2#3##", 2, 3, "Audio Source 3 is switched ON (output area 3)."),
+        ("*22*2#4#8*5#2#1##", 2, 8, "Audio Source 1 is switched ON (output area 8)."),
+        ("*22*2#4#0*5#2#1##", 2, 0, "Audio Source 1 is switched ON (output area 0)."),
+        ("*22*21#4#4*5#2#3##", 21, 4, "Audio Source 3 received command: 21."),
+        ("*22*21#4#0*5#2#2##", 21, 0, "Audio Source 2 received command: 21."),
+        # WHAT 23 is not in the PDF; the two captured frames (H4890, H/L4684).
+        ("*22*23#4#1*5#2#1##", 23, 1, "Audio Source 1 received command: 23."),
+        ("*22*23#4#2*5#2#2##", 23, 2, "Audio Source 2 received command: 23."),
+        # PDF 3.1.9 (WHAT 22) and 3.2.5 (WHAT 34); no captured frame.
+        ("*22*22#4#1*2#1##", 22, 1, "Audio Source 1 received command: 22."),
+        ("*22*34#4#1*3#1#1##", 34, 1, "Speaker 3#1#1 (Zone 11) follow-me."),
+    ],
+)
+def test_notifications_name_the_output_area(frame: str, what: int, area: int, log: str) -> None:
+    """WHAT ``N#TYPE#A`` for N in 2, 21, 22, 23, 34: ``TYPE`` and ``A`` are read, the log label is unchanged."""
+    event = OWNMessage.parse(frame)
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event._what == what
+    assert event.output_area == area
+    assert event.multimedia_type == 4
+    assert event.requested_source is None
+    assert event.matrix_area is None
+    assert event.human_readable_log == log
+
+
+def test_output_area_is_left_unset_elsewhere() -> None:
+    """Bare WHATs, other parameter lists and dimension frames carry no output area."""
+    for frame in (
+        "*22*2*2#3##",  # bare WHAT 2
+        "*22*34*3#1#1##",  # bare WHAT 34
+        "*22*3#1*3#4#1##",  # volume step
+        "*22*19#1*5#3#0#0##",  # paging channel
+        "*22*33#4*2#1##",  # preset
+        "*22*5#3*2#1##",  # frequency step
+    ):
+        event = OWNMessage.parse(frame)
+        assert (event.output_area, event.multimedia_type) == (None, None), frame
+    # Dimension 12 keeps its own second value: audio channel 2, standby 10.
+    channel = OWNMessage.parse("*#22*3#7#6*12*1*2##")
+    assert (channel.output_area, channel.multimedia_type, channel.audio_channel) == (None, 2, 2)
+    standby = OWNMessage.parse("*#22*3#7#5*12*0*10##")
+    assert (standby.output_area, standby.multimedia_type, standby.is_standby) == (None, 10, True)
+    # A WHAT TYPE is not an audio channel.
+    assert OWNMessage.parse("*22*2#4#1*5#2#1##").audio_channel is None
+    assert OWNMessage.parse("*22*0#4#0*3#7#5##").is_standby is False
+    # WHAT 1 is unchanged, and now carries its TYPE too.
+    power_on = OWNMessage.parse("*22*1#4#1*3#7#5##")
+    assert (power_on.output_area, power_on.multimedia_type) == (1, 4)
 
 
 def test_requested_source_on_a_power_on_is_a_deprecated_alias() -> None:
@@ -431,6 +538,7 @@ def test_atomic_off() -> None:
     assert isinstance(event, OWNSoundDiffusionEvent)
     assert event.is_off is True
     assert event.is_atomic_off is True
+    assert event.output_area == 0
     assert event.human_readable_log == "Speaker 3#7#5 (Zone 75) is switched OFF (atomic)."
     plain = OWNMessage.parse("*22*0*3#7#5##")
     assert plain.is_off is True

@@ -20,6 +20,15 @@ _require_non_empty_where = require_non_empty_where
 # WHO 22 manual tuner step as published: 1..15, no leading zero, ASCII digits.
 _WHO22_FREQUENCY_STEP_REGEX = re.compile(r"[1-9]|1[0-5]", re.ASCII)
 
+# WHO 22 WHATs whose parameters are ``<mmtype>#<area>``, the output area the
+# frame is about. WHO 22 PDF (version 1.1): ``0`` (3.1.1, 3.2.1), ``1`` (3.1.2,
+# 3.2.2), ``2`` and ``21`` (event frames of 3.1.2, 3.2.5 and 3.2.6), ``22``
+# (3.1.9) and ``34`` (3.2.5). ``23`` is not in the PDF: two captures carry it
+# in the same form next to ``21`` and ``2`` (``*22*23#4#1*5#2#1##`` on an
+# H4890, ``*22*23#4#2*5#2#2##`` on an H/L4684, MyHOME issue 466 traces), and
+# MyHOME reads its third field as the area (``parse_who22_routing``).
+_WHO22_TYPE_AREA_WHATS = frozenset({0, 1, 2, 21, 22, 23, 34})
+
 
 def _validate_frequency_step(step: object) -> int:
     """Return ``step`` as an integer 1..15 (a WHO 16 / WHO 22 manual tuner step), else raise ``ValueError``."""
@@ -650,15 +659,22 @@ class OWNSoundDiffusionEvent(OWNEvent):
             else:
                 self._volume_step = 1
 
-        # Output area of a power-on (1#TYPE#AREA) and source of a matrix route
+        # Output area of a power frame (N#TYPE#AREA) and source of a matrix route
         # (35#TYPE#AREA#SOURCE). The WHO 22 PDF (version 1.1) defines the second
         # parameter of WHAT 1 as <area>, "the output area where the source is
         # ON" (section 1.1; frames in 3.1.2 and 3.2.2); the source of a power-on
         # is the WHERE (2#sourceID). Real captures agree: one source (2#1) is
         # switched on with areas 1 to 8 (MyHOME issue 466 H4890 sweep, issue 746
-        # MH200N trace).
-        if self._what == 1 and len(self._what_param) >= 2 and self._what_param[1].isdigit():
-            self._output_area = int(self._what_param[1])
+        # MH200N trace). The power-off and the notifications carry the same two
+        # parameters (_WHO22_TYPE_AREA_WHATS): ``*22*0#4#3*3#3#1##`` on an H4890
+        # switches the amplifier 3#3#1 off, ``*22*2#4#3*5#2#3##`` reports source
+        # 3 on in area 3. An area ``0`` is outside the PDF's [1-9]; it is kept as
+        # sent (``0#4#0`` on a MyHomeServer1, ``2#4#0`` on an H/L4684).
+        if self._what in _WHO22_TYPE_AREA_WHATS and len(self._what_param) >= 2:
+            if self._what_param[0].isdigit():
+                self._multimedia_type = int(self._what_param[0])
+            if self._what_param[1].isdigit():
+                self._output_area = int(self._what_param[1])
         elif self._what == 35 and len(self._what_param) >= 3:
             if self._what_param[0].isdigit():
                 self._multimedia_type = int(self._what_param[0])
@@ -759,10 +775,12 @@ class OWNSoundDiffusionEvent(OWNEvent):
             self._human_readable_log = f"{subject} RDS text: '{self._rds_text or ''}'."
         elif self._dimension is not None:
             self._human_readable_log = f"{subject} reported dimension {self._dimension}."
-        elif self._what == 1 and self._output_area is not None:
+        elif self._what in (1, 2) and self._output_area is not None:
             self._human_readable_log = f"{subject} is switched ON (output area {self._output_area})."
         elif self._what in (1, 2):
             self._human_readable_log = f"{subject} is switched ON."
+        elif self._what == 0 and self._output_area:
+            self._human_readable_log = f"{subject} is switched OFF (output area {self._output_area})."
         elif self.is_atomic_off:
             self._human_readable_log = f"{subject} is switched OFF (atomic)."
         elif self._what == 0:
@@ -846,10 +864,12 @@ class OWNSoundDiffusionEvent(OWNEvent):
 
     @property
     def multimedia_type(self) -> int | None:
-        """Second value of dimension 12, whatever the state.
+        """Second value of dimension 12, whatever the state, or the ``TYPE`` of a WHAT with parameters.
 
-        Traces: with state 1 it is the audio channel (see ``audio_channel``), with state 0 it is 10
-        (see ``is_standby``).
+        Dimension 12, traces: with state 1 it is the audio channel (see ``audio_channel``), with state 0
+        it is 10 (see ``is_standby``). In a WHAT it is the WHO 22 PDF's ``<mmtype>`` (4 = stereo on
+        every captured frame): ``N#TYPE#AREA`` for N in 0, 1, 2, 21, 22, 23 and 34, and
+        ``35#TYPE#AREA#SOURCE``.
         """
         return self._multimedia_type
 
@@ -929,13 +949,20 @@ class OWNSoundDiffusionEvent(OWNEvent):
 
     @property
     def output_area(self) -> int | None:
-        """Output area of a power-on, the ``A`` of WHAT ``1#TYPE#A``, else ``None``.
+        """Output area of a power frame, the ``A`` of WHAT ``N#TYPE#A``, else ``None``.
 
         The WHO 22 PDF (version 1.1, section 1.1) defines it as "the output area
         where the source is ON" [1-9]. It is not the source: the source of
         ``*22*1#TYPE#A*2#S##`` is the WHERE (:attr:`source_id`). :attr:`area`
         is the area of the WHERE (``3#AREA#POINT``, ``4#AREA``), which a plant
         may number differently (``*22*1#4#1*3#7#5##`` on a matrix plant).
+
+        Set for the WHATs that carry ``TYPE#A``: the power-on ``1``, the
+        power-off ``0``, the notifications ``2`` and ``21``, ``22``, the
+        follow-me power-on ``34``, and ``23`` (in captures only, not in the
+        PDF). The value is kept as sent: ``0`` is outside the PDF's range and
+        is what a MyHomeServer1 sends in ``0#4#0`` and an H/L4684 in ``2#4#0``.
+        A matrix route (WHAT 35) has :attr:`matrix_area` instead.
         """
         return self._output_area
 
@@ -964,7 +991,12 @@ class OWNSoundDiffusionEvent(OWNEvent):
 
     @property
     def is_atomic_off(self) -> bool:
-        """True for ``0#4#0``, the single-frame power off (a plain WHAT 0 carries no parameters)."""
+        """True for a WHAT 0 with parameters, the single-frame power off (a plain WHAT 0 carries none).
+
+        That is ``0#4#0`` on the MyHomeServer1 plant the name comes from, and the
+        PDF's ``0#TYPE#AREA`` with an area (``0#4#3`` on an H4890) as well: see
+        :attr:`output_area` for the area.
+        """
         return self._what == 0 and len(self._what_param) >= 1
 
     @property
