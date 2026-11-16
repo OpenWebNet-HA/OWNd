@@ -25,10 +25,10 @@ It powers the [Home Assistant MyHOME integration](https://github.com/OpenWebNet-
 ## Key Features
 
 - **Hardened Dual-Session Architecture**: Decouples real-time bus event monitoring (`OWNEventSession`) from command and query execution (`OWNCommandSession`), preventing command bursts from interrupting event monitoring.
-- **Strongly Typed CEN / CEN+ Command Builders (P2)**: Dedicated fluent builders (`OWNCenCommand`, `OWNCenPlusCommand`) with strict OpenWebNet golden corpus frame parity for short press, start pressure, still held, and release actions across pushbuttons and rotary encoders.
+- **Strongly Typed CEN / CEN+ Command Builders (P2)**: Dedicated fluent builders (`OWNCenCommand`, `OWNCenPlusCommand`) with strict OpenWebNet golden corpus frame parity for short press, start pressure, still held, and release actions on pushbuttons.
 - **Thermoregulation Central Unit Coordination (P4)**: Dedicated builder support for 3550 (`#0`) and 4695 (`#0#1`) central units (`OWNHeatingCommand.set_central_mode`, `set_central_temperature`, `set_central_program`, `set_central_scenario`, `set_central_weekend`, `set_central_holiday`, `set_holiday_end_date`, `set_holiday_end_time`), enabling master heating/cooling state distribution.
 - **DALI Tunable White & Color Temperature**: Built-in support for DALI DT8 ballasts (F429 / F461) with Dimension 14 color temperature encoding and bidirectional Kelvin/mireds conversion.
-- **OpenWebNet Golden Corpus Validation**: Cross-checked and validated against the community OpenWebNet Golden Corpus (75+ real-world captured frame scenarios) ensuring exact frame encodings, dimensions, and edge cases.
+- **OpenWebNet Golden Corpus Validation**: Cross-checked and validated against the community OpenWebNet Golden Corpus (452 frame fixtures, 346 of them captured on community plants) ensuring exact frame encodings, dimensions, and edge cases.
 - **Serial & USB Dongle Support**: Built-in single-channel serial transport (`AsyncSerialTransport`) for the Legrand 3578 USB/ZigBee interface with in-band event and command-reply demultiplexing.
 - **Connection Resilience**:
   - Fail-closed SHA-1 and HMAC-SHA2 gateway authentication with constant-time signature verification.
