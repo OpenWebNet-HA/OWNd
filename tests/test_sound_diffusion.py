@@ -486,10 +486,10 @@ def test_power_off_names_the_output_area() -> None:
     ],
 )
 def test_notifications_name_the_output_area(frame: str, what: int, area: int, log: str) -> None:
-    """WHAT ``N#TYPE#A`` for N in 2, 21, 22, 23, 34: ``TYPE`` and ``A`` are read, the log label is unchanged."""
+    """WHAT ``N#TYPE#A`` for N in 2, 21, 22, 23, 34: ``TYPE`` and ``A`` are read; the log of 2 names the area, the others keep their log line."""
     event = OWNMessage.parse(frame)
     assert isinstance(event, OWNSoundDiffusionEvent)
-    assert event._what == what
+    assert event.what == what
     assert event.output_area == area
     assert event.multimedia_type == 4
     assert event.requested_source is None

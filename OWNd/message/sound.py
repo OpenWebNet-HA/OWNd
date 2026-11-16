@@ -22,11 +22,12 @@ _WHO22_FREQUENCY_STEP_REGEX = re.compile(r"[1-9]|1[0-5]", re.ASCII)
 
 # WHO 22 WHATs whose parameters are ``<mmtype>#<area>``, the output area the
 # frame is about. WHO 22 PDF (version 1.1): ``0`` (3.1.1, 3.2.1), ``1`` (3.1.2,
-# 3.2.2), ``2`` and ``21`` (event frames of 3.1.2, 3.2.5 and 3.2.6), ``22``
-# (3.1.9) and ``34`` (3.2.5). ``23`` is not in the PDF: two captures carry it
-# in the same form next to ``21`` and ``2`` (``*22*23#4#1*5#2#1##`` on an
-# H4890, ``*22*23#4#2*5#2#2##`` on an H/L4684, MyHOME issue 466 traces), and
-# MyHOME reads its third field as the area (``parse_who22_routing``).
+# 3.2.2), ``2`` (event frames of 3.1.2, 3.2.5 and 3.2.6), ``21`` (event frames
+# of 3.1.2 and 3.2.6), ``22`` (3.1.9) and ``34`` (3.2.5). ``23`` is not in the
+# PDF: two captures carry it in the same form next to ``21`` and ``2``
+# (``*22*23#4#1*5#2#1##`` on an H4890, ``*22*23#4#2*5#2#2##`` on an H/L4684,
+# MyHOME issue 466 traces), and MyHOME reads its third field as the area
+# (``parse_who22_routing``).
 _WHO22_TYPE_AREA_WHATS = frozenset({0, 1, 2, 21, 22, 23, 34})
 
 
@@ -782,7 +783,7 @@ class OWNSoundDiffusionEvent(OWNEvent):
             self._human_readable_log = f"{subject} is switched ON (output area {self._output_area})."
         elif self._what in (1, 2):
             self._human_readable_log = f"{subject} is switched ON."
-        elif self._what == 0 and self._output_area:
+        elif self._what == 0 and self._output_area is not None and self._output_area > 0:
             self._human_readable_log = f"{subject} is switched OFF (output area {self._output_area})."
         elif self.is_atomic_off:
             self._human_readable_log = f"{subject} is switched OFF (atomic)."
