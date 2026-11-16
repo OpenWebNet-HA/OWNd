@@ -4,7 +4,7 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
-## [2.0.0] - 2026-11-15
+## [2.0.0] - 2026-11-16
 
 ### Added
 - **WHO 22 (`OWNSoundDiffusionEvent`, WHAT `N#TYPE#AREA`)**: `output_area` and `multimedia_type` are set for every WHAT that carries `<mmtype>#<area>`; before, only `output_area` was set, and only for the power-on `1` (follow-up of the `MyHOME#924` A1 fix below). The WHO 22 specification (version 1.1) prints the same two parameters for the power-off `0` (`*22*0#<mmtype>#<area>*2#<sourceID>##`, 3.1.1; amplifier form in 3.2.1), for the notifications `2` (event frames of 3.1.2, 3.2.5 and 3.2.6) and `21` (event frames of 3.1.2 and 3.2.6), for `22` (3.1.9) and for the follow-me power-on `34` (3.2.5). WHAT `23` is not in the specification; the two captured frames have the same form (`*22*23#4#1*5#2#1##` on an H4890, `*22*23#4#2*5#2#2##` on an H/L4684, MyHOME `issue_466` traces) and MyHOME already reads its third field as the area. Received frames in the MyHOME trace fixtures: 18 with WHAT `0#4#A` (15 with an area `1..8` on an H4890 and an MH202, 3 with area `0` on a MyHomeServer1 plant and an H/L4684), 29 with `2#4#A`, 18 with `21#4#A`.
