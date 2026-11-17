@@ -4,6 +4,8 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-17
+
 ### Changed
 - **Profiles (`F455Profile`)**: `supports_general_heating_status` and `supports_heating_humidity_request` are `False` (were `None`). The F455 is catalogued but not emulated in own-firmware-oracle, so both rest on a physical F455 1.0.76 (`MyHOME` `tests/fixtures/traces/issue_466/F455_direct_requests_2026-11-06.jsonl`). `*#4*0##` was ACKed after 9.1 s with no frame on the command session and none on the event session, in a run where zones 2 and 4 answered the reads of their temperature and setpoint in about 0.1 s, and again after 8.9 to 9.1 s with no frame in 15 direct sends and at five Home Assistant starts on 2026-11-17 (`MyHOME#932`). `*#4*2*60##` was NACKed in 19 ms with no frame. `supports_heating_zone_status` and `supports_heating_actuator_status` are measured in the same captures and stay `None` for the caller's policy: `*#4*Z##` delivers the zone's frames on the event session and is ACKed only after about 9 s, and the zone form `*#4*Z*20##` is NACKed while the actuator form `*#4*Z#1*20##` is answered. `supports_interface_zone_requests` is unmeasured. A caller that reads the flags (`MyHOME` leaves `*#4*0##` out of its startup sweep and does not ask a zone for its humidity when they are `False`) no longer needs its own table entries for the F455.
 
