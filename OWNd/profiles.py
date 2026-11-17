@@ -401,6 +401,16 @@ class F455Profile(GatewayProfile):
       and the mobile app) with a ceiling of 4.
     - Keepalive: no reconnect loop observed on firmware 1.0.86 with OS TCP
       keepalive only (MyHOME#466).
+    - WHO 4 general status (``*#4*0##``): the F455 is not in own-firmware-oracle.
+      A physical F455 1.0.76 ACKed the request after 9.1 s with no frame on the
+      command session and none on the event session, in a run where zones 2
+      and 4 answered the reads of their temperature and setpoint in about
+      0.1 s (MyHOME
+      ``tests/fixtures/traces/issue_466/F455_direct_requests_2026-11-06.jsonl``),
+      and again after 8.9 to 9.1 s with no frame in 15 direct sends and at
+      five Home Assistant starts on 2026-11-17 (MyHOME#932).
+      ``supports_general_heating_status`` is therefore ``False``; the other
+      WHO 4 request flags stay unmeasured (``None``).
     """
 
     def __init__(self) -> None:
@@ -413,6 +423,7 @@ class F455Profile(GatewayProfile):
             supports_hmac=True,
             supports_native_transitions=True,
             supports_extended_frames=True,
+            supports_general_heating_status=False,
             supported_who=(
                 WHO_LIGHTING,
                 WHO_AUTOMATION,

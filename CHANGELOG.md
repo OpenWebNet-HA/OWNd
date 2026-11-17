@@ -4,6 +4,9 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Profiles (`F455Profile`)**: `supports_general_heating_status` is `False` (was `None`, unmeasured). The F455 is not in own-firmware-oracle; a physical F455 1.0.76 ACKed `*#4*0##` after 9.1 s with no frame on the command session and none on the event session, in a run where zones 2 and 4 answered the reads of their temperature and setpoint in about 0.1 s (`MyHOME` `tests/fixtures/traces/issue_466/F455_direct_requests_2026-11-06.jsonl`), and again after 8.9 to 9.1 s with no frame in 15 direct sends and at five Home Assistant starts on 2026-11-17 (`MyHOME#932`). The other WHO 4 request flags of the F455 stay `None`. A caller that reads the flag (`MyHOME` leaves `*#4*0##` out of its startup sweep when it is `False`) no longer needs its own table entry for the F455.
+
 ## [2.0.0] - 2026-11-16
 
 ### Added
