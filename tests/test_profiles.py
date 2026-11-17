@@ -736,9 +736,13 @@ def test_who16_stays_on_gateways_that_forward_it(model: str) -> None:
         ("F453", True, None, False, False, False),
         ("F453AV", True, None, False, False, False),
         ("MH200N", True, None, False, False, False),
-        # Live F455 1.0.76 (MyHOME#466 capture, MyHOME#932: *#4*0## ACKed after ~9 s with no
-        # frame; not in oracle). The other flags are unmeasured.
-        ("F455", False, None, None, None, None),
+        # Live F455 1.0.76, catalogued but not emulated in own-firmware-oracle (MyHOME#466
+        # capture, MyHOME#932): *#4*0## ACKed after ~9 s with no frame, *#4*Z*60## NACKed in
+        # 19 ms. Zone status (frames on the event session, ACK after ~9 s) and actuator status
+        # (*#4*Z*20## NACKed, *#4*Z#1*20## answered) are measured and left None for caller
+        # policy; only the interface requests are unmeasured.
+        ("F455", False, None, None, False, None),
+        ("003594", False, None, None, False, None),
         # Single-session / scenario gateways in oracle (zone_status left None for caller policy)
         ("H4684", False, None, False, False, False),
         ("H/L4684", False, None, False, False, False),
