@@ -7,7 +7,7 @@ import contextlib
 import logging
 
 from ..connection import OWNCommandSession, OWNEventSession, OWNGateway
-from ..exceptions import OWNError
+from ..exceptions import OWNError, OWNTimeoutError
 from ..message import OWNMessage
 from .base import OWNTransport
 
@@ -103,9 +103,23 @@ class AsyncTcpTransport(OWNTransport):
         is_status_request: bool = False,
         *,
         raise_on_error: bool = False,
+        timeout: float | None = None,
     ) -> list[OWNMessage | str] | bool | None:
         if self._command_session is None:
             raise RuntimeError("TCP transport is not connected")
-        return await self._command_session.send(
-            message, is_status_request, raise_on_error=raise_on_error
-        )
+        if timeout is None:
+            return await self._command_session.send(
+                message, is_status_request, raise_on_error=raise_on_error
+            )
+        try:
+            async with asyncio.timeout(timeout):
+                return await self._command_session.send(
+                    message, is_status_request, raise_on_error=raise_on_error
+                )
+        except TimeoutError as error:
+            if raise_on_error:
+                raise OWNTimeoutError(
+                    f"Timed out awaiting response for `{message}`",
+                    reason="command_timeout",
+                ) from error
+            return None

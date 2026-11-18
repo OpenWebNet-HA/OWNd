@@ -4,6 +4,20 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0b1] - 2026-11-18
+
+### Added
+- **Profiles (`Legrand3578Profile`)**: Canonical serial OpenZigBee profile for the BTicino `3578` / Legrand `088328` USB interface (`model_name="3578"`, aliases `088328`, `003578`, `03578`, `bticino3578`, `legrand3578`, `legrand088328`, `openzigbee`, `zigbee`), declaring `transport_type="serial"`, `address_family="zigbee"`, `default_baudrate=19200`, `command_session_idle_timeout=None`, and `supported_who=frozenset({1, 2, 13})` (WHO `1`/`2`/`13` scope matching `openwebnet4j` `WhereZigBee` and `ownkb:claim:c000652`). Base `GatewayProfile` adds `transport_type`, `address_family`, `default_baudrate`, and `command_session_idle_timeout` with TCP/SCS defaults.
+- **OpenZigBee Protocol & Context-Gated `#9` Parsing (`OWNMessage`, `OWNSignaling`, `OWNLightingEvent`, `OWNGatewayEvent`, `OWNGatewayCommand`, `OWNNackError`)**:
+  - `OWNMessage.parse(..., gateway=...)` (and `OWNEvent.parse` / `OWNCommand.parse`) gates ZigBee `#9` interpretation strictly on `address_family == "zigbee"`, exposing `is_zigbee`, `zigbee_where`, `zigbee_device_id`, and `zigbee_unit` across unicast (`<ADDR><UNIT>#9`), broadcast (`0#<UNIT>#9`, `0#9`), and group (`#<G>#9`) forms while keeping wired SCS frames (including `*1*1*#9##`, `*4*1*012#9##`, `*4*1*1#9##`, `*22*1*2#9##`) unchanged.
+  - `OWNSignaling.is_busy_nack()` recognizes `*#*6##` (`ownkb:claim:c000671`, `c000674`) without changing `is_nack()`; `OWNNackError` accepts `busy: bool = False`.
+  - Empty-`WHERE` WHO 13 gateway commands (`*13*60*##`, `*13*65*##`, `*13*66*##`, `*13*67*##`) and `OWNGatewayCommand` builders (`keep_connect`, `scan_network`, `enable_supervisor`, `disable_supervisor`, `request_product_count`, `get_product_info`, using `*` before index per `openwebnet4j` `GatewayMgmt.requestProductInfo` and `ownkb:claim:c000691`, `c001823`).
+  - `OWNGatewayEvent` decodes 8-octet `DIM 12` IEEE EUI-64 addresses into `ieee_address` (`ownkb:claim:c001873`, keeping `mac_address` strictly 6 octets), `DIM 16` into `firmware_version_tuple`, `DIM 66` into `zigbee_product_index` / `zigbee_device_type_code` / `zigbee_device_type` (`ZIGBEE_DEVICE_TYPES` per `openwebnet4j` `OpenDeviceType`, `ownkb:claim:c001851`, `c001954`) / `is_zigbee_product_unreachable`, and `DIM 67` into `network_product_count`.
+  - `OWNLightingEvent.is_toggle` decodes ZigBee toggle `WHAT 32` (`ownkb:claim:c001462`, `c001483`, `r000288`) with `is_on=None`; `normalize_where` preserves leading `"00"` on `#9` ZigBee addresses.
+- **Serial Transport (`AsyncSerialTransport` on `serialx>=1.8.2`)**:
+  - Migrated from `pyserial-asyncio` to `serialx>=1.8.2` (`open_serial_connection(url=..., baudrate=..., exclusive=True)` with default modem-control lines), making serial support a core dependency (`[serial]` kept as a no-op compatibility alias).
+  - Added ZigBee connect/reconnect handshake (`*13*60*##` -> `*#13**16##` -> `*13*66*##` -> `*#13**12##`), bounded-backoff reconnect supervisor with `on_state_change`, `raw_frame_callback` wire tap, `timeout` parameter on `OWNTransport.send`/`AsyncTcpTransport.send`/`AsyncSerialTransport.send`, `EBUSY` (`reason="port_busy"`), `*#*6##` + `*#*0##` BUSY detection (optional `busy_retry`), strict `DIM 66`/`DIM 73` pending-reply matching, unsolicited `DIM 67` supervisor restoration (`ownkb:claim:c001825`), and firmware-gated `fw <= (1, 2, 3)` / RX-only `fw <= (1, 2, 0)` quirks (`openwebnet4j` `USBConnector`).
+
 ## [2.0.1] - 2026-11-17
 
 ### Changed

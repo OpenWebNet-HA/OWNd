@@ -13,6 +13,7 @@ WHO_ALARM = 5
 WHO_DOOR_ENTRY = 6
 WHO_LOCK = 8
 WHO_INTERCOM = 8
+WHO_GATEWAY = 13
 WHO_CEN = 15
 WHO_SOUND = 16
 WHO_SCENARIO = 17
@@ -109,8 +110,12 @@ class GatewayProfile:
     supports_heating_actuator_status: bool | None = None
     supports_heating_humidity_request: bool | None = None
     supports_interface_zone_requests: bool | None = None
-    supported_who: tuple[int, ...] = DEFAULT_SUPPORTED_WHO
+    supported_who: tuple[int, ...] | frozenset[int] = DEFAULT_SUPPORTED_WHO
     extra_features: tuple[str, ...] = ()
+    transport_type: str = "tcp"
+    address_family: str = "scs"
+    default_baudrate: int | None = None
+    command_session_idle_timeout: float | None = None
     firmware_version: str | None = field(default=None, kw_only=True)
 
     @property
@@ -151,6 +156,8 @@ class GatewayProfile:
         """Formatted keepalive interval string."""
         if self.event_keepalive_interval is not None:
             return f"{int(self.event_keepalive_interval)} s"
+        if self.transport_type == "serial":
+            return "Serial link"
         return "OS TCP only"
 
     @property
@@ -777,6 +784,41 @@ class MyHomeServer1Profile(GatewayProfile):
         )
 
 
+class Legrand3578Profile(GatewayProfile):
+    """BTicino 3578 / Legrand 088328 USB OpenZigBee gateway.
+
+    Serial parameters (19200 8N1) per ownkb:claim:c000652 and openwebnet4j
+    USBConnector; b1 WHO scope {1, 2, 13} matches openwebnet4j WhereZigBee
+    (Lighting, Automation, GatewayMgmt). Separating transport_type='serial'
+    from address_family='zigbee' preserves a clean path for wired SCS serial
+    interfaces such as L4686SDK (transport_type='serial', address_family='scs').
+    """
+
+    def __init__(
+        self,
+        firmware_version: str | tuple[int, ...] | list[int] | None = None,
+    ) -> None:
+        if not firmware_version:
+            fw_str = None
+        elif isinstance(firmware_version, (list, tuple)):
+            fw_str = ".".join(str(p) for p in firmware_version)
+        else:
+            fw_str = str(firmware_version)
+        super().__init__(
+            model_name="3578",
+            requires_password=False,
+            supports_energy_instant_power=False,
+            supports_audio=False,
+            supported_who=frozenset({WHO_LIGHTING, WHO_AUTOMATION, WHO_GATEWAY}),
+            extra_features=("USB/Serial 19200 8N1", "ZigBee #9 addressing"),
+            transport_type="serial",
+            address_family="zigbee",
+            default_baudrate=19200,
+            command_session_idle_timeout=None,
+            firmware_version=fw_str,
+        )
+
+
 class GenericGatewayProfile(GatewayProfile):
     def __init__(self, model_name: str = "Generic") -> None:
         super().__init__(model_name=model_name)
@@ -785,6 +827,7 @@ class GenericGatewayProfile(GatewayProfile):
 _GENERIC = GenericGatewayProfile()
 
 _PROFILES = {
+    "3578": Legrand3578Profile(),
     "f452": F452Profile(),
     "f452v": F452VProfile(),
     "f453": F453Profile(),
@@ -816,6 +859,7 @@ CANONICAL_PROFILE_ORDER = (
     "mh201",
     "mh200",
     "mh200n",
+    "3578",
 )
 
 
@@ -826,6 +870,14 @@ def canonical_profiles() -> tuple[GatewayProfile, ...]:
 CANONICAL_PROFILES: tuple[GatewayProfile, ...] = canonical_profiles()
 
 _ALIASES = {
+    "088328": "3578",
+    "003578": "3578",
+    "03578": "3578",
+    "bticino3578": "3578",
+    "legrand3578": "3578",
+    "legrand088328": "3578",
+    "openzigbee": "3578",
+    "zigbee": "3578",
     "mhs1": "myhomeserver1",
     "am4890": "h4890",
     "ln4890": "h4890",
@@ -871,6 +923,8 @@ def get_gateway_profile(
         character for character in model_name.lower() if character.isalnum()
     )
     normalized = _ALIASES.get(normalized, normalized)
+    if normalized == "3578":
+        return Legrand3578Profile(firmware_version=firmware_version)
     if normalized == "f453av":
         return F453AVProfile(firmware_version=firmware_version)
     if normalized == "h4684":

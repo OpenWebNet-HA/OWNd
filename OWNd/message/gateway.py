@@ -117,6 +117,49 @@ WHO1013_DEVICE_TYPES: dict[str, str] = {
     "134": "F461",
 }
 
+# OpenZigBee product device types reported in WHO 13 Dimension 66.
+# Reimplemented from openwebnet4j OpenDeviceType (EPL-2.0) and Encyclopedia
+# Machine KB claims ownkb:claim:c001851, c001954.
+ZIGBEE_DEVICE_TYPES: dict[int, str] = {
+    2: "Scenario Control",
+    256: "On/Off Switch",
+    257: "Dimmer Control",
+    258: "Dimmer Switch",
+    259: "Switch Motion Detector",
+    260: "Daylight Sensor",
+    261: "SCS On/Off Switch",
+    262: "SCS Dimmer Control",
+    263: "SCS Dimmer Switch",
+    264: "Waterproof 1-Gang Switch",
+    265: "Automatic Dimmer Switch",
+    266: "Toggle Control",
+    267: "SCS Toggle Control",
+    268: "Motion Detector",
+    269: "Switch Motion Detector II",
+    270: "Motion Detector II",
+    271: "Auxiliary Motion Control",
+    272: "SCS Auxiliary Toggle Control",
+    273: "Multifunction Scenario Control",
+    274: "On/Off Control",
+    275: "Auxiliary On/Off 1-Gang Switch",
+    512: "Shutter Control",
+    513: "Shutter Switch",
+    514: "SCS Shutter Control",
+    515: "SCS Shutter Switch",
+    1024: "SCS 1-System 1-4 Gateway",
+    1025: "SCS 2-System 1-4 Gateway",
+    1029: "Network Repeater",
+    1030: "OpenWebNet Interface",
+    1536: "Video Switcher",
+}
+
+_ZIGBEE_COMMAND_LOGS: dict[int, str] = {
+    60: "Checking ZigBee gateway readiness (keep connect).",
+    65: "Scanning ZigBee network.",
+    66: "Enabling ZigBee OpenWebNet supervisor mode.",
+    67: "Disabling ZigBee OpenWebNet supervisor mode.",
+}
+
 
 class OWNGatewayEvent(OWNEvent):
     def __init__(self, data: str) -> None:
@@ -138,15 +181,22 @@ class OWNGatewayEvent(OWNEvent):
         self._ip_address = None
         self._netmask = None
         self._mac_address = None
+        self._ieee_address: str | None = None
 
         self._device_type = None
         self._firmware_version = None
+        self._firmware_version_tuple: tuple[int, int, int] | None = None
 
         self._uptime = None
 
         self._kernel_version = None
         self._distribution_version = None
         self._model_name: str | None = None
+        self._zigbee_product_index: int | None = None
+        self._zigbee_device_type_code: int | None = None
+        self._zigbee_device_type: str | None = None
+        self._is_zigbee_product_unreachable: bool = False
+        self._network_product_count: int | None = None
 
         _validate_gateway_clock_values(self._dimension, self._dimension_value)
 
@@ -191,13 +241,32 @@ class OWNGatewayEvent(OWNEvent):
 
         elif (
             self._dimension == 12
-            and len(self._dimension_value) >= 6
-            and all(_is_ascii_digits(v) for v in self._dimension_value[:6])
+            and len(self._dimension_value) == 6
+            and all(_is_ascii_digits(v) for v in self._dimension_value)
         ):
-            # Six ASCII-digit fields (checked above): int() cannot raise here;
-            # an empty or non-ASCII field leaves the frame untyped instead.
-            self._mac_address = f"{int(self._dimension_value[0]):02x}:{int(self._dimension_value[1]):02x}:{int(self._dimension_value[2]):02x}:{int(self._dimension_value[3]):02x}:{int(self._dimension_value[4]):02x}:{int(self._dimension_value[5]):02x}"  # pylint: disable=line-too-long
+            # Six ASCII-digit fields: int() cannot raise here;
+            # an empty or non-ASCII field leaves the frame untyped.
+            self._mac_address = ":".join(
+                f"{int(v):02x}" for v in self._dimension_value
+            )
             self._human_readable_log = f"Gateway's MAC address is: {self._mac_address}."
+
+        elif (
+            self._dimension == 12
+            and len(self._dimension_value) == 8
+            and all(
+                _is_ascii_digits(v) and 0 <= int(v) <= 255
+                for v in self._dimension_value
+            )
+        ):
+            # Eight ASCII-digit octets (0..255): ZigBee IEEE EUI-64 identity
+            # (ownkb:claim:c001873, openwebnet4j GatewayMgmt).
+            self._ieee_address = ":".join(
+                f"{int(v):02x}" for v in self._dimension_value
+            )
+            self._human_readable_log = (
+                f"Gateway's IEEE address is: {self._ieee_address}."
+            )
 
         elif self._dimension == 15 and self._dimension_value and _is_ascii_digits(self._dimension_value[0]):
             code = self._dimension_value[0]
@@ -206,6 +275,12 @@ class OWNGatewayEvent(OWNEvent):
 
         elif self._dimension == 16 and len(self._dimension_value) >= 3:
             self._firmware_version = f"{self._dimension_value[0]}.{self._dimension_value[1]}.{self._dimension_value[2]}"  # pylint: disable=line-too-long
+            if all(_is_ascii_digits(v) for v in self._dimension_value[:3]):
+                self._firmware_version_tuple = (
+                    int(self._dimension_value[0]),
+                    int(self._dimension_value[1]),
+                    int(self._dimension_value[2]),
+                )
             self._human_readable_log = (
                 f"Gateway's firmware version is: {self._firmware_version}."
             )
@@ -291,6 +366,42 @@ class OWNGatewayEvent(OWNEvent):
                     f"Gateway's model name is: {self._model_name}."
                 )
 
+        elif (
+            self._dimension == 66
+            and self._dimension_value
+            and all(_is_ascii_digits(v) for v in self._dimension_value)
+        ):
+            if len(self._dimension_value) >= 2:
+                self._zigbee_product_index = int(self._dimension_value[0])
+                dev_code = int(self._dimension_value[-1])
+            else:
+                if self._dimension_param and _is_ascii_digits(self._dimension_param[0]):
+                    self._zigbee_product_index = int(self._dimension_param[0])
+                dev_code = int(self._dimension_value[0])
+            self._zigbee_device_type_code = dev_code
+            if dev_code == 0:
+                self._is_zigbee_product_unreachable = True
+                self._human_readable_log = (
+                    "ZigBee product is unreachable (dimension 66)."
+                )
+            else:
+                self._zigbee_device_type = ZIGBEE_DEVICE_TYPES.get(
+                    dev_code, f"Unknown ({dev_code})"
+                )
+                self._human_readable_log = (
+                    f"ZigBee product {self._where} type is: {self._zigbee_device_type} ({dev_code})."
+                )
+
+        elif (
+            self._dimension == 67
+            and self._dimension_value
+            and _is_ascii_digits(self._dimension_value[0])
+        ):
+            self._network_product_count = int(self._dimension_value[0])
+            self._human_readable_log = (
+                f"Gateway product database count is: {self._network_product_count}."
+            )
+
     @property
     def time(self) -> _dt.time | None:
         """Return the decoded gateway internal time."""
@@ -338,13 +449,23 @@ class OWNGatewayEvent(OWNEvent):
 
     @property
     def mac_address(self) -> str | None:
-        """Return the decoded gateway MAC address."""
+        """Return the decoded gateway MAC address (6 octets)."""
         return self._mac_address
+
+    @property
+    def ieee_address(self) -> str | None:
+        """Return the decoded ZigBee gateway IEEE EUI-64 address (8 octets)."""
+        return self._ieee_address
 
     @property
     def firmware_version(self) -> str | None:
         """Return the decoded gateway firmware version string."""
         return self._firmware_version
+
+    @property
+    def firmware_version_tuple(self) -> tuple[int, int, int] | None:
+        """Return the decoded gateway firmware version as ``(major, minor, build)``."""
+        return self._firmware_version_tuple
 
     @property
     def device_type(self) -> str | None:
@@ -381,6 +502,31 @@ class OWNGatewayEvent(OWNEvent):
         """Return the gateway model name of a Dimension 27 reply (e.g. ``"F461"``)."""
         return self._model_name
 
+    @property
+    def zigbee_product_index(self) -> int | None:
+        """Return the 0-based product index from a WHO 13 Dimension 66 reply."""
+        return self._zigbee_product_index
+
+    @property
+    def zigbee_device_type_code(self) -> int | None:
+        """Return the raw ``DEV_ID`` integer from a WHO 13 Dimension 66 reply."""
+        return self._zigbee_device_type_code
+
+    @property
+    def zigbee_device_type(self) -> str | None:
+        """Return the ZigBee device type label from ``ZIGBEE_DEVICE_TYPES``."""
+        return self._zigbee_device_type
+
+    @property
+    def is_zigbee_product_unreachable(self) -> bool:
+        """Return True when Dimension 66 reported ``DEV_ID == 0`` (unreachable)."""
+        return self._is_zigbee_product_unreachable
+
+    @property
+    def network_product_count(self) -> int | None:
+        """Return the stored ZigBee product count from a Dimension 67 reply."""
+        return self._network_product_count
+
 
 class OWNGatewayCommand(OWNCommand):
     def __init__(self, data: str) -> None:
@@ -401,6 +547,10 @@ class OWNGatewayCommand(OWNCommand):
 
         # Dimension requests carry no values and are valid as-is.
         if self.is_request:
+            return
+
+        if self._what in _ZIGBEE_COMMAND_LOGS:
+            self._human_readable_log = _ZIGBEE_COMMAND_LOGS[self._what]
             return
 
         _validate_gateway_clock_values(self._dimension, self._dimension_value)
@@ -723,6 +873,44 @@ class OWNGatewayCommand(OWNCommand):
     def request_distribution_version(cls) -> OWNGatewayCommand:
         """Request the gateway distribution version (Dimension 24)."""
         return cls("*#13**24##")
+
+    @classmethod
+    def keep_connect(cls) -> OWNGatewayCommand:
+        """Build ZigBee readiness check ``*13*60*##`` (openwebnet4j GatewayMgmt.requestKeepConnect)."""
+        return cls("*13*60*##")
+
+    @classmethod
+    def scan_network(cls) -> OWNGatewayCommand:
+        """Build ZigBee network scan ``*13*65*##`` (openwebnet4j GatewayMgmt.requestScanNetwork)."""
+        return cls("*13*65*##")
+
+    @classmethod
+    def enable_supervisor(cls) -> OWNGatewayCommand:
+        """Build ZigBee supervisor enable ``*13*66*##`` (openwebnet4j GatewayMgmt.requestSupervisor, ownkb:claim:c001823)."""
+        return cls("*13*66*##")
+
+    @classmethod
+    def disable_supervisor(cls) -> OWNGatewayCommand:
+        """Build ZigBee supervisor remove ``*13*67*##``."""
+        return cls("*13*67*##")
+
+    @classmethod
+    def request_product_count(cls) -> OWNGatewayCommand:
+        """Request ZigBee stored product count ``*#13**67##`` (ownkb:claim:c000691)."""
+        return cls("*#13**67##")
+
+    @classmethod
+    def get_product_info(cls, index: int) -> OWNGatewayCommand:
+        """Request ZigBee product info ``*#13**66*<index>##``.
+
+        Uses ``*`` before ``index`` instead of ``#`` to accommodate the USB stick
+        firmware parser quirk documented in openwebnet4j GatewayMgmt.requestProductInfo.
+        """
+        if isinstance(index, bool) or not isinstance(index, int) or index < 0:
+            raise ValueError("index must be a non-negative integer")
+        msg = cls(f"*#13**66*{index}##")
+        msg._human_readable_log = f"Requesting ZigBee product info at index {index}."
+        return msg
 
 
 register_event_parser(13, OWNGatewayEvent)

@@ -175,9 +175,10 @@ class TestSerialTransportExhaustive:
         transport._writer = mock_writer
         transport._connected = False
 
-        mock_module = MagicMock()
-        mock_module.open_serial_connection = AsyncMock(side_effect=OSError("Port busy"))
-        with patch.dict("sys.modules", {"serial_asyncio": mock_module}):
+        with patch(
+            "OWNd.transport.serial.open_serial_connection",
+            new=AsyncMock(side_effect=OSError("Port busy")),
+        ):
             result = await transport.connect()
             assert result is False
             mock_writer.close.assert_called_once()

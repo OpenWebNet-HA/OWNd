@@ -193,7 +193,12 @@ def normalize_where(where: str | int | None) -> str:
     base = parts[0]
     if is_apl_address(base) or base in ("00", "100", "0"):
         norm_base = base
-    elif base.isdigit() and base.startswith("00") and int(base) > 15:
+    elif (
+        not (len(parts) == 2 and parts[1] == "9")
+        and base.isdigit()
+        and base.startswith("00")
+        and int(base) > 15
+    ):
         norm_base = str(int(base))
     else:
         norm_base = base
@@ -301,6 +306,7 @@ class OWNLightingEvent(OWNEvent):
         self._illuminance: int | None = None
         self._motion: bool = False
         self._motion_end: bool = False
+        self._is_toggle: bool = False
         self._is_anomaly: bool = False
         self._pir_sensitivity: int | None = None
         self._motion_timeout: datetime.timedelta | None = None
@@ -375,6 +381,11 @@ class OWNLightingEvent(OWNEvent):
             elif self._state == 30 or self._state == 31:  # One level up/down
                 direction = "up" if self._state == 30 else "down"
                 self._human_readable_log = f"Light {self._where}{self._interface_log_text} is dimmed {direction} one level."  # pylint: disable=line-too-long
+            elif self._state == 32:  # ZigBee Toggle event (ownkb:claim:c001462, c001483, r000288)
+                self._is_toggle = True
+                self._human_readable_log = (
+                    f"Light or control {self._where}{self._interface_log_text} sent toggle (WHAT 32)."
+                )
             elif self._state == 34:  # Motion detected
                 self._type = MESSAGE_TYPE_MOTION
                 self._motion = True
@@ -592,11 +603,23 @@ class OWNLightingEvent(OWNEvent):
     @property
     def is_on(self) -> bool | None:
         """True/False when the on/off state is known, None otherwise (e.g. a
-        motion or end-of-movement event, a reply carrying only a dimension such as illuminance
-        or a timer, an anomaly state, or a WHAT outside the published table; see unknown_state)."""
-        if self._state is None or self._motion or self._motion_end or self._is_anomaly:
+        motion or end-of-movement event, a ZigBee toggle event, a reply carrying
+        only a dimension such as illuminance or a timer, an anomaly state, or a
+        WHAT outside the published table; see unknown_state)."""
+        if (
+            self._state is None
+            or self._motion
+            or self._motion_end
+            or self._is_anomaly
+            or self._is_toggle
+        ):
             return None
         return 0 < self._state < 32
+
+    @property
+    def is_toggle(self) -> bool:
+        """True for ``*1*32*WHERE##`` (ZigBee toggle event)."""
+        return self._is_toggle
 
     @property
     def is_anomaly(self) -> bool:

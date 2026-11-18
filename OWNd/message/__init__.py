@@ -135,6 +135,7 @@ from .gateway import (
     OWNGatewayEvent,
     WHO13_DEVICE_TYPES,
     WHO1013_DEVICE_TYPES,
+    ZIGBEE_DEVICE_TYPES,
 )
 from .heating import (
     CLIMATE_MODE_AUTO,
@@ -381,6 +382,7 @@ __all__ = [
     "OWNGatewayDiagnosticCommand",
     "WHO13_DEVICE_TYPES",
     "WHO1013_DEVICE_TYPES",
+    "ZIGBEE_DEVICE_TYPES",
     # Special commands / Actuator lock (WHO 14)
     "ACTUATOR_STATE_LOCKED",
     "ACTUATOR_STATE_UNLOCKED",
