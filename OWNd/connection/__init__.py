@@ -9,7 +9,11 @@ from .auth import (
     hex_string_to_int_string,
     int_string_to_hex_string,
 )
-from .command_session import OWNCommandSession, SEND_RECONNECT_COOLDOWN
+from .command_session import (
+    OWNCommandSession,
+    SEND_AUTH_COOLDOWN,
+    SEND_RECONNECT_COOLDOWN,
+)
 from .event_session import OWNEventSession
 from .gateway import OWNGateway, _first_scalar
 from .session import (
@@ -71,6 +75,7 @@ __all__ = [
     "CONNECT_TIMEOUT",
     "MAX_CONNECT_ATTEMPTS",
     "SEND_RECONNECT_COOLDOWN",
+    "SEND_AUTH_COOLDOWN",
     "KEEPALIVE_FRAME",
     "KEEPALIVE_INTERVAL",
     "EVENT_KEEPALIVE_FRAME",
