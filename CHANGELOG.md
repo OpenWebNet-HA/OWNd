@@ -4,6 +4,9 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Sessions (`OWNCommandSession.send`)**: a session the gateway closed after sending an unsolicited frame is reopened before the write; the stale frame is no longer taken for the answer. An F461 2.0.11 ends a command session that has sent nothing since its handshake with `*#*0##` followed at once by the FIN (received 30.108 s and 30.109 s into a live capture), and `StreamReader.at_eof()` is true only once the buffer is empty, so the check added in `OWNd#167` did not see the close: the next status request was reported as refused (`OWNNackError`) without reaching the gateway, and the next command logged "Could not send ... Retrying (1)" before it recovered. On the live F461 a status request after 36 s on an unused session returned `None` with `OWNNackError` before and its answer `*#13**15*200##` now. A session that has carried a frame is closed by the F461 without the `*#*0##` (same test, one request before the idle time), which `_peer_closed()` already saw. Bytes waiting on a session that is still open are left where they are. Hand-installed (non-asyncio) streams keep the previous behaviour.
+
 ## [2.0.1] - 2026-11-17
 
 ### Changed
