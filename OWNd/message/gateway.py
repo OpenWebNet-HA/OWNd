@@ -242,13 +242,10 @@ class OWNGatewayEvent(OWNEvent):
         elif (
             self._dimension == 12
             and len(self._dimension_value) == 6
-            and all(
-                _is_ascii_digits(v) and 0 <= int(v) <= 255
-                for v in self._dimension_value
-            )
+            and all(_is_ascii_digits(v) for v in self._dimension_value)
         ):
-            # Six ASCII-digit octets (0..255): int() cannot raise here;
-            # an empty, out-of-range, or non-ASCII field leaves the frame untyped.
+            # Six ASCII-digit fields: int() cannot raise here;
+            # an empty or non-ASCII field leaves the frame untyped.
             self._mac_address = ":".join(
                 f"{int(v):02x}" for v in self._dimension_value
             )

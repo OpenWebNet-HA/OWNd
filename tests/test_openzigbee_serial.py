@@ -39,7 +39,7 @@ def test_legrand_3578_profile_and_aliases() -> None:
     assert default_gateway.transport_type == "tcp"
     assert default_gateway.address_family == "scs"
     assert default_gateway.default_baudrate is None
-    assert default_gateway.command_session_idle_timeout == 15.0
+    assert default_gateway.command_session_idle_timeout is None
 
     profile = Legrand3578Profile()
     assert profile == _PROFILES["3578"]
@@ -150,6 +150,10 @@ def test_who13_zigbee_event_decoders() -> None:
     assert isinstance(mac_evt, OWNGatewayEvent)
     assert mac_evt.mac_address == "00:03:50:00:12:34"
     assert mac_evt.ieee_address is None
+    assert (
+        OWNMessage.parse("*#13**12*256*3*80*0*7*119##").mac_address  # type: ignore[union-attr]
+        == "100:03:50:00:07:77"
+    )
 
     # 7-octet or >255 octet leaves both None
     bad_len = OWNMessage.parse("*#13**12*0*3*80*0*0*1*2##")

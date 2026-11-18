@@ -115,7 +115,7 @@ class GatewayProfile:
     transport_type: str = "tcp"
     address_family: str = "scs"
     default_baudrate: int | None = None
-    command_session_idle_timeout: float | None = 15.0
+    command_session_idle_timeout: float | None = None
     firmware_version: str | None = field(default=None, kw_only=True)
 
     @property
