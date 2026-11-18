@@ -16,7 +16,7 @@ from __future__ import annotations
 import asyncio
 import warnings
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -181,3 +181,120 @@ class TestPeerClosedCommandSession:
         assert result is None
         assert session.is_open is False
         assert session.last_error is not None
+
+
+class TestCloseBehindUnreadBytes:
+    """The gateway sent something, then closed: ``at_eof()`` is False while bytes wait.
+
+    A live F461 2.0.11 closes a command session idle for 30 s with ``*#*0##``
+    followed 1 ms later by the FIN (plant capture 2026-11-17: ``recv b'*#*0##'
+    at 30.108s``, ``recv b'' at 30.109s``). An F455 1.0.76 sends the FIN alone.
+    """
+
+    @staticmethod
+    def _install(session: OWNCommandSession, data: bytes, *, eof: bool) -> tuple[asyncio.StreamReader, FakeWriter]:
+        reader = asyncio.StreamReader()
+        if data:
+            reader.feed_data(data)
+        if eof:
+            reader.feed_eof()
+        writer = FakeWriter()
+        session._stream_reader = reader
+        session._stream_writer = writer  # type: ignore[assignment]
+        return reader, writer
+
+    @pytest.mark.asyncio
+    async def test_nack_then_fin_is_a_closed_session(self) -> None:
+        session = make_session()
+        reader, _ = self._install(session, b"*#*0##", eof=True)
+
+        # What OWNd#167 looks at: nothing, the buffered frame hides the EOF.
+        assert reader.at_eof() is False
+        assert session._peer_closed() is False
+
+        assert await session._closed_behind_unread_bytes() is True
+
+    @pytest.mark.asyncio
+    async def test_unread_bytes_longer_than_one_step_are_all_read(self) -> None:
+        session = make_session()
+        self._install(session, b"*1*0*11##*1*0*12##*#*0##", eof=True)
+
+        with patch("OWNd.connection.command_session._UNREAD_CHUNK", 4):
+            assert await session._closed_behind_unread_bytes() is True
+
+    @pytest.mark.asyncio
+    async def test_an_idle_live_session_is_left_alone(self) -> None:
+        session = make_session()
+        reader, _ = self._install(session, b"", eof=False)
+
+        assert await session._closed_behind_unread_bytes() is False
+        assert reader.at_eof() is False
+
+    @pytest.mark.asyncio
+    async def test_bytes_of_a_session_that_is_still_open_stay_in_the_reader(self) -> None:
+        session = make_session()
+        reader, _ = self._install(session, b"*#*1##*1*1*11##", eof=False)
+
+        assert await session._closed_behind_unread_bytes() is False
+        # Nothing was consumed: the session reads what it would have read before.
+        assert await reader.readuntil(b"##") == b"*#*1##"
+        assert await reader.readuntil(b"##") == b"*1*1*11##"
+
+    @pytest.mark.asyncio
+    async def test_streams_installed_by_hand_are_not_read(self) -> None:
+        session = make_session()
+        reader = asyncio.StreamReader()
+        reader.feed_data(b"*#*0##")
+        reader.feed_eof()
+        session._stream_reader = reader
+        session._stream_writer = MagicMock()
+        assert await session._closed_behind_unread_bytes() is False
+        assert await reader.readuntil(b"##") == b"*#*0##"
+
+        session._stream_reader = AsyncMock()
+        session._stream_writer = FakeWriter()  # type: ignore[assignment]
+        with warnings.catch_warnings():
+            warnings.simplefilter("error")
+            assert await session._closed_behind_unread_bytes() is False
+
+        session._stream_reader = None
+        session._stream_writer = None
+        assert await session._closed_behind_unread_bytes() is False
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("frame", "is_status_request"),
+        [
+            ("*#13**15##", True),  # was: None + OWNNackError, the gateway never got it
+            ("*1*0*0011##", False),  # was: ERROR "Could not send message", then a retry
+        ],
+    )
+    async def test_send_reopens_instead_of_reading_the_stale_nack(
+        self, frame: str, is_status_request: bool
+    ) -> None:
+        session = make_session()
+        session._logger = MagicMock()
+        _, dead_writer = self._install(session, b"*#*0##", eof=True)
+        connect, new_writer = arm_reconnect(session)
+
+        result = await session.send(frame, is_status_request=is_status_request)
+
+        assert result is True
+        assert session.last_error is None
+        connect.assert_awaited_once()
+        assert dead_writer.written == []  # nothing went into the dead socket
+        assert dead_writer.closed is True
+        assert new_writer.written == [frame.encode()]
+        session._logger.error.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_send_on_a_live_session_with_a_waiting_reply_is_unchanged(self) -> None:
+        session = make_session()
+        _, writer = self._install(session, b"*1*1*11##*#*1##", eof=False)
+        connect, _ = arm_reconnect(session)
+
+        result = await session.send("*#1*11##", is_status_request=True)
+
+        assert isinstance(result, list) and [str(m) for m in result] == ["*1*1*11##"]
+        connect.assert_not_awaited()
+        assert writer.written == [b"*#1*11##"]
