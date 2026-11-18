@@ -16,6 +16,8 @@ from .session import (
     KEEPALIVE_FRAME,
     KEEPALIVE_INTERVAL,
     OWNSession,
+    RECONNECT_PAUSE_FATAL,
+    _FATAL_NEGOTIATION_ERRORS,
 )
 from ..exceptions import (
     OWNAuthError,
@@ -93,6 +95,16 @@ def destructive_frame_error(
 # concurrent callers queued behind _send_lock fail fast instead of each
 # repeating a socket connect attempt while the gateway is unreachable.
 SEND_RECONNECT_COOLDOWN = 2.0
+# The cooldown after a login the gateway refused for good (wrong, missing or
+# unusable password, failed HMAC check): the event session already waits
+# RECONNECT_PAUSE_FATAL before it logs in again, and so does every implicit
+# reconnect of ``send()``. A caller that kept sending used to log in again
+# every SEND_RECONNECT_COOLDOWN seconds (three refused logins in 4.4 s), while
+# the HMAC document says: "Every time 3 handshakes procedures fail within 60
+# seconds, the authentication service have to be disabled for 60 seconds"
+# (Hmac Specification 1.1, "Simple Authentication Mode (SAM)"). An explicit
+# ``connect()`` still tries at once.
+SEND_AUTH_COOLDOWN = float(RECONNECT_PAUSE_FATAL)
 
 
 class OWNCommandSession(OWNSession):
@@ -115,12 +127,23 @@ class OWNCommandSession(OWNSession):
         # on the same stream would steal each other's acknowledgements.
         self._send_lock = asyncio.Lock()
         self._last_reconnect_failure: float | None = None
+        # The error of the last connect() when the gateway refused the login
+        # for good; ``send()`` reports it, without logging in again, until
+        # SEND_AUTH_COOLDOWN has passed or connect() is called.
+        self._refused_login: OWNError | None = None
 
     async def connect(
         self, *, raise_on_error: bool = False
     ) -> dict[str, Any] | None:
         self._last_reconnect_failure = None
-        return await super().connect(raise_on_error=raise_on_error)
+        self._refused_login = None
+        try:
+            return await super().connect(raise_on_error=raise_on_error)
+        finally:
+            error = self._last_error
+            if error is not None and error.reason in _FATAL_NEGOTIATION_ERRORS:
+                self._last_reconnect_failure = time.monotonic()
+                self._refused_login = error
 
     @classmethod
     async def send_to_gateway(
@@ -426,6 +449,26 @@ class OWNCommandSession(OWNSession):
 
             if self._stream_reader is None or self._stream_writer is None:
                 now = time.monotonic()
+                refused_login = self._refused_login
+                if (
+                    refused_login is not None
+                    and self._last_reconnect_failure is not None
+                    and (now - self._last_reconnect_failure) < SEND_AUTH_COOLDOWN
+                ):
+                    # Same error as the login that was refused, and no new
+                    # login: the answer cannot change until the password does.
+                    self._last_error = refused_login
+                    self._logger.warning(
+                        "%s Gateway refused the login (%s); message `%s` not "
+                        "sent, next login attempt in %.0fs.",
+                        self._log_id,
+                        refused_login.reason,
+                        message,
+                        SEND_AUTH_COOLDOWN - (now - self._last_reconnect_failure),
+                    )
+                    if raise_on_error:
+                        raise refused_login
+                    return None
                 if (
                     self._last_reconnect_failure is not None
                     and (now - self._last_reconnect_failure)

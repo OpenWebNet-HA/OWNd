@@ -4,6 +4,9 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Sessions (`OWNCommandSession.send`)**: after a login the gateway refused (`password_error`, `password_required`, `negotiation_error`), the session does not log in again for 60 s (`SEND_AUTH_COOLDOWN`, the `RECONNECT_PAUSE_FATAL` pause the event session already uses) and every `send()` in that time reports the same authentication error; an explicit `connect()` still tries at once. Before, each `send()` more than 2 s after the last attempt presented the password again (three refused logins in 4.4 s for six sends 1.1 s apart against a stand-in gateway), and `send_to_gateway` logged in twice for one frame. The HMAC specification asks a gateway to disable its authentication service for 60 seconds after three failed handshakes within 60 seconds. Unreachable gateways keep the 2 s `SEND_RECONNECT_COOLDOWN` and the `connection_unavailable` reason.
+
 ## [2.0.1] - 2026-11-17
 
 ### Changed
