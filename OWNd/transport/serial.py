@@ -173,8 +173,7 @@ class AsyncSerialTransport(OWNTransport):
         self._reader_task = None
         if reader_task is not None and reader_task is not asyncio.current_task():
             reader_task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await reader_task
+            await asyncio.gather(reader_task, return_exceptions=True)
 
         writer = self._writer
         self._reader = None
