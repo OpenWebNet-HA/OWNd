@@ -57,10 +57,7 @@ pip install --pre OWNd
 
 ### Optional Extras
 
-- **Serial / USB support** (required for Legrand 3578 USB dongles):
-  ```bash
-  pip install "OWNd[serial]"
-  ```
+- **Serial / USB support** (for BTicino 3578 / Legrand 088328 USB dongles via `serialx`): included by default in `pip install OWNd`; `"OWNd[serial]"` is kept as a backward-compatible alias.
 - **Development & test suite**:
   ```bash
   pip install "OWNd[test]"
@@ -116,6 +113,7 @@ Gateways have varying processing limitations, socket budgets, and pacing require
 | **MH201** | 1 session | 100 ms | OS TCP only | Legacy password auth, Extended frames, Sound unmeasured, Clock diagnostics |
 | **MH200** | 1 session | 150 ms | 90 s | Safe pacing, Legacy password auth, Sound system (WHO 16) |
 | **MH200N** | 1 session | 150 ms | 90 s | Safe pacing, Legacy password auth, Sound system (WHO 16) |
+| **3578** | 1 session | 50 ms | Serial link | USB/Serial 19200 8N1, ZigBee #9 addressing |
 | **Generic Gateway** | 1 session | 50 ms | OS TCP only | Conservative fallback |
 <!-- END_GATEWAY_PROFILES_TABLE -->
 
@@ -205,7 +203,7 @@ async def main():
 asyncio.run(main())
 ```
 
-### 3. Serial / USB Dongle (Legrand 3578)
+### 3. Serial / USB Dongle (BTicino 3578 / Legrand 088328)
 
 ```python
 import asyncio
@@ -215,9 +213,9 @@ async def main():
     transport = AsyncSerialTransport(port="/dev/ttyUSB0")
     transport.register_listener(lambda msg: print(f"Serial Inbound: {msg}"))
 
-    await transport.connect()
-    # Send OpenWebNet frame over serial
-    await transport.send("*1*1*12##")
+    if await transport.connect():
+        # Send OpenZigBee frame over serial (unicast unit 01 on node 123456)
+        await transport.send("*1*1*12345601#9##")
 
     await asyncio.sleep(5)
     await transport.disconnect()
@@ -298,7 +296,7 @@ Clone the repository and install development dependencies:
 ```bash
 git clone https://github.com/OpenWebNet-HA/OWNd.git
 cd OWNd
-pip install -e ".[test,serial]" ruff mypy
+pip install -e ".[test]" ruff mypy
 ```
 
 ### Running Tests
@@ -356,7 +354,7 @@ OWNd maintains an automated test suite with strict **100.0% line coverage** veri
 | [`OWNd/message/load.py`](OWNd/message/load.py) | **100%** | WHO 3: Load control, priority forcing, and central-unit measurement events/commands |
 | [`OWNd/message/scenario.py`](OWNd/message/scenario.py) | **100%** | WHO 0, WHO 9, WHO 17: Scenario activation, auxiliary commands, and MH200/MH202 scenes |
 | [`OWNd/message/sound.py`](OWNd/message/sound.py) | **100%** | WHO 16 & WHO 22: Sound system, advanced sound diffusion, F441 matrix routing and paging |
-| [`OWNd/profiles.py`](OWNd/profiles.py) | **100%** | Declarative hardware gateway models across 14 canonical hardware profiles |
+| [`OWNd/profiles.py`](OWNd/profiles.py) | **100%** | Declarative hardware gateway models across 15 canonical hardware profiles |
 | [`OWNd/transport/__init__.py`](OWNd/transport/__init__.py) | **100%** | Transport subpackage exports |
 | [`OWNd/transport/base.py`](OWNd/transport/base.py) | **100%** | Abstract transport layer and event listener notification contracts |
 | [`OWNd/transport/serial.py`](OWNd/transport/serial.py) | **100%** | Async Serial/USB transport for Legrand 3578 interface with in-band demux |

@@ -14,14 +14,17 @@ name here would pin an implementation detail.
 from __future__ import annotations
 
 from OWNd.connection import OWNCommandSession, OWNGateway
+from OWNd.exceptions import OWNNackError
 from OWNd.message import (
     OWNCommand,
+    OWNGatewayCommand,
     OWNLightingCommand,
     OWNMessage,
     OWNSceneCommand,
     is_who18_dimension_52_crash_form,
     is_who4_dimension_22_crash_form,
 )
+from OWNd.profiles import Legrand3578Profile
 from OWNd.transport import AsyncSerialTransport, AsyncTcpTransport, OWNTransport
 
 
@@ -85,3 +88,37 @@ async def send_via_transport(
     await transport.send("*1*1*11##", raise_on_error=True)
     await tcp_transport.send(OWNLightingCommand.switch_on("11"), raise_on_error=True)
     await serial_transport.send("*1*1*11##", is_status_request=False, raise_on_error=True)
+    await transport.send("*1*1*11##", timeout=5.0)
+    await tcp_transport.send("*1*1*11##", timeout=5.0)
+    await serial_transport.send("*1*1*11##", timeout=5.0)
+
+
+async def zigbee_serial_contract() -> tuple[str | None, bool, tuple[int, int, int] | None]:
+    """Consumer contract for BTicino 3578 / Legrand 088328 serial & ZigBee APIs."""
+    profile = Legrand3578Profile()
+    raw_frames: list[tuple[str, str]] = []
+    serial_transport = AsyncSerialTransport(
+        "/dev/ttyUSB0",
+        gateway=profile,
+        busy_retry=False,
+        handshake=True,
+        reconnect=True,
+        on_state_change=lambda _connected: None,
+        raw_frame_callback=lambda direction, raw: raw_frames.append((direction, raw)),
+    )
+    await serial_transport.connect(raise_on_error=True)
+    await serial_transport.send(OWNGatewayCommand.keep_connect())
+    await serial_transport.send(OWNGatewayCommand.scan_network())
+    await serial_transport.send(OWNGatewayCommand.enable_supervisor())
+    await serial_transport.send(OWNGatewayCommand.disable_supervisor())
+    await serial_transport.send(OWNGatewayCommand.request_product_count())
+    await serial_transport.send(OWNGatewayCommand.get_product_info(0), timeout=35.0)
+    parsed = OWNMessage.parse("*1*1*12345601#9##", gateway=profile)
+    is_zb = parsed.is_zigbee if parsed is not None else False
+    zb_where = parsed.zigbee_where if parsed is not None else None
+    err = serial_transport.last_error
+    if isinstance(err, OWNNackError):
+        _is_busy: bool = err.busy
+        _ = _is_busy
+    _ = (serial_transport.ieee_address, serial_transport.firmware_version)
+    return zb_where, is_zb, serial_transport.firmware_version_tuple

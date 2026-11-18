@@ -73,6 +73,34 @@ jobs:
       - name: Check documentation synchronization
         run: python scripts/sync_documentation.py --check
 
+  serialx-compat:
+    name: Serialx runtime (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: serialx-floor
+            serialx-spec: "serialx==1.8.2"
+          - label: serialx-latest
+            serialx-spec: "serialx"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.14"
+          cache: pip
+      - name: Install package and pinned serialx
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --upgrade -e ".[test]" packaging "${{ matrix.serialx-spec }}"
+          python -c "import importlib.metadata as m; print('serialx==' + m.version('serialx'))"
+      - name: Verify floor version when testing serialx-floor
+        if: matrix.label == 'serialx-floor'
+        run: python -c "import importlib.metadata as m; assert m.version('serialx') == '1.8.2'"
+      - name: Run full test suite including pty & socket:// serial tests
+        run: python -m pytest -q
+
   package:
     name: Build package
     runs-on: ubuntu-latest
