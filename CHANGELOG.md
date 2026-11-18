@@ -4,6 +4,9 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Changed
+- **Profiles (`MH200NProfile`) list WHO 18** (was missing). A physical MH200N 1.1.8 answers `*#18*51*51##` with `*#18*51*51*23791364##` in 0.19 s and relays the meters 51..57 (317 WHO 18 frames in four `MyHOME` `tests/fixtures/traces/issue_466` captures), and the `010108` image translates `*#18*51*113##` and `*#18*51*51##` onto the bus (`energy-ts10.tsv:24,27`, `ack` / `out`). A caller that reads the profile (`MyHOME`: start-up sweep, standby ownership, shared-bus delegation) no longer skips WHO 18 on an MH200N. `MH200Profile` is unchanged: its `020102` image NACKs all 50 WHO 18 frames of `energy-ts10.tsv` without putting anything on the bus (emulator only), and no MH200 capture exists.
+
 ## [2.0.1] - 2026-11-17
 
 ### Changed

@@ -570,6 +570,14 @@ class MH200NProfile(GatewayProfile):
     relay (see ``MH200Profile``). Nothing has been captured on an MH200N itself;
     its 1.1.8 image ships a ``bt_vct`` translator, which the firmware oracle
     target does not run, so the oracle's WHO 8 NACKs for it are not evidence.
+
+    WHO 18 (Energy Management) is listed: a physical MH200N 1.1.8 answers
+    ``*#18*51*51##`` with ``*#18*51*51*23791364##`` in 0.19 s and relays the
+    meters 51..57 (317 WHO 18 frames in four MyHOME captures, e.g.
+    ``tests/fixtures/traces/issue_466/myhome_sweep_MH200N_all_2026-09-25T14-40-10.json``),
+    and the ``010108`` image translates ``*#18*51*113##`` and ``*#18*51*51##``
+    onto the bus (``results/MH200N/010108/oracle/full/energy-ts10.tsv:24,27``,
+    ``ack``/``out``).
     """
 
     def __init__(self) -> None:
@@ -593,6 +601,7 @@ class MH200NProfile(GatewayProfile):
                 WHO_LOCK,
                 WHO_CEN,
                 WHO_SCENARIO,
+                WHO_ENERGY,
                 WHO_CEN_PLUS,
                 WHO_SOUND,
                 WHO_SOUND_DIFFUSION,
