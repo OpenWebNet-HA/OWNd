@@ -89,10 +89,6 @@ def destructive_frame_error(
     )
 
 
-# Bytes read per step when checking an idle session for a close that follows
-# unsolicited data (``OWNCommandSession._closed_behind_unread_bytes``).
-_UNREAD_CHUNK = 4096
-
 # Cooldown window (seconds) after an in-send() reconnect attempt fails, so
 # concurrent callers queued behind _send_lock fail fast instead of each
 # repeating a socket connect attempt while the gateway is unreachable.
@@ -229,57 +225,36 @@ class OWNCommandSession(OWNSession):
         are missing (``send()`` reopens them anyway) and for streams installed
         by hand (test doubles, which may model a lost acknowledgement by
         feeding EOF before the write), so those keep the previous behaviour.
+
+        ``StreamReader.at_eof()`` stays false until the buffer is empty, so an
+        end of stream behind unread bytes is read from the reader's private
+        ``_eof`` flag, only on asyncio's own ``StreamReader`` class (a subclass
+        keeps the previous behaviour). A live F461 2.0.11 closes an idle
+        command session that sent nothing since its handshake that way:
+        ``*#*0##`` at 30.108 s, the FIN at 30.109 s (plant capture
+        2026-11-17); an F455 1.0.76 sends the FIN alone. ``send()`` then wrote
+        into the dead socket and took the stale ``*#*0##`` for the answer to
+        its own frame. Nothing is read from or fed to the reader here.
         """
         reader, writer = self._stream_reader, self._stream_writer
         if not isinstance(reader, asyncio.StreamReader) or not isinstance(
             writer, asyncio.StreamWriter
         ):
             return False
-        if reader.at_eof() or reader.exception() is not None:
+        if (
+            reader.at_eof()
+            or reader.exception() is not None
+            or writer.is_closing()
+        ):
             return True
-        return writer.is_closing()
-
-    async def _closed_behind_unread_bytes(self) -> bool:
-        """True when the gateway closed the idle session after bytes nobody asked for.
-
-        ``StreamReader.at_eof()`` is true only once the buffer is empty, so a
-        FIN that follows an unsolicited frame is invisible to
-        ``_peer_closed()``. A live F461 2.0.11 closes an idle command session
-        that way: ``*#*0##`` at 30.108 s, the FIN at 30.109 s (plant capture
-        2026-11-17, on a session that had sent no frame after the handshake;
-        an F455 1.0.76 sends the FIN alone). ``send()`` then wrote into the
-        dead socket and took the stale ``*#*0##`` for the answer to its own
-        frame: a status request came back as refused by the gateway, which
-        never received it.
-
-        Bytes waiting before a write answer nothing (the send lock pairs every
-        write with its own response), so they are read here without blocking:
-        ``read()`` returns at once when something is buffered or the peer has
-        closed, and the zero timeout ends it when the session is simply idle.
-        Only a close decides: the bytes of a session that is still open go
-        back to the reader, which leaves a live session exactly as it was
-        found. Same scope as ``_peer_closed()``: asyncio's own streams only.
-        """
-        reader, writer = self._stream_reader, self._stream_writer
-        if not isinstance(reader, asyncio.StreamReader) or not isinstance(
-            writer, asyncio.StreamWriter
-        ):
-            return False
-        unread = b""
-        try:
-            while not reader.at_eof():
-                async with asyncio.timeout(0):
-                    unread += await reader.read(_UNREAD_CHUNK)
-        except TimeoutError:
-            if unread:
-                reader.feed_data(unread)
-            return False
-        self._logger.debug(
-            "%s Gateway sent %r and closed the idle command session.",
-            self._log_id,
-            unread,
-        )
-        return True
+        if type(reader) is asyncio.StreamReader and getattr(reader, "_eof", False):
+            self._logger.debug(
+                "%s Gateway sent %r and closed the idle command session.",
+                self._log_id,
+                bytes(getattr(reader, "_buffer", b"")),
+            )
+            return True
+        return False
 
     async def _read_command_response(
         self,
@@ -463,7 +438,7 @@ class OWNCommandSession(OWNSession):
             # socket and reopening below is not a replay. The same holds when
             # the gateway sent something before closing (an F461 2.0.11 sends
             # ``*#*0##`` 1 ms before its FIN).
-            if self._peer_closed() or await self._closed_behind_unread_bytes():
+            if self._peer_closed():
                 self._logger.debug(
                     "%s Command session was closed by the gateway while idle; "
                     "reopening it before `%s`.",
