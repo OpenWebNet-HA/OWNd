@@ -91,19 +91,26 @@ def test_merged_pull_request_falls_back_to_the_branch_it_went_into_with_a_warnin
     fetch = api({"pulls/12": pull("closed", merged=True, base="chore/release-2.0.1"), "branches/chore/release-2.0.1": {}})
     result = resolve("pull/12", fetch)
     assert result.ref == "chore/release-2.0.1"
-    assert result.warning == "MyHOME pull request 12 is merged: set .github/myhome-conformance-ref back to master."
+    # Not "back to master" yet: master does not have the change until the staging branch is merged.
+    assert result.warning == (
+        "MyHOME pull request 12 is merged into chore/release-2.0.1: set .github/myhome-conformance-ref "
+        "back to master once chore/release-2.0.1 is merged."
+    )
     assert fetch.asked == ["pulls/12", "branches/chore/release-2.0.1"]
 
 
 def test_merged_pull_request_whose_branch_is_gone_falls_back_to_the_default():
     fetch = api({"pulls/12": pull("closed", merged=True, base="chore/release-2.0.1"), "branches/chore/release-2.0.1": None})
     result = resolve("pull/12", fetch)
-    assert result.ref == "master" and result.warning is not None
+    assert result.ref == "master"
+    assert result.warning == "MyHOME pull request 12 is merged: set .github/myhome-conformance-ref back to master."
 
 
 def test_merged_into_the_default_branch_asks_nothing_more():
     fetch = api({"pulls/12": pull("closed", merged=True)})
-    assert resolve("pull/12", fetch).ref == "master"
+    result = resolve("pull/12", fetch)
+    assert result.ref == "master"
+    assert result.warning == "MyHOME pull request 12 is merged: set .github/myhome-conformance-ref back to master."
     assert fetch.asked == ["pulls/12"]
 
 
@@ -247,5 +254,9 @@ def test_workflow_checks_out_the_resolved_ref_in_both_jobs():
             "repository": "OpenWebNet-HA/MyHOME",
             "ref": "${{ steps.myhome.outputs.ref }}",
             "path": "MyHOME",
+            "persist-credentials": False,
         }
-        assert steps[resolver - 1]["with"] == {"path": "OWNd"}
+        assert steps[resolver - 1]["with"] == {"path": "OWNd", "persist-credentials": False}
+        # No step pushes or fetches again, so no checkout leaves its token in .git/config.
+        checkouts = [step for step in steps if str(step.get("uses", "")).startswith("actions/checkout@")]
+        assert len(checkouts) == 2 and all(step["with"]["persist-credentials"] is False for step in checkouts)

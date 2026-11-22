@@ -15,7 +15,8 @@ moment it is merged:
 
 * open: its head (``refs/pull/<N>/head``);
 * merged: the branch it was merged into, or the default branch when that one is gone, with a warning
-  that asks for the file to be set back;
+  that asks for the file to be set back (once that branch is merged itself, when it is not the default
+  branch: until then the change is only there);
 * closed without merging: an error, because the change it carried is not coming.
 
 Usage (in the workflow):  python3 scripts/myhome_conformance_ref.py --github-output "$GITHUB_OUTPUT"
@@ -106,11 +107,15 @@ def resolve(value: str, fetch: Fetch, *, default: str = DEFAULT_REF) -> Resoluti
     base = validate(str((data.get("base") or {}).get("ref") or default))
     if base != default and fetch(f"branches/{base}") is None:
         base = default
-    return Resolution(
-        base,
-        f"MyHOME {base} (companion pull request {number} is merged)",
-        f"MyHOME pull request {number} is merged: set .github/myhome-conformance-ref back to {default}.",
-    )
+    if base == default:
+        warning = f"MyHOME pull request {number} is merged: set .github/myhome-conformance-ref back to {default}."
+    else:
+        # The change is in ``base`` and not in the default branch yet: going back now would lose it.
+        warning = (
+            f"MyHOME pull request {number} is merged into {base}: set .github/myhome-conformance-ref "
+            f"back to {default} once {base} is merged."
+        )
+    return Resolution(base, f"MyHOME {base} (companion pull request {number} is merged)", warning)
 
 
 def github_fetch(repo: str, token: str | None) -> Fetch:

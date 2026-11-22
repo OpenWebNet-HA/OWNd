@@ -45,6 +45,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: OWNd
+          persist-credentials: false
       - name: Resolve the MyHOME ref to test against
         id: myhome
         working-directory: OWNd
@@ -57,6 +58,7 @@ jobs:
           repository: OpenWebNet-HA/MyHOME
           ref: ${{ steps.myhome.outputs.ref }}
           path: MyHOME
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
@@ -92,6 +94,7 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: OWNd
+          persist-credentials: false
       - name: Resolve the MyHOME ref to test against
         id: myhome
         working-directory: OWNd
@@ -104,6 +107,7 @@ jobs:
           repository: OpenWebNet-HA/MyHOME
           ref: ${{ steps.myhome.outputs.ref }}
           path: MyHOME
+          persist-credentials: false
       - uses: actions/setup-python@v7
         with:
           python-version: "3.14"
