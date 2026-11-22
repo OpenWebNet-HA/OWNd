@@ -5,6 +5,14 @@ name: MyHOME conformance
 # checked against MyHOME's development branch, with this checkout installed
 # in place of the pinned release:
 #
+#   which MyHOME - .github/myhome-conformance-ref, `master` unless a pull
+#             request changes on purpose what MyHOME pins from OWNd (a gateway
+#             profile's WHO list, a capability flag). MyHOME's committed
+#             table, documents and tests describe the released OWNd, so such
+#             a change names its companion MyHOME pull request there
+#             (`pull/<N>`) and is tested against it; the two land together
+#             with the release and the pin bump
+#             (scripts/myhome_conformance_ref.py).
 #   corpus  - the 451-vector golden corpus (tests/golden) plus MyHOME's own
 #             smoke gates: the parser must produce the same objects for the
 #             same frames. Fast and required.
@@ -22,15 +30,12 @@ on:
   workflow_dispatch:
     inputs:
       myhome_ref:
-        description: MyHOME ref to test against
-        default: v2-phase1-architecture
+        description: MyHOME ref to test against (empty = .github/myhome-conformance-ref)
+        default: ""
         required: false
 
 permissions:
   contents: read
-
-env:
-  MYHOME_REF: ${{ github.event.inputs.myhome_ref || 'v2-phase1-architecture' }}
 
 jobs:
   corpus:
@@ -40,10 +45,17 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: OWNd
+      - name: Resolve the MyHOME ref to test against
+        id: myhome
+        working-directory: OWNd
+        env:
+          MYHOME_REF_INPUT: ${{ github.event.inputs.myhome_ref }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/myhome_conformance_ref.py --github-output "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         with:
           repository: OpenWebNet-HA/MyHOME
-          ref: ${{ env.MYHOME_REF }}
+          ref: ${{ steps.myhome.outputs.ref }}
           path: MyHOME
       - uses: actions/setup-python@v7
         with:
@@ -80,10 +92,17 @@ jobs:
       - uses: actions/checkout@v7
         with:
           path: OWNd
+      - name: Resolve the MyHOME ref to test against
+        id: myhome
+        working-directory: OWNd
+        env:
+          MYHOME_REF_INPUT: ${{ github.event.inputs.myhome_ref }}
+          GITHUB_TOKEN: ${{ github.token }}
+        run: python3 scripts/myhome_conformance_ref.py --github-output "$GITHUB_OUTPUT"
       - uses: actions/checkout@v7
         with:
           repository: OpenWebNet-HA/MyHOME
-          ref: ${{ env.MYHOME_REF }}
+          ref: ${{ steps.myhome.outputs.ref }}
           path: MyHOME
       - uses: actions/setup-python@v7
         with:
