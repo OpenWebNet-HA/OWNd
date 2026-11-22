@@ -6,4 +6,4 @@
 #               scripts/myhome_conformance_ref.py. Set it back to master once that pull
 #               request is merged and its change is in master (a staging branch it went
 #               into has to be merged first): the workflow warns until then.
-master
+pull/998
