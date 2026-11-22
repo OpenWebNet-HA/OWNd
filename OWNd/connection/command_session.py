@@ -18,6 +18,7 @@ from .session import (
     OWNSession,
     RECONNECT_PAUSE_FATAL,
     _FATAL_NEGOTIATION_ERRORS,
+    _negotiation_error_to_exception,
 )
 from ..exceptions import (
     OWNAuthError,
@@ -103,7 +104,8 @@ SEND_RECONNECT_COOLDOWN = 2.0
 # the HMAC document says: "Every time 3 handshakes procedures fail within 60
 # seconds, the authentication service have to be disabled for 60 seconds"
 # (Hmac Specification 1.1, "Simple Authentication Mode (SAM)"). An explicit
-# ``connect()`` still tries at once.
+# ``connect()`` still tries at once, and so does a ``send()`` after the
+# gateway's address, port or password changed.
 SEND_AUTH_COOLDOWN = float(RECONNECT_PAUSE_FATAL)
 
 
@@ -127,23 +129,70 @@ class OWNCommandSession(OWNSession):
         # on the same stream would steal each other's acknowledgements.
         self._send_lock = asyncio.Lock()
         self._last_reconnect_failure: float | None = None
-        # The error of the last connect() when the gateway refused the login
-        # for good; ``send()`` reports it, without logging in again, until
-        # SEND_AUTH_COOLDOWN has passed or connect() is called.
-        self._refused_login: OWNError | None = None
+        # The reason of the last connect() the gateway refused for good and
+        # the address, port and password the gateway object held when the
+        # refusal became known; ``send()``
+        # reports it without logging in again until SEND_AUTH_COOLDOWN has
+        # passed, connect() is called, or one of the three changes.
+        self._refused_login_reason: str | None = None
+        self._refused_login_target: tuple[object, object, object] | None = None
+        # Number of the latest connect() started on this session.
+        self._connect_seq: int = 0
+        # How many connect() calls are running.
+        self._connects_in_flight: int = 0
+        # The connect() whose refusal the hold records.
+        self._refused_login_seq: int | None = None
 
     async def connect(
         self, *, raise_on_error: bool = False
     ) -> dict[str, Any] | None:
+        self._connect_seq += 1
+        seq = self._connect_seq
         self._last_reconnect_failure = None
-        self._refused_login = None
+        self._refused_login_reason = None
+        self._refused_login_target = None
+        self._refused_login_seq = None
+        self._connects_in_flight += 1
         try:
-            return await super().connect(raise_on_error=raise_on_error)
+            result = await super().connect(raise_on_error=raise_on_error)
+        except OWNError as error:
+            self._hold_refused_login(error.reason, seq)
+            raise
         finally:
-            error = self._last_error
-            if error is not None and error.reason in _FATAL_NEGOTIATION_ERRORS:
-                self._last_reconnect_failure = time.monotonic()
-                self._refused_login = error
+            self._connects_in_flight -= 1
+        if result is not None and not result.get("Success", False):
+            self._hold_refused_login(result.get("Message"), seq)
+        return result
+
+    def _notify_auth_error(self, error: OWNAuthError) -> None:
+        """Record the hold before the caller's callback runs and before ``connect()`` yields.
+
+        The hold names the address, port and password the gateway object
+        holds at that moment (what the refused negotiation just used).
+        Outside a ``connect()`` (the parent's ``test_connection()``) nothing is held, as before.
+        """
+        if self._connects_in_flight:
+            self._hold_refused_login(error.reason, self._connect_seq)
+        super()._notify_auth_error(error)
+
+    def _login_target(self) -> tuple[object, object, object] | None:
+        """The address, port and password a login is refused for."""
+        if self._gateway is None:
+            return None
+        return (self._gateway.address, self._gateway.port, self._gateway.password)
+
+    def _hold_refused_login(self, reason: object, seq: int) -> None:
+        """Start the SEND_AUTH_COOLDOWN hold when ``reason`` is a login refused for good, once, and only for the latest ``connect()`` (``seq``).
+
+        The hold records the address, port and password the gateway object holds when the refusal becomes known.
+        """
+        if seq != self._connect_seq or self._refused_login_seq == seq:
+            return
+        if isinstance(reason, str) and reason in _FATAL_NEGOTIATION_ERRORS:
+            self._last_reconnect_failure = time.monotonic()
+            self._refused_login_reason = reason
+            self._refused_login_target = self._login_target()
+            self._refused_login_seq = seq
 
     @classmethod
     async def send_to_gateway(
@@ -168,7 +217,9 @@ class OWNCommandSession(OWNSession):
             if raise_on_error:
                 await connection.connect(raise_on_error=True)
                 return await connection.send(message, raise_on_error=True)
-            await connection.connect()
+            result = await connection.connect()
+            if result is None or not result.get("Success", False):
+                return None
             return await connection.send(message)
         finally:
             with contextlib.suppress(Exception):
@@ -472,32 +523,43 @@ class OWNCommandSession(OWNSession):
 
             if self._stream_reader is None or self._stream_writer is None:
                 now = time.monotonic()
-                refused_login = self._refused_login
+                refused_reason = self._refused_login_reason
                 if (
-                    refused_login is not None
+                    refused_reason is not None
+                    and self._refused_login_target != self._login_target()
+                ):
+                    # The address, port or password changed since the refusal:
+                    # log in again at once.
+                    self._refused_login_reason = None
+                    self._refused_login_target = None
+                    self._last_reconnect_failure = None
+                    self._refused_login_seq = None
+                elif (
+                    refused_reason is not None
                     and self._last_reconnect_failure is not None
                     and (now - self._last_reconnect_failure) < SEND_AUTH_COOLDOWN
                 ):
-                    # Same error as the login that was refused, and no new
-                    # login: the answer cannot change until the password does.
-                    self._last_error = refused_login
+                    # No new login: the answer cannot change until the
+                    # password does. Each caller gets its own exception.
+                    err = _negotiation_error_to_exception(refused_reason)
+                    self._last_error = err
                     self._logger.warning(
-                        "%s Gateway refused the login (%s); message `%s` not "
-                        "sent, next login attempt in %.0fs.",
+                        "%s Authentication handshake failed (%s); message `%s` "
+                        "not sent, next login attempt in %.0fs.",
                         self._log_id,
-                        refused_login.reason,
+                        refused_reason,
                         message,
                         SEND_AUTH_COOLDOWN - (now - self._last_reconnect_failure),
                     )
                     if raise_on_error:
-                        raise refused_login
+                        raise err
                     return None
                 if (
                     self._last_reconnect_failure is not None
                     and (now - self._last_reconnect_failure)
                     < SEND_RECONNECT_COOLDOWN
                 ):
-                    err = self._last_error or OWNConnectionError(
+                    err = OWNConnectionError(
                         f"Command session unavailable; message `{frame}` not sent",
                         reason="connection_unavailable",
                     )
