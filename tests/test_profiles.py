@@ -782,4 +782,18 @@ def test_mh200n_carries_energy_management() -> None:
     *#18*51*51## (energy-ts10.tsv:24,27, ack/out). The MH200 020102 image NACKs them with no bus output."""
     assert get_gateway_profile("MH200N").supports_who(WHO_ENERGY)
     assert get_gateway_profile("003565").supports_who(WHO_ENERGY)
+    assert get_gateway_profile("03565").supports_who(WHO_ENERGY)
     assert not get_gateway_profile("MH200").supports_who(WHO_ENERGY)
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [("MH200N", True), ("003565", True), ("03565", True), ("MH200", False)],
+)
+def test_mh200n_reports_instant_power(name: str, expected: bool) -> None:
+    """275 of the 317 WHO 18 frames of the four MH200N captures are DIMENSION 113 (active power),
+    and the 010108 image translates *#18*51*113## (energy-ts10.tsv:24, ack/out). The MH200 keeps
+    its own flags."""
+    profile = get_gateway_profile(name)
+    assert profile.supports_who(WHO_ENERGY) is expected
+    assert profile.supports_energy_instant_power is expected

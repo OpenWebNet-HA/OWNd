@@ -35,6 +35,7 @@ from OWNd.profiles import (
     WHO_AUTOMATION,
     WHO_CEN,
     WHO_CEN_PLUS,
+    WHO_ENERGY,
     WHO_HEATING,
     WHO_LIGHTING,
     get_gateway_profile,
@@ -590,7 +591,7 @@ def test_gateway_profiles_match_oracle_gateways():
 
     # Specific capability checks based on verified firmware daemons:
     mh200n_profile = get_gateway_profile("MH200N")
-    for who in (WHO_LIGHTING, WHO_AUTOMATION, WHO_HEATING, WHO_CEN, WHO_CEN_PLUS):
+    for who in (WHO_LIGHTING, WHO_AUTOMATION, WHO_HEATING, WHO_CEN, WHO_CEN_PLUS, WHO_ENERGY):
         assert who in mh200n_profile.supported_who, (
             f"MH200N profile missing expected supported WHO {who}"
         )

@@ -577,7 +577,13 @@ class MH200NProfile(GatewayProfile):
     ``tests/fixtures/traces/issue_466/myhome_sweep_MH200N_all_2026-09-25T14-40-10.json``),
     and the ``010108`` image translates ``*#18*51*113##`` and ``*#18*51*51##``
     onto the bus (``results/MH200N/010108/oracle/full/energy-ts10.tsv:24,27``,
-    ``ack``/``out``).
+    ``ack``/``out``). 275 of those 317 frames are DIMENSION 113 (active power)
+    reports, so ``supports_energy_instant_power`` is the class default ``True``.
+    The WHO 18 translator of the ``010108`` image is ``bt_supervisione``
+    (``results/MH200N/010108/manifest.tsv:29``,
+    ``oracle/targets/MH200N/010108.yaml:52``), which the MH200 ``020102`` image
+    does not ship (it has ``bt_energia``, the WHO 3 translator:
+    ``oracle/targets/MH200/020102.yaml:54-55``).
     """
 
     def __init__(self) -> None:
@@ -586,7 +592,6 @@ class MH200NProfile(GatewayProfile):
             command_queue_delay=0.15,
             max_queue_size=100,
             event_keepalive_interval=90,
-            supports_energy_instant_power=False,
             supports_audio=True,
             supports_general_heating_status=True,
             supports_heating_actuator_status=False,
