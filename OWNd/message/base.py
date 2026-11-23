@@ -14,11 +14,24 @@ _COMMAND_DISPATCH: dict[int, Callable[[str], OWNCommand]] = {}
 _PARSE_GATEWAY_CTX: contextvars.ContextVar[Any] = contextvars.ContextVar(
     "ownd_parse_gateway", default=None
 )
+_PARSE_STATUS_REPLY_CTX: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "ownd_parse_status_reply", default=False
+)
 
 
 def get_parse_gateway() -> Any:
     """Return the active gateway context during ``OWNMessage.parse`` / ``OWNEvent.parse``."""
     return _PARSE_GATEWAY_CTX.get()
+
+
+def _has_zigbee_context(gateway: Any) -> bool:
+    """Return True iff ``gateway`` explicitly designates ``address_family == 'zigbee'``."""
+    if gateway is None:
+        return False
+    if getattr(gateway, "address_family", None) == "zigbee":
+        return True
+    profile = getattr(gateway, "profile", None)
+    return getattr(profile, "address_family", None) == "zigbee"
 
 _WHO_SUBMODULES: tuple[str, ...] = (
     "actuator_lock",
@@ -93,6 +106,7 @@ def require_address_where(where: object) -> str:
 class OWNMessage:
     _ACK = re.compile(r"^\*#\*1##$")  #  *#*1##
     _NACK = re.compile(r"^\*#\*0##$")  #  *#*0##
+    _BUSY_NACK = re.compile(r"^\*#\*6##$")  #  *#*6## (ownkb:claim:c000671)
     _COMMAND_SESSION = re.compile(r"^\*99\*0##$")  #  *99*0##
     _EVENT_SESSION = re.compile(r"^\*99\*1##$")  #  *99*1##
     _NONCE = re.compile(r"^\*#(\d{4,})##$")  #  *#123456789##
@@ -113,6 +127,12 @@ class OWNMessage:
     _DOOR_ENTRY_SHORT = re.compile(
         r"^\*6\*(?P<what>9)\*?##$"
     )  # *6*9##, *6*9*##
+    # WHO 13 ZigBee USB gateway commands use empty WHERE (*13*12*##..*13*67*##;
+    # openwebnet4j GatewayMgmt, Encyclopedia who-13-integration-gateway/zigbee-network-management.md;
+    # WHAT 61 Identify is excluded as it is always unit-00 product-addressed).
+    _GATEWAY_EMPTY_WHERE = re.compile(
+        r"^\*13\*(?P<what>12|22|30|31|32|33|34|60|65|66|67)\*##$"
+    )
     _STATUS_REQUEST = re.compile(
         r"^\*#(?P<who>\d+)(?:\*(?P<where>#?\d+)(?P<where_param>(?:#\d+)*))?##$"
     )  #  *#WHO*WHERE## or *#WHO##
@@ -208,6 +228,15 @@ class OWNMessage:
             self._what = int(match.group("what"))
             self._where = ""
 
+        elif match := self._GATEWAY_EMPTY_WHERE.match(self._raw):
+            self._is_valid_message = True
+            self._match = match
+            self._family = "COMMAND"
+            self._message_type = "STATUS"
+            self._who = 13
+            self._what = int(match.group("what"))
+            self._where = ""
+
         elif match := self._STATUS_REQUEST.match(self._raw):
             self._is_valid_message = True
             self._match = match
@@ -272,10 +301,17 @@ class OWNMessage:
         return None
 
     @classmethod
-    def parse(cls, data: str, *, gateway: Any = None) -> OWNMessage | None:
+    def parse(
+        cls,
+        data: str,
+        *,
+        gateway: Any = None,
+        is_status_reply: bool = False,
+    ) -> OWNMessage | None:
         if (
             cls._ACK.match(data)
             or cls._NACK.match(data)
+            or cls._BUSY_NACK.match(data)
             or cls._COMMAND_SESSION.match(data)
             or cls._EVENT_SESSION.match(data)
             or cls._NONCE.match(data)
@@ -289,9 +325,12 @@ class OWNMessage:
             or cls._DIMENSION_REQUEST_REPLY.match(data)
             or cls._match_hash_value_reply(data)
         ):
-            return OWNEvent.parse(data, gateway=gateway)
+            return OWNEvent.parse(
+                data, gateway=gateway, is_status_reply=is_status_reply
+            )
         if (
-            cls._STATUS_REQUEST.match(data)
+            cls._GATEWAY_EMPTY_WHERE.match(data)
+            or cls._STATUS_REQUEST.match(data)
             or cls._DIMENSION_REQUEST.match(data)
             or cls._DIMENSION_WRITING.match(data)
         ):
@@ -419,6 +458,9 @@ class OWNMessage:
     @property
     def unique_id(self) -> str:
         """The ID of the subject of this message"""
+        zb_where = self.zigbee_where
+        if zb_where is not None:
+            return f"{self.who}-{zb_where}"
         if self.where is None:
             return str(self.who)
         return (
@@ -469,6 +511,8 @@ class OWNMessage:
     @property
     def is_general(self) -> bool:
         if self.who == 1 or self.who == 2:
+            if self.is_zigbee:
+                return self._where == "0" and self.zigbee_unit in (None, "00")
             return self._where == "0"
         return False
 
@@ -481,6 +525,8 @@ class OWNMessage:
     @property
     def is_area(self) -> bool:
         if self.who == 1 or self.who == 2:
+            if self.is_zigbee:
+                return False
             try:
                 return (
                     self._where == "00"
@@ -508,6 +554,63 @@ class OWNMessage:
             return 10 if self._where == "100" else int(self._where)
         return None
 
+    def _zigbee_parts(self) -> tuple[str, str | None, str | None] | None:
+        """Return ``(zigbee_where, device_id, unit)`` when context and shape match."""
+        if self._who not in (1, 2, 13) or not _has_zigbee_context(self._gateway):
+            return None
+        w = self._where
+        if w is None:
+            return None
+        # Unicast: <1..10-digit ADDR><2-digit UNIT>#9 (min 3 digits before #9)
+        if 3 <= len(w) <= 12 and w.isascii() and w.isdigit() and self._where_param == ["9"]:
+            return f"{w}#9", w[:-2], w[-2:]
+        # Broadcast: 0#<2-digit UNIT>#9 or bare 0#9
+        if w == "0":
+            if self._where_param == ["9"]:
+                return "0#9", None, None
+            if (
+                len(self._where_param) == 2
+                and len(self._where_param[0]) == 2
+                and self._where_param[0].isascii()
+                and self._where_param[0].isdigit()
+                and self._where_param[1] == "9"
+            ):
+                return f"0#{self._where_param[0]}#9", None, self._where_param[0]
+        # Group: #<1..65535>#9 (excluded when _where_param is empty, e.g. SCS *1*1*#9##)
+        if (
+            w.startswith("#")
+            and len(w) > 1
+            and w[1:].isascii()
+            and w[1:].isdigit()
+            and 1 <= int(w[1:]) <= 65535
+            and self._where_param == ["9"]
+        ):
+            return f"{w}#9", None, None
+        return None
+
+    @property
+    def is_zigbee(self) -> bool:
+        """True when parsed under a ZigBee gateway context with a ``#9`` WHERE."""
+        return self._zigbee_parts() is not None
+
+    @property
+    def zigbee_where(self) -> str | None:
+        """Canonical ZigBee ``WHERE`` string (``<ADDR><UNIT>#9``, ``0#<UNIT>#9``, ``0#9``, or ``#<G>#9``)."""
+        parts = self._zigbee_parts()
+        return parts[0] if parts is not None else None
+
+    @property
+    def zigbee_device_id(self) -> str | None:
+        """ZigBee node identifier (``<ADDR>``) for unicast frames, else ``None``."""
+        parts = self._zigbee_parts()
+        return parts[1] if parts is not None else None
+
+    @property
+    def zigbee_unit(self) -> str | None:
+        """Two-digit ZigBee unit identifier (``<UNIT>``) when present, else ``None``."""
+        parts = self._zigbee_parts()
+        return parts[2] if parts is not None else None
+
     def __repr__(self) -> str:
         return self._raw
 
@@ -523,8 +626,27 @@ class OWNEvent(OWNMessage):
     Dividing this in a subclass provides better clarity
     """
 
+    def __init__(self, data: str) -> None:
+        super().__init__(data)
+        self._is_status_reply: bool = _PARSE_STATUS_REPLY_CTX.get()
+
+    @property
+    def is_status_reply(self) -> bool:
+        """True when this event answered an in-flight status request on serial transport."""
+        return self._is_status_reply
+
+    def _mark_status_reply(self) -> None:
+        """Mark this event as a direct reply to an in-flight status request."""
+        self._is_status_reply = True
+
     @classmethod
-    def parse(cls, data: str, *, gateway: Any = None) -> OWNEvent | None:
+    def parse(
+        cls,
+        data: str,
+        *,
+        gateway: Any = None,
+        is_status_reply: bool = False,
+    ) -> OWNEvent | None:
         _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.+)?##$", data)
 
         if _match:
@@ -532,11 +654,13 @@ class OWNEvent(OWNMessage):
             _ensure_all_subsystems_registered()
             parser = _EVENT_DISPATCH.get(_who)
             token = _PARSE_GATEWAY_CTX.set(gateway)
+            reply_token = _PARSE_STATUS_REPLY_CTX.set(bool(is_status_reply))
             try:
                 if parser is not None:
                     return parser(data)
                 return cls(data)
             finally:
+                _PARSE_STATUS_REPLY_CTX.reset(reply_token)
                 _PARSE_GATEWAY_CTX.reset(token)
 
         return None
@@ -550,7 +674,14 @@ class OWNCommand(OWNMessage):
     """
 
     @classmethod
-    def parse(cls, data: str, *, gateway: Any = None) -> OWNCommand | None:
+    def parse(
+        cls,
+        data: str,
+        *,
+        gateway: Any = None,
+        is_status_reply: bool = False,
+    ) -> OWNCommand | None:
+        del is_status_reply
         _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.+)?##$", data)
 
         if _match:
@@ -621,6 +752,12 @@ class OWNSignaling(OWNMessage):
             self._family = "SIGNALING"
             self._type = "NACK"
             self._human_readable_log = "NACK."
+        elif match := self._BUSY_NACK.match(self._raw):
+            self._is_valid_message = True
+            self._match = match
+            self._family = "SIGNALING"
+            self._type = "BUSY_NACK"
+            self._human_readable_log = "BUSY NACK."
         elif match := self._NONCE.match(self._raw):
             self._is_valid_message = True
             self._match = match
@@ -669,6 +806,9 @@ class OWNSignaling(OWNMessage):
 
     def is_nack(self) -> bool:
         return self._type == "NACK"
+
+    def is_busy_nack(self) -> bool:
+        return self._type == "BUSY_NACK"
 
     def is_nonce(self) -> bool:
         return self._type == "NONCE"

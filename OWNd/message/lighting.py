@@ -10,6 +10,7 @@ from typing import Any
 from .base import (
     OWNCommand,
     OWNEvent,
+    _has_zigbee_context,
     get_parse_gateway,
     register_command_parser,
     register_event_parser,
@@ -78,6 +79,26 @@ COARSE_PRESET_TO_PERCENT: dict[int, int] = {
     10: 100,
 }
 
+# Perceptual OpenZigBee coarse WHO 1 preset curve shared across MyHOME and openHAB:
+# WHAT 2..10 -> 5/10/20/30/40/50/60/75/100 %, while status-reply WHAT 1 on a
+# ZigBee dimmer represents minimum brightness (1 %).
+ZIGBEE_PRESET_TO_PERCENT: dict[int, int] = {
+    2: 5,
+    3: 10,
+    4: 20,
+    5: 30,
+    6: 40,
+    7: 50,
+    8: 60,
+    9: 75,
+    10: 100,
+}
+
+ZIGBEE_STATUS_WHAT_TO_PERCENT: dict[int, int] = {
+    1: 1,
+    **ZIGBEE_PRESET_TO_PERCENT,
+}
+
 # Per-(gateway_key, normalized_where) coarse-only dimmer registry.
 # ``gateway_key`` is ``None`` for unscoped parse/command calls, or a normalized
 # gateway identifier (serial/MAC or host) when scoped to a specific plant.
@@ -127,6 +148,37 @@ def percent_to_brightness_preset(level: int) -> int:
     if lvl <= 67:
         return 8
     if lvl <= 85:
+        return 9
+    return 10
+
+
+def percent_to_zigbee_brightness_preset(level: int) -> int:
+    """Convert a 0..100 % level to the OpenZigBee coarse WHO 1 WHAT value (0 or 2..10).
+
+    Midpoint buckets for :data:`ZIGBEE_PRESET_TO_PERCENT`:
+    ``<=0 -> 0``, ``1..7 -> 2``, ``8..14 -> 3``, ``15..24 -> 4``, ``25..34 -> 5``,
+    ``35..44 -> 6``, ``45..54 -> 7``, ``55..67 -> 8``, ``68..87 -> 9``, ``>=88 -> 10``.
+    """
+    if isinstance(level, bool) or (isinstance(level, float) and level % 1 != 0):
+        raise ValueError("level must be an integer")
+    lvl = int(level)
+    if lvl <= 0:
+        return 0
+    if lvl <= 7:
+        return 2
+    if lvl <= 14:
+        return 3
+    if lvl <= 24:
+        return 4
+    if lvl <= 34:
+        return 5
+    if lvl <= 44:
+        return 6
+    if lvl <= 54:
+        return 7
+    if lvl <= 67:
+        return 8
+    if lvl <= 87:
         return 9
     return 10
 
@@ -193,7 +245,12 @@ def normalize_where(where: str | int | None) -> str:
     base = parts[0]
     if is_apl_address(base) or base in ("00", "100", "0"):
         norm_base = base
-    elif base.isdigit() and base.startswith("00") and int(base) > 15:
+    elif (
+        not (len(parts) == 2 and parts[1] == "9")
+        and base.isdigit()
+        and base.startswith("00")
+        and int(base) > 15
+    ):
         norm_base = str(int(base))
     else:
         norm_base = base
@@ -301,6 +358,7 @@ class OWNLightingEvent(OWNEvent):
         self._illuminance: int | None = None
         self._motion: bool = False
         self._motion_end: bool = False
+        self._is_toggle: bool = False
         self._is_anomaly: bool = False
         self._pir_sensitivity: int | None = None
         self._motion_timeout: datetime.timedelta | None = None
@@ -334,7 +392,10 @@ class OWNLightingEvent(OWNEvent):
                 )
             elif self._state > 1 and self._state < 11:  # Light dimmed to preset value
                 self._brightness_preset = self._state
-                if is_coarse_dimmer_where(full_where):
+                if self.is_zigbee:
+                    self._is_coarse_dimmer = True
+                    self._brightness = ZIGBEE_PRESET_TO_PERCENT[self._state]
+                elif is_coarse_dimmer_where(full_where):
                     self._is_coarse_dimmer = True
                     self._brightness = brightness_preset_to_percent(self._state)
                 self._human_readable_log = f"Light {self._where}{self._interface_log_text} is switched on at brightness level {self._state}."  # pylint: disable=line-too-long
@@ -375,6 +436,11 @@ class OWNLightingEvent(OWNEvent):
             elif self._state == 30 or self._state == 31:  # One level up/down
                 direction = "up" if self._state == 30 else "down"
                 self._human_readable_log = f"Light {self._where}{self._interface_log_text} is dimmed {direction} one level."  # pylint: disable=line-too-long
+            elif self._state == 32:  # ZigBee Toggle event (ownkb:claim:c001462, c001483, r000288)
+                self._is_toggle = True
+                self._human_readable_log = (
+                    f"Light or control {self._where}{self._interface_log_text} sent toggle (WHAT 32)."
+                )
             elif self._state == 34:  # Motion detected
                 self._type = MESSAGE_TYPE_MOTION
                 self._motion = True
@@ -549,7 +615,27 @@ class OWNLightingEvent(OWNEvent):
         """Fine 1..100 % equivalent for a coarse WHAT 2..10 preset, else None."""
         if self._brightness_preset is None:
             return None
+        if self.is_zigbee:
+            return ZIGBEE_PRESET_TO_PERCENT.get(self._brightness_preset)
         return COARSE_PRESET_TO_PERCENT.get(self._brightness_preset)
+
+    @property
+    def zigbee_status_brightness_percent(self) -> int | None:
+        """Dimmer 1..100 % level for a ZigBee status frame, else ``None``.
+
+        Maps ``WHAT 2..10`` to ``5..100 %`` (:data:`ZIGBEE_PRESET_TO_PERCENT`) and
+        status-reply ``WHAT 1`` (``is_status_reply=True``) to ``1 %``
+        (:data:`ZIGBEE_STATUS_WHAT_TO_PERCENT`). Plain :attr:`brightness` stays
+        ``None`` on ``WHAT 1`` because an On/Off ZigBee switch also answers
+        ``*#1*WHERE#9##`` with ``*1*1*WHERE#9##``.
+        """
+        if not self.is_zigbee or self._state is None:
+            return None
+        if self._state in ZIGBEE_PRESET_TO_PERCENT:
+            return ZIGBEE_PRESET_TO_PERCENT[self._state]
+        if self._state == 1 and self.is_status_reply:
+            return ZIGBEE_STATUS_WHAT_TO_PERCENT[1]
+        return None
 
     @property
     def brightness(self) -> int | None:
@@ -592,11 +678,23 @@ class OWNLightingEvent(OWNEvent):
     @property
     def is_on(self) -> bool | None:
         """True/False when the on/off state is known, None otherwise (e.g. a
-        motion or end-of-movement event, a reply carrying only a dimension such as illuminance
-        or a timer, an anomaly state, or a WHAT outside the published table; see unknown_state)."""
-        if self._state is None or self._motion or self._motion_end or self._is_anomaly:
+        motion or end-of-movement event, a ZigBee toggle event, a reply carrying
+        only a dimension such as illuminance or a timer, an anomaly state, or a
+        WHAT outside the published table; see unknown_state)."""
+        if (
+            self._state is None
+            or self._motion
+            or self._motion_end
+            or self._is_anomaly
+            or self._is_toggle
+        ):
             return None
         return 0 < self._state < 32
+
+    @property
+    def is_toggle(self) -> bool:
+        """True for ``*1*32*WHERE##`` (ZigBee toggle event)."""
+        return self._is_toggle
 
     @property
     def is_anomaly(self) -> bool:
@@ -1046,18 +1144,26 @@ class OWNLightingCommand(OWNCommand):
         _transition: int = 0,
         *,
         coarse: bool | None = None,
+        zigbee: bool | None = None,
         gateway: Any = None,
     ) -> OWNLightingCommand:
         """Build a brightness command for ``where`` at ``_level`` % (0..100).
 
-        By default (``coarse=None``), checks :func:`is_coarse_dimmer_where` for
-        ``where`` (scoped to ``gateway`` when provided, or using the unscoped
-        all-agree rule when ``gateway=None``). If ``where`` has reported the
-        legacy ``SPEED = 240`` (``0xF0``) coarse-only sentinel in a prior
-        ``DIMENSION 1``/``4`` reply — or if ``coarse=True`` is passed explicitly —
-        emits ``*1*0*WHERE##`` for ``_level <= 0`` and ``*1*2..10*WHERE##`` via
-        :func:`percent_to_brightness_preset` for ``1..100 %``. Otherwise emits the
-        standard ``DIMENSION 1`` write ``*#1*WHERE*#1*<100+level>*<speed>##``.
+        When ``zigbee=True`` (or ``zigbee=None`` under a ZigBee ``gateway``
+        context with a ``#9`` target ``where``), OpenZigBee dimmers do not
+        implement ``DIMENSION 1`` writes; emits ``*1*0*WHERE##`` for
+        ``_level <= 0`` and ``*1*2..10*WHERE##`` via
+        :func:`percent_to_zigbee_brightness_preset` for ``1..100 %``.
+
+        Otherwise, by default (``coarse=None``), checks
+        :func:`is_coarse_dimmer_where` for ``where`` (scoped to ``gateway`` when
+        provided, or using the unscoped all-agree rule when ``gateway=None``).
+        If ``where`` has reported the legacy ``SPEED = 240`` (``0xF0``)
+        coarse-only sentinel in a prior ``DIMENSION 1``/``4`` reply — or if
+        ``coarse=True`` is passed explicitly — emits ``*1*0*WHERE##`` for
+        ``_level <= 0`` and ``*1*2..10*WHERE##`` via
+        :func:`percent_to_brightness_preset` for ``1..100 %``. Otherwise emits
+        the standard ``DIMENSION 1`` write ``*#1*WHERE*#1*<100+level>*<speed>##``.
 
         ``_transition`` is the published SPEED field (``0`` = last speed used,
         ``1..254``, ``255`` = default; dimensions.md "Value fields"): a ``bool``
@@ -1073,6 +1179,28 @@ class OWNLightingCommand(OWNCommand):
             raise ValueError("brightness level and transition must be integers")
         trans_int = int(_transition)
         transition_speed = trans_int if SPEED_MIN <= trans_int <= SPEED_MAX else 0
+        eff_gateway = gateway if gateway is not None else get_parse_gateway()
+        if zigbee is not None:
+            use_zigbee = bool(zigbee)
+        elif _has_zigbee_context(eff_gateway):
+            probe = cls(f"*1*1*{_where_target(where)}##")
+            probe._gateway = eff_gateway
+            use_zigbee = probe.is_zigbee
+        else:
+            use_zigbee = False
+
+        if use_zigbee:
+            if int(_level) <= 0:
+                cmd = cls.switch_off(where, None)
+                cmd._gateway = eff_gateway
+                return cmd
+            cmd = cls.set_brightness_preset(
+                where, percent_to_zigbee_brightness_preset(int(_level))
+            )
+            cmd._is_coarse_dimmer = True
+            cmd._gateway = eff_gateway
+            return cmd
+
         use_coarse = (
             is_coarse_dimmer_where(where, gateway=gateway)
             if coarse is None

@@ -4,6 +4,40 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0b2] - 2026-11-23
+
+### Added
+- **OpenZigBee Dimmer Curve & Coarse Command Helper (`OWNd.message.lighting`)**:
+  - Added `ZIGBEE_PRESET_TO_PERCENT` (`{2: 5, 3: 10, 4: 20, 5: 30, 6: 40, 7: 50, 8: 60, 9: 75, 10: 100}`), `ZIGBEE_STATUS_WHAT_TO_PERCENT` (`{1: 1, **ZIGBEE_PRESET_TO_PERCENT}`), and `percent_to_zigbee_brightness_preset(level)` while keeping wired SCS `COARSE_PRESET_TO_PERCENT` (`2 -> 1%`) unchanged.
+  - `OWNLightingEvent` maps ZigBee `#9` `WHAT 2..10` frames to `ZIGBEE_PRESET_TO_PERCENT` (`is_coarse_dimmer=True`, `brightness`, `brightness_preset_percent`) and exposes `zigbee_status_brightness_percent` (`1%` on `is_status_reply=True` `WHAT 1`).
+  - `OWNLightingCommand.set_brightness(..., zigbee=..., gateway=...)` emits `*1*0*WHERE##` / `*1*2..10*WHERE##` instead of `DIMENSION 1` writes for ZigBee targets.
+- **WHO 13 ZigBee Lifecycle Decoding & Bootloader TX Guard (`OWNd.message.gateway`, `OWNd.connection.command_session`)**:
+  - Admitted empty-`WHERE` ZigBee gateway commands `WHAT 12, 22, 30, 31, 32, 33, 34, 60, 65, 66, 67` (keeping `WHAT 61` Identify strictly product-addressed) and decoded `OWNGatewayEvent` lifecycle properties (`is_zigbee_join`, `is_zigbee_leave`, `is_zigbee_network_open`, `is_zigbee_network_close`).
+  - Added `is_who13_boot_mode_frame` and blocked `*13*12*##` (`Boot mode`) in `destructive_frame_reason()` across all TCP and serial send paths so custom TX frames cannot drop the USB stick into raw `STX/ETX` bootloader mode.
+- **Status-Reply Provenance (`OWNEvent.is_status_reply`)**: `OWNEvent.parse(..., is_status_reply=...)` and `AsyncSerialTransport` tag status frames answering an in-flight `WHO 1`/`2` status request under `_command_lock` with `is_status_reply=True`.
+
+### Fixed
+- **4-Shape `WHO 13 DIMENSION 66` Parser & Multi-Endpoint Serial Coalescing (`OWNGatewayEvent`, `AsyncSerialTransport`)**:
+  - Context-independently distinguishes live `fw 1.2.3` offline replies `*#13*<ADDR>00#9*66*<INDEX>##` (`zigbee_product_index=<INDEX>`, `zigbee_device_type_code=None`, `is_zigbee_product_unreachable=True`) from single-value product replies and attaches them to `OWNNackError.responses`.
+  - Added a `90 ms` sliding post-ACK quiet window for multi-unit `DIM 66` responses (resolving immediately on non-BUSY `*#*0##` NACK) plus a `50 ms` late orphan-ACK guard so trailing `*#*1##` tokens cannot corrupt subsequent commands.
+- **Bidirectional `WHO 2` `fw <= 1.2.0` Swap & Configurable Post-Scan Supervisor Restore (`AsyncSerialTransport`)**:
+  - Applied `WHO 2` `WHAT 1 <-> 2` (`dimension is None and not what_param`) symmetrically on both TX and RX for `firmware_tuple <= (1, 2, 0)`.
+  - Added `auto_restore_supervisor: bool = True` so callers pacing `*13*66*##` externally can avoid duplicate post-scan supervisor broadcasts.
+
+## [2.1.0b1] - 2026-11-18
+
+### Added
+- **Profiles (`Legrand3578Profile`)**: Canonical serial OpenZigBee profile for the BTicino `3578` / Legrand `088328` USB interface (`model_name="3578"`, aliases `088328`, `003578`, `03578`, `bticino3578`, `legrand3578`, `legrand088328`, `openzigbee`, `zigbee`), declaring `transport_type="serial"`, `address_family="zigbee"`, `default_baudrate=19200`, `command_session_idle_timeout=None`, and `supported_who=frozenset({1, 2, 13})` (WHO `1`/`2`/`13` scope matching `openwebnet4j` `WhereZigBee` and `ownkb:claim:c000652`). Base `GatewayProfile` adds `transport_type`, `address_family`, `default_baudrate`, and `command_session_idle_timeout` with TCP/SCS defaults.
+- **OpenZigBee Protocol & Context-Gated `#9` Parsing (`OWNMessage`, `OWNSignaling`, `OWNLightingEvent`, `OWNGatewayEvent`, `OWNGatewayCommand`, `OWNNackError`)**:
+  - `OWNMessage.parse(..., gateway=...)` (and `OWNEvent.parse` / `OWNCommand.parse`) gates ZigBee `#9` interpretation strictly on `address_family == "zigbee"`, exposing `is_zigbee`, `zigbee_where`, `zigbee_device_id`, and `zigbee_unit` across unicast (`<ADDR><UNIT>#9`), broadcast (`0#<UNIT>#9`, `0#9`), and group (`#<G>#9`) forms while keeping wired SCS frames (including `*1*1*#9##`, `*4*1*012#9##`, `*4*1*1#9##`, `*22*1*2#9##`) unchanged.
+  - `OWNSignaling.is_busy_nack()` recognizes `*#*6##` (`ownkb:claim:c000671`, `c000674`) without changing `is_nack()`; `OWNNackError` accepts `busy: bool = False`.
+  - Empty-`WHERE` WHO 13 gateway commands (`*13*60*##`, `*13*65*##`, `*13*66*##`, `*13*67*##`) and `OWNGatewayCommand` builders (`keep_connect`, `scan_network`, `enable_supervisor`, `disable_supervisor`, `request_product_count`, `get_product_info`, using `*` before index per `openwebnet4j` `GatewayMgmt.requestProductInfo` and `ownkb:claim:c000691`, `c001823`).
+  - `OWNGatewayEvent` decodes 8-octet `DIM 12` IEEE EUI-64 addresses into `ieee_address` (`ownkb:claim:c001873`, keeping `mac_address` strictly 6 octets), `DIM 16` into `firmware_version_tuple`, `DIM 66` into `zigbee_product_index` / `zigbee_device_type_code` / `zigbee_device_type` (`ZIGBEE_DEVICE_TYPES` per `openwebnet4j` `OpenDeviceType`, `ownkb:claim:c001851`, `c001954`) / `is_zigbee_product_unreachable`, and `DIM 67` into `network_product_count`.
+  - `OWNLightingEvent.is_toggle` decodes ZigBee toggle `WHAT 32` (`ownkb:claim:c001462`, `c001483`, `r000288`) with `is_on=None`; `normalize_where` preserves leading `"00"` on `#9` ZigBee addresses.
+- **Serial Transport (`AsyncSerialTransport` on `serialx>=1.8.2`)**:
+  - Migrated from `pyserial-asyncio` to `serialx>=1.8.2` (`open_serial_connection(url=..., baudrate=..., exclusive=True)` with default modem-control lines), making serial support a core dependency (`[serial]` kept as a no-op compatibility alias).
+  - Added ZigBee connect/reconnect handshake (`*13*60*##` -> `*#13**16##` -> `*13*66*##` -> `*#13**12##`), bounded-backoff reconnect supervisor with `on_state_change`, `raw_frame_callback` wire tap, `timeout` parameter on `OWNTransport.send`/`AsyncTcpTransport.send`/`AsyncSerialTransport.send`, `EBUSY` (`reason="port_busy"`), `*#*6##` + `*#*0##` BUSY detection (optional `busy_retry`), strict `DIM 66`/`DIM 73` pending-reply matching, unsolicited `DIM 67` supervisor restoration (`ownkb:claim:c001825`), and firmware-gated `fw <= (1, 2, 3)` / RX-only `fw <= (1, 2, 0)` quirks (`openwebnet4j` `USBConnector`).
+
 ## [2.0.1] - 2026-11-17
 
 ### Changed

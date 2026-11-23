@@ -24,10 +24,11 @@ classifiers = [
 dependencies = [
     "aiohttp",
     "defusedxml",
+    "serialx>=1.8.2",
 ]
 
 [project.optional-dependencies]
-serial = ["pyserial-asyncio>=0.6"]
+serial = []  # backward-compatible no-op alias; serialx is a core dependency
 test = [
     "pytest<10",
     "pytest-asyncio>=0.23",
@@ -82,7 +83,6 @@ warn_unused_configs = true
 [[tool.mypy.overrides]]
 module = [
     "defusedxml.*",
-    "serial_asyncio.*",
 ]
 ignore_missing_imports = true
 

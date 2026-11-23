@@ -35,10 +35,12 @@ class OWNNackError(OWNError):
         frame: str = "",
         responses: list[Any] | None = None,
         reason: str | None = "nack",
+        busy: bool = False,
     ) -> None:
         super().__init__(message, reason=reason)
         self.frame = frame
         self.responses: list[Any] = list(responses) if responses is not None else []
+        self.busy: bool = busy
 
 
 class OWNProtocolError(OWNError):
