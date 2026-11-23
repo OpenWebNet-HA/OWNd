@@ -7,7 +7,7 @@ import contextlib
 import contextvars
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from .gateway import OWNGateway
@@ -171,10 +171,10 @@ class OWNCommandSession(OWNSession):
             raise
         finally:
             _ACTIVE_CONNECT.reset(token)
-        if result is not None and result.get("Success", False):
+        if isinstance(result, Mapping) and result.get("Success", False):
             if seq == self._connect_seq:
                 self._clear_refused_login()
-        elif result is not None:
+        elif isinstance(result, Mapping):
             self._hold_refused_login(result.get("Message"), seq)
         return result
 
@@ -241,7 +241,7 @@ class OWNCommandSession(OWNSession):
                 await connection.connect(raise_on_error=True)
                 return await connection.send(message, raise_on_error=True)
             result = await connection.connect()
-            if result is None or not result.get("Success", False):
+            if not isinstance(result, Mapping) or not result.get("Success", False):
                 return None
             return await connection.send(message)
         finally:
@@ -267,7 +267,7 @@ class OWNCommandSession(OWNSession):
         connection = cls(gateway=gateway, logger=logger)
         try:
             result = await connection.connect()
-            if result is None or not result.get("Success", False):
+            if not isinstance(result, Mapping) or not result.get("Success", False):
                 return False
             response = await connection.send(
                 "*#13**15##", is_status_request=True
@@ -601,7 +601,7 @@ class OWNCommandSession(OWNSession):
                     self._connect_max_attempts_override = None
 
                 if (
-                    result is None
+                    not isinstance(result, Mapping)
                     or not result.get("Success", False)
                     or self._stream_reader is None
                     or self._stream_writer is None

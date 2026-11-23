@@ -119,4 +119,4 @@ jobs:
           python -m pip install pytest-homeassistant-custom-component pytest-cov pytest-socket time-machine python-dateutil pytz freezegun requests-mock respx paho-mqtt tqdm jsonschema pyyaml packaging
       - name: MyHOME test suite against this checkout
         working-directory: MyHOME
-        run: PYTHONPATH=. python -m pytest tests -q -p no:cacheprovider
+        run: PYTHONPATH=. python -m pytest tests -q -p no:cacheprovider -W error::RuntimeWarning

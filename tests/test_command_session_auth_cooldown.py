@@ -11,9 +11,11 @@ authentication service have to be disabled for 60 seconds" (Hmac Specification
 from __future__ import annotations
 
 import asyncio
+import gc
 import logging
 import socket
 import traceback
+import warnings
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -683,3 +685,42 @@ async def test_superseded_send_connect_failure_does_not_close_newer_live_session
             assert isinstance(answer, list)
             assert [str(m) for m in answer] == [MODEL_REPLY.decode()]
             await session.close()
+
+
+@pytest.mark.asyncio
+async def test_send_to_gateway_bare_async_mock_connect_no_runtime_warning() -> None:
+    """A bare AsyncMock replacing ``connect()`` must neither leak an unawaited
+    coroutine warning nor pass the ``Success`` check by coroutine truthiness.
+    """
+    gateway = OWNGateway({"address": "127.0.0.1", "port": 20000})
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with (
+            patch.object(OWNCommandSession, "connect", new_callable=AsyncMock),
+            patch.object(OWNCommandSession, "send", new_callable=AsyncMock) as mock_send,
+        ):
+            result = await OWNCommandSession.send_to_gateway("*1*1*12##", gateway)
+            gc.collect()
+    assert result is None
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_connect_and_probe_bare_async_mock_no_runtime_warning() -> None:
+    """``connect()`` and ``probe_gateway()`` also guard non-Mapping mock results."""
+    gateway = OWNGateway({"address": "127.0.0.1", "port": 20000})
+    session = OWNCommandSession(gateway)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with patch("OWNd.connection.session.OWNSession.connect", new_callable=AsyncMock):
+            res = await session.connect()
+        with (
+            patch.object(OWNCommandSession, "connect", new_callable=AsyncMock),
+            patch.object(OWNCommandSession, "send", new_callable=AsyncMock) as mock_send,
+        ):
+            alive = await OWNCommandSession.probe_gateway(gateway)
+        gc.collect()
+    assert res is not None
+    assert session._refused_login_reason is None
+    assert alive is False
+    mock_send.assert_not_called()
