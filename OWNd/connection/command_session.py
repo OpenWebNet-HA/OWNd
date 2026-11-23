@@ -190,7 +190,13 @@ class OWNCommandSession(OWNSession):
         active = _ACTIVE_CONNECT.get()
         if active is not None and active[0] is self:
             self._hold_refused_login(error.reason, active[1])
-        super()._notify_auth_error(error)
+        # Clear _ACTIVE_CONNECT across user callbacks so tasks spawned inside
+        # on_auth_error (e.g. test_connection) do not inherit this connect()'s tag.
+        token = _ACTIVE_CONNECT.set(None)
+        try:
+            super()._notify_auth_error(error)
+        finally:
+            _ACTIVE_CONNECT.reset(token)
 
     def _login_target(self) -> tuple[object, object, object] | None:
         """The address, port and password a login is refused for."""
@@ -547,10 +553,7 @@ class OWNCommandSession(OWNSession):
                 ):
                     # The address, port or password changed since the refusal:
                     # log in again at once.
-                    self._refused_login_reason = None
-                    self._refused_login_target = None
-                    self._last_reconnect_failure = None
-                    self._refused_login_seq = None
+                    self._clear_refused_login()
                 elif (
                     refused_reason is not None
                     and self._last_reconnect_failure is not None
@@ -590,6 +593,7 @@ class OWNCommandSession(OWNSession):
                         raise err
                     return None
 
+                seq_before = self._connect_seq
                 self._connect_max_attempts_override = 1
                 try:
                     result = await self.connect()
@@ -602,13 +606,15 @@ class OWNCommandSession(OWNSession):
                     or self._stream_reader is None
                     or self._stream_writer is None
                 ):
-                    self._last_reconnect_failure = time.monotonic()
                     err = self._last_error or OWNConnectionError(
                         f"Command session unavailable; message `{frame}` not sent",
                         reason="connection_unavailable",
                     )
-                    await self.close()
-                    self._last_error = err
+                    # Do not re-arm cooldown or close a newer concurrent connect()'s live socket.
+                    if self._connect_seq <= seq_before + 1:
+                        self._last_reconnect_failure = time.monotonic()
+                        await self.close()
+                        self._last_error = err
                     self._logger.warning(
                         "%s Command session unavailable; message `%s` not sent.",
                         self._log_id,

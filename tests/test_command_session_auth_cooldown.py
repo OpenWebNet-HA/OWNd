@@ -643,3 +643,43 @@ async def test_concurrent_test_connection_failure_during_connect_does_not_arm_ho
             conn_result = await conn_task
             assert conn_result is not None and conn_result["Success"] is True
             assert session._refused_login_reason is None
+
+
+@pytest.mark.asyncio
+async def test_superseded_send_connect_failure_does_not_close_newer_live_session() -> None:
+    """When an older ``send()``'s ``connect()`` fails after a newer ``connect()`` succeeded
+    (e.g. triggered from ``on_auth_error``), ``_locked_send`` must neither close the newer live
+    socket nor re-arm the 2 s reconnect cooldown.
+    """
+    session = numeric_session()
+    retry: list[asyncio.Task[object]] = []
+
+    def on_auth_error(_err: object) -> None:
+        assert session.gateway is not None
+        session.gateway.password = "99999"
+        retry.append(asyncio.create_task(session.connect()))
+
+    session.on_auth_error = on_auth_error
+
+    async with stream_pair() as first, stream_pair() as second:
+        first[2].sendall(LOGIN_REFUSED)
+        second[2].sendall(LOGIN_ACCEPTED_THEN_REPLY)
+
+        async def close_after_the_retry() -> None:
+            retried = await asyncio.wait_for(asyncio.shield(retry[0]), 1)
+            assert isinstance(retried, dict)
+            assert retried["Success"] is True
+
+        with (
+            patch(OPEN, new=AsyncMock(side_effect=[first[:2], second[:2]])),
+            patch.object(first[1], "wait_closed", close_after_the_retry),
+        ):
+            res = await session.send("*#13**15##", is_status_request=True, raise_on_error=False)
+            assert res is None
+            # Newer session is still open and cooldown was NOT re-armed!
+            assert session.is_open is True
+            assert session._last_reconnect_failure is None
+            answer = await session.send("*#13**15##", is_status_request=True)
+            assert isinstance(answer, list)
+            assert [str(m) for m in answer] == [MODEL_REPLY.decode()]
+            await session.close()
