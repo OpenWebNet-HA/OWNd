@@ -560,3 +560,86 @@ async def test_a_refusal_does_not_come_back_after_a_later_login_succeeded() -> N
 
 def test_a_session_without_a_gateway_has_no_login_target() -> None:
     assert OWNCommandSession(gateway=None, logger=MagicMock())._login_target() is None
+
+
+@pytest.mark.asyncio
+async def test_stale_overlapping_connect_refusal_does_not_poison_newer_connect() -> None:
+    """An older ``connect()`` whose auth refusal arrives after a newer ``connect()`` started
+    must not arm a hold under the newer ``connect()``'s credentials.
+    """
+    session = numeric_session()
+    gateway = session.gateway
+    assert gateway is not None
+
+    first_started = asyncio.Event()
+    allow_first_to_fail = asyncio.Event()
+
+    async with stream_pair() as first, stream_pair() as second, stream_pair() as third:
+        second[2].sendall(LOGIN_ACCEPTED_THEN_REPLY)
+        third[2].sendall(LOGIN_ACCEPTED_THEN_REPLY)
+
+        async def open_connection(*_args: object) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+            if opened.await_count == 1:
+                first_started.set()
+                await allow_first_to_fail.wait()
+                first[2].sendall(LOGIN_REFUSED)
+                return first[:2]
+            if opened.await_count == 2:
+                return second[:2]
+            return third[:2]
+
+        with patch(OPEN, new=AsyncMock(side_effect=open_connection)) as opened:
+            stale = asyncio.create_task(session.connect())
+            await first_started.wait()
+            gateway.password = "67890"
+            newer = asyncio.create_task(session.connect())
+            newer_result = await newer
+            assert newer_result is not None and newer_result["Success"] is True
+
+            allow_first_to_fail.set()
+            stale_result = await stale
+            assert stale_result is not None and stale_result["Message"] == "password_error"
+            assert session._refused_login_reason is None
+            assert session._refused_login_target is None
+
+            await session.close()
+            answer = await session.send("*#13**15##", is_status_request=True)
+
+    assert opened.await_count == 3
+    assert isinstance(answer, list)
+    assert [str(message) for message in answer] == [MODEL_REPLY.decode()]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_test_connection_failure_during_connect_does_not_arm_hold() -> None:
+    """A ``test_connection()`` auth refusal in another task while ``connect()`` is in flight
+    must not arm the ``SEND_AUTH_COOLDOWN`` hold.
+    """
+    session = numeric_session()
+    connect_waiting = asyncio.Event()
+    allow_connect = asyncio.Event()
+
+    async with stream_pair() as conn_pair, stream_pair() as probe_pair:
+        conn_pair[2].sendall(LOGIN_ACCEPTED_THEN_REPLY)
+        probe_pair[2].sendall(LOGIN_REFUSED)
+
+        async def open_connection(*_args: object) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
+            if opened.await_count == 1:
+                connect_waiting.set()
+                await allow_connect.wait()
+                return conn_pair[:2]
+            return probe_pair[:2]
+
+        with patch(OPEN, new=AsyncMock(side_effect=open_connection)) as opened:
+            conn_task = asyncio.create_task(session.connect())
+            await connect_waiting.wait()
+
+            probe_result = await session.test_connection()
+            assert probe_result is not None and probe_result["Success"] is False
+            assert session._refused_login_reason is None
+            assert session._last_reconnect_failure is None
+
+            allow_connect.set()
+            conn_result = await conn_task
+            assert conn_result is not None and conn_result["Success"] is True
+            assert session._refused_login_reason is None

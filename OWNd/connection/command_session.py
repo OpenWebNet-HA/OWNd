@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import logging
 import time
 from collections.abc import Callable
@@ -108,6 +109,14 @@ SEND_RECONNECT_COOLDOWN = 2.0
 # gateway's address, port or password changed.
 SEND_AUTH_COOLDOWN = float(RECONNECT_PAUSE_FATAL)
 
+# Per-task active ``OWNCommandSession.connect()`` call ``(session, seq)`` so
+# ``_notify_auth_error`` attributes a refusal strictly to the ``connect()``
+# running in the current task (never to an overlapping ``connect()`` or a
+# concurrent ``test_connection()``).
+_ACTIVE_CONNECT: contextvars.ContextVar[tuple[OWNCommandSession, int] | None] = (
+    contextvars.ContextVar("_ACTIVE_CONNECT", default=None)
+)
+
 
 class OWNCommandSession(OWNSession):
     def __init__(
@@ -138,29 +147,34 @@ class OWNCommandSession(OWNSession):
         self._refused_login_target: tuple[object, object, object] | None = None
         # Number of the latest connect() started on this session.
         self._connect_seq: int = 0
-        # How many connect() calls are running.
-        self._connects_in_flight: int = 0
         # The connect() whose refusal the hold records.
         self._refused_login_seq: int | None = None
+
+    def _clear_refused_login(self) -> None:
+        """Clear any recorded login-refusal hold."""
+        self._last_reconnect_failure = None
+        self._refused_login_reason = None
+        self._refused_login_target = None
+        self._refused_login_seq = None
 
     async def connect(
         self, *, raise_on_error: bool = False
     ) -> dict[str, Any] | None:
         self._connect_seq += 1
         seq = self._connect_seq
-        self._last_reconnect_failure = None
-        self._refused_login_reason = None
-        self._refused_login_target = None
-        self._refused_login_seq = None
-        self._connects_in_flight += 1
+        self._clear_refused_login()
+        token = _ACTIVE_CONNECT.set((self, seq))
         try:
             result = await super().connect(raise_on_error=raise_on_error)
         except OWNError as error:
             self._hold_refused_login(error.reason, seq)
             raise
         finally:
-            self._connects_in_flight -= 1
-        if result is not None and not result.get("Success", False):
+            _ACTIVE_CONNECT.reset(token)
+        if result is not None and result.get("Success", False):
+            if seq == self._connect_seq:
+                self._clear_refused_login()
+        elif result is not None:
             self._hold_refused_login(result.get("Message"), seq)
         return result
 
@@ -169,10 +183,13 @@ class OWNCommandSession(OWNSession):
 
         The hold names the address, port and password the gateway object
         holds at that moment (what the refused negotiation just used).
-        Outside a ``connect()`` (the parent's ``test_connection()``) nothing is held, as before.
+        Outside a ``connect()`` in this task (e.g. ``test_connection()``)
+        nothing is held, and an overlapping older ``connect()`` never
+        poisons a newer one.
         """
-        if self._connects_in_flight:
-            self._hold_refused_login(error.reason, self._connect_seq)
+        active = _ACTIVE_CONNECT.get()
+        if active is not None and active[0] is self:
+            self._hold_refused_login(error.reason, active[1])
         super()._notify_auth_error(error)
 
     def _login_target(self) -> tuple[object, object, object] | None:
