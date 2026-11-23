@@ -25,7 +25,7 @@ from ..exceptions import (
     OWNTimeoutError,
 )
 from ..message import OWNGatewayCommand, OWNGatewayEvent, OWNMessage, OWNSignaling
-from ..message.base import _has_zigbee_context
+from ..message.base import OWNEvent, _has_zigbee_context
 from ..profiles import Legrand3578Profile
 from .base import OWNTransport
 
@@ -33,6 +33,8 @@ SEPARATOR = b"##"
 DEFAULT_BAUDRATE = 19200
 BUSY_RETRY_DELAY = 0.5
 BUSY_RETRY_MAX_ATTEMPTS = 3
+DIM66_QUIET_WINDOW = 0.09
+LATE_DIM66_ACK_GUARD = 0.05
 RECONNECT_BACKOFF_STEPS: tuple[float, ...] = (1.0, 2.0, 4.0, 8.0, 10.0)
 RawFrameCallback = Callable[[Literal["rx", "tx"], str], Any]
 
@@ -58,6 +60,7 @@ class AsyncSerialTransport(OWNTransport):
         busy_retry: bool = False,
         handshake: bool | None = None,
         reconnect: bool = True,
+        auto_restore_supervisor: bool = True,
         on_state_change: Callable[[bool], Any] | None = None,
         raw_frame_callback: RawFrameCallback | None = None,
     ) -> None:
@@ -70,6 +73,7 @@ class AsyncSerialTransport(OWNTransport):
             _has_zigbee_context(self._gateway) if handshake is None else handshake
         )
         self._reconnect = reconnect
+        self._auto_restore_supervisor = auto_restore_supervisor
         self._on_state_change = on_state_change
         self._raw_frame_callback: RawFrameCallback | None = raw_frame_callback
 
@@ -87,6 +91,8 @@ class AsyncSerialTransport(OWNTransport):
         self._pending_busy = False
         self._pending_nack = False
         self._scan_pending_supervisor = False
+        self._dim66_quiet_handle: asyncio.TimerHandle | None = None
+        self._orphan_dim66_ack_until: float = 0.0
 
         self._firmware_version: str | None = None
         self._firmware_tuple: tuple[int, int, int] | None = None
@@ -333,6 +339,7 @@ class AsyncSerialTransport(OWNTransport):
                     "%s Serial connection lost: %s", self.log_id, error
                 )
         finally:
+            self._cancel_dim66_quiet_window()
             self._set_connected(False)
             writer = self._writer
             if writer is not None:
@@ -343,35 +350,73 @@ class AsyncSerialTransport(OWNTransport):
             if not self._stopping and self._auto_reconnect_enabled:
                 self._reconnect_task = asyncio.create_task(self._reconnect_loop())
 
+    def _cancel_dim66_quiet_window(self) -> None:
+        handle = self._dim66_quiet_handle
+        self._dim66_quiet_handle = None
+        if handle is not None:
+            handle.cancel()
+
+    def _finish_dim66_quiet_window(
+        self,
+        target_future: asyncio.Future[list[OWNMessage | str] | bool | None],
+    ) -> None:
+        self._dim66_quiet_handle = None
+        if target_future is self._pending_future and not target_future.done():
+            target_future.set_result(list(self._pending_frames) or True)
+
     def _apply_rx_quirks(
         self, raw_frame: str, parsed: OWNMessage | None
     ) -> OWNMessage | None:
-        """Apply conservative RX-only WHO 2 Up/Down swap for ``fw <= (1, 2, 0)``."""
+        """Apply bidirectional WHO 2 Up/Down swap on RX for ``fw <= (1, 2, 0)``."""
         if (
             self._firmware_tuple is not None
             and self._firmware_tuple <= (1, 2, 0)
             and parsed is not None
             and parsed.who == 2
             and parsed.dimension is None
+            and not parsed.what_param
             and parsed.what in (1, 2)
         ):
             swapped_what = 2 if parsed.what == 1 else 1
             rewritten = re.sub(
-                rf"^\*2\*{parsed.what}(?=[*#])",
-                f"*2*{swapped_what}",
+                rf"^\*2\*{parsed.what}\*",
+                f"*2*{swapped_what}*",
                 raw_frame,
                 count=1,
             )
             return self._parse_frame(rewritten)
         return parsed
 
+    def _apply_tx_quirks(self, text: str, msg_obj: OWNMessage) -> str:
+        """Apply bidirectional WHO 2 Up/Down swap on TX for ``fw <= (1, 2, 0)``."""
+        if (
+            self._firmware_tuple is not None
+            and self._firmware_tuple <= (1, 2, 0)
+            and msg_obj.who == 2
+            and msg_obj.dimension is None
+            and not msg_obj.what_param
+            and msg_obj.what in (1, 2)
+        ):
+            swapped_what = 2 if msg_obj.what == 1 else 1
+            return re.sub(
+                rf"^\*2\*{msg_obj.what}\*",
+                f"*2*{swapped_what}*",
+                text,
+                count=1,
+            )
+        return text
+
     def _matches_status_reply_quirk(
         self, request: OWNMessage | None, parsed: OWNMessage | None
     ) -> bool:
-        """True when a WHO 1/2 status frame completes a pending request on ``fw <= 1.2.3``."""
+        """True when a WHO 1/2 status frame completes a pending status request on ``fw <= 1.2.3``."""
         if request is None or parsed is None:
             return False
-        if request.who not in (1, 2) or not request.is_request:
+        if (
+            request.who not in (1, 2)
+            or not request.is_status_request
+            or parsed.dimension is not None
+        ):
             return False
         return (
             parsed.who == request.who
@@ -397,10 +442,11 @@ class AsyncSerialTransport(OWNTransport):
                 if request.dimension_param
                 else (request.dimension_value[0] if request.dimension_value else None)
             )
-            if req_idx is not None:
-                if len(parsed.dimension_value) >= 2:
-                    return parsed.dimension_value[0] == req_idx
-                return parsed.dimension_param[:1] == [req_idx]
+            if req_idx is not None and req_idx.isascii() and req_idx.isdigit():
+                parsed_idx = getattr(parsed, "zigbee_product_index", None)
+                if isinstance(parsed_idx, int):
+                    return parsed_idx == int(req_idx)
+                return False
             if request.zigbee_device_id is not None:
                 return parsed.zigbee_device_id == request.zigbee_device_id
             return (
@@ -432,6 +478,27 @@ class AsyncSerialTransport(OWNTransport):
         pending = self._pending_future
 
         if isinstance(parsed, OWNSignaling):
+            if self._orphan_dim66_ack_until > 0.0:
+                now_mono = asyncio.get_running_loop().time()
+                orphan_deadline = self._orphan_dim66_ack_until
+                if now_mono < orphan_deadline:
+                    if parsed.is_busy_nack():
+                        self._orphan_dim66_ack_until = now_mono + LATE_DIM66_ACK_GUARD
+                        self._logger.debug(
+                            "%s Absorbing trailing BUSY for late DIM 66 frame.",
+                            self.log_id,
+                        )
+                        return
+                    self._orphan_dim66_ack_until = 0.0
+                    if parsed.is_ack() or parsed.is_nack():
+                        self._logger.debug(
+                            "%s Absorbing trailing signaling `%s` for late DIM 66 frame.",
+                            self.log_id,
+                            raw_frame,
+                        )
+                        return
+                else:
+                    self._orphan_dim66_ack_until = 0.0
             if pending is None or pending.done():
                 self._logger.debug(
                     "%s Ignoring stray signaling frame `%s`.", self.log_id, raw_frame
@@ -441,25 +508,46 @@ class AsyncSerialTransport(OWNTransport):
                 self._pending_busy = True
                 return
             if parsed.is_ack():
+                if (
+                    self._pending_request is not None
+                    and self._pending_request.who == 13
+                    and self._pending_request.dimension == 66
+                    and DIM66_QUIET_WINDOW > 0
+                ):
+                    self._cancel_dim66_quiet_window()
+                    self._dim66_quiet_handle = asyncio.get_running_loop().call_later(
+                        DIM66_QUIET_WINDOW,
+                        self._finish_dim66_quiet_window,
+                        pending,
+                    )
+                    return
                 pending.set_result(list(self._pending_frames) or True)
             elif parsed.is_nack():
+                self._cancel_dim66_quiet_window()
                 self._pending_nack = True
                 pending.set_result(None)
             else:
+                self._cancel_dim66_quiet_window()
                 pending.set_result(None)
             return
 
         is_status_frame = raw_frame.startswith("*") and not raw_frame.startswith("*#")
         if is_status_frame:
             parsed = self._apply_rx_quirks(raw_frame, parsed)
+            is_reply = (
+                pending is not None
+                and not pending.done()
+                and self._matches_status_reply_quirk(self._pending_request, parsed)
+            )
+            if is_reply and isinstance(parsed, OWNEvent):
+                parsed._mark_status_reply()
             message: OWNMessage | str = parsed if parsed is not None else raw_frame
             self.notify_listeners(message)
             if (
-                self._firmware_tuple is not None
-                and self._firmware_tuple <= (1, 2, 3)
+                is_reply
                 and pending is not None
-                and not pending.done()
-                and self._matches_status_reply_quirk(self._pending_request, parsed)
+                and self._firmware_tuple is not None
+                and self._firmware_tuple <= (1, 2, 3)
             ):
                 pending.set_result(list(self._pending_frames) or True)
             return
@@ -469,6 +557,8 @@ class AsyncSerialTransport(OWNTransport):
             and not pending.done()
             and self._matches_pending_request(self._pending_request, parsed)
         ):
+            self._orphan_dim66_ack_until = 0.0
+            self._cancel_dim66_quiet_window()
             if len(self._pending_frames) >= COMMAND_RESPONSE_MAX_FRAMES:
                 pending.set_exception(
                     TimeoutError(
@@ -478,6 +568,18 @@ class AsyncSerialTransport(OWNTransport):
                 return
             self._pending_frames.append(parsed if parsed is not None else raw_frame)
             return
+
+        if (
+            parsed is not None
+            and parsed.who == 13
+            and parsed.dimension == 66
+            and not parsed.is_request
+            and LATE_DIM66_ACK_GUARD > 0
+        ):
+            with contextlib.suppress(RuntimeError):
+                self._orphan_dim66_ack_until = (
+                    asyncio.get_running_loop().time() + LATE_DIM66_ACK_GUARD
+                )
 
         if (
             self._scan_pending_supervisor
@@ -575,16 +677,21 @@ class AsyncSerialTransport(OWNTransport):
                 should_retry = False
 
                 try:
-                    self._emit_raw_frame("tx", text)
+                    wire_text = self._apply_tx_quirks(text, msg_obj)
+                    self._emit_raw_frame("tx", wire_text)
                     if msg_obj.who == 13 and msg_obj.what == 66:
                         self._scan_pending_supervisor = False
-                    self._writer.write(text.encode())
+                    self._writer.write(wire_text.encode())
                     await self._writer.drain()
                     result = await asyncio.wait_for(
                         self._pending_future, timeout=effective_timeout
                     )
                     if result is not None:
-                        if msg_obj.who == 13 and msg_obj.what == 65:
+                        if (
+                            self._auto_restore_supervisor
+                            and msg_obj.who == 13
+                            and msg_obj.what == 65
+                        ):
                             self._scan_pending_supervisor = True
                         return result
 
@@ -676,6 +783,7 @@ class AsyncSerialTransport(OWNTransport):
                         raise err from error
                     return None
                 finally:
+                    self._cancel_dim66_quiet_window()
                     self._pending_future = None
                     self._pending_request = None
                     self._pending_frames = []
@@ -691,6 +799,8 @@ class AsyncSerialTransport(OWNTransport):
         self._stopping = True
         self._auto_reconnect_enabled = False
         self._scan_pending_supervisor = False
+        self._orphan_dim66_ack_until = 0.0
+        self._cancel_dim66_quiet_window()
 
         reconnect_task = self._reconnect_task
         self._reconnect_task = None

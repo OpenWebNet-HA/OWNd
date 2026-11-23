@@ -760,7 +760,7 @@ async def test_serial_transport_busy_nack_and_retry():
 
 @pytest.mark.asyncio
 async def test_serial_transport_firmware_quirks_and_supervisor_restore():
-    """Verify fw <= 1.2.3 synthesized ACK, fw <= 1.2.0 RX-only WHO 2 swap, and DIM 67 restore."""
+    """Verify fw <= 1.2.3 synthesized ACK + is_status_reply, fw <= 1.2.0 TX/RX WHO 2 swap, and DIM 67 restore."""
     tapped: list[tuple[str, str]] = []
     received: list[OWNMessage | str] = []
 
@@ -777,9 +777,13 @@ async def test_serial_transport_firmware_quirks_and_supervisor_restore():
         if tx == "*#2*702053501#9##":
             # fw <= 1.2.0 swaps 1 <-> 2 on RX, and fw <= 1.2.3 synthesizes missing ACK!
             return ["*2*1*702053501#9##"]
-        if tx == "*2*1*702053501#9##":
-            # TX is NOT swapped; RX 2 becomes 1
+        if tx == "*#1*702053501#9##":
+            return ["*1*1*702053501#9##"]
+        if tx == "*2*2*702053501#9##":
+            # TX *2*1*... was swapped to *2*2*... on wire; RX *2*2*... swaps back to *2*1*...
             return ["*2*2*702053501#9##", "*#*1##"]
+        if tx == "*2*1*702053501#9##":
+            return ["*2*1*702053501#9##", "*#*1##"]
         if tx == "*13*65*##":
             return ["*#*1##"]
         return ["*#*1##"]
@@ -789,14 +793,40 @@ async def test_serial_transport_firmware_quirks_and_supervisor_restore():
     transport._writer = pair  # type: ignore[assignment]
     reader_task = asyncio.create_task(transport._read_loop())
     try:
-        # 1. fw <= 1.2.3 synthesized ACK + fw <= 1.2.0 RX swap (1 -> 2)
+        # 1. fw <= 1.2.3 synthesized ACK + fw <= 1.2.0 RX swap (1 -> 2) + is_status_reply=True
         res = await transport.send("*#2*702053501#9##", is_status_request=True)
         assert res is True
         assert len(received) == 1
         assert str(received[0]) == "*2*2*702053501#9##"
+        assert getattr(received[0], "is_status_reply", False) is True
         assert ("rx", "*2*1*702053501#9##") in tapped  # pre-rewrite raw wire token
 
-        # 2. TX *2*1*... is sent verbatim (not swapped); RX *2*2*... swaps to *2*1*...
+        # WHO 1 status reply tags is_status_reply=True (1% on ZigBee dimmer)
+        assert await transport.send("*#1*702053501#9##", is_status_request=True) is True
+        assert getattr(received[-1], "is_status_reply", False) is True
+        assert getattr(received[-1], "zigbee_status_brightness_percent", None) == 1
+
+        # Unsolicited WHO 1 frame has is_status_reply=False
+        pair.push_rx(b"*1*1*702053501#9##")
+        await asyncio.sleep(0.02)
+        assert getattr(received[-1], "is_status_reply", True) is False
+
+        # 2. Bidirectional TX & RX swap on fw <= 1.2.0 (*2*1 -> wire *2*2, *2*2 -> wire *2*1; *2*0 untouched)
+        assert await transport.send("*2*1*702053501#9##") is True
+        assert b"*2*2*702053501#9##" in pair.written
+        assert ("tx", "*2*2*702053501#9##") in tapped
+        assert str(received[-1]) == "*2*1*702053501#9##"
+
+        assert await transport.send("*2*2*702053501#9##") is True
+        assert b"*2*1*702053501#9##" in pair.written
+        assert str(received[-1]) == "*2*2*702053501#9##"
+
+        assert await transport.send("*2*0*702053501#9##") is True
+        assert b"*2*0*702053501#9##" in pair.written
+
+        # fw > 1.2.0 does NOT swap WHO 2 TX or RX
+        transport._firmware_tuple = (1, 2, 3)
+        pair.written.clear()
         assert await transport.send("*2*1*702053501#9##") is True
         assert b"*2*1*702053501#9##" in pair.written
         assert str(received[-1]) == "*2*1*702053501#9##"
@@ -810,6 +840,183 @@ async def test_serial_transport_firmware_quirks_and_supervisor_restore():
         pair.push_rx(b"*#13**67*3##")
         await asyncio.sleep(0.05)
         assert pair.written.count(b"*13*66*##") == sup_count
+
+        # 4. auto_restore_supervisor=False suppresses internal *13*66*## after scan
+        transport._auto_restore_supervisor = False
+        assert await transport.send(OWNGatewayCommand.scan_network()) is True
+        pair.push_rx(b"*#13**67*3##")
+        await asyncio.sleep(0.05)
+        assert pair.written.count(b"*13*66*##") == sup_count
+    finally:
+        transport._stopping = True
+        reader_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await reader_task
+
+
+@pytest.mark.asyncio
+async def test_serial_transport_dim66_coalescing_offline_nack_and_orphan_ack_guard():
+    """Verify multi-unit DIM 66 coalescing, fw 1.2.3 offline NACK, and late orphan-ACK absorption."""
+    listener_msgs: list[OWNMessage | str] = []
+    transport = AsyncSerialTransport(
+        "/dev/ttyUSB0",
+        gateway=Legrand3578Profile(),
+    )
+    transport.register_listener(listener_msgs.append)
+    transport._connected = True
+
+    pair = _FakeAsyncSerialPair(lambda _tx: [])
+    transport._reader = pair  # type: ignore[assignment]
+    transport._writer = pair  # type: ignore[assignment]
+    reader_task = asyncio.create_task(transport._read_loop())
+    try:
+        # 1. 2-unit switch: unit 01 + ACK, then +30ms unit 02 + ACK -> both coalesced into one response!
+        async def _feed_two_units() -> None:
+            await asyncio.sleep(0.01)
+            pair.push_rx(b"*#13*700020001#9*66*1*256##")
+            pair.push_rx(b"*#*1##")
+            await asyncio.sleep(0.03)
+            pair.push_rx(b"*#13*700020002#9*66*1*256##")
+            pair.push_rx(b"*#*1##")
+
+        feeder = asyncio.create_task(_feed_two_units())
+        res_multi = await transport.send(
+            OWNGatewayCommand.get_product_info(1), is_status_request=True
+        )
+        await feeder
+        assert isinstance(res_multi, list) and len(res_multi) == 2
+        assert [e.zigbee_unit for e in res_multi] == ["01", "02"]  # type: ignore[union-attr]
+
+        # 2. Offline fw 1.2.3 reply (*#13*700010000#9*66*2## + *#*0##) resolves immediately
+        # and attaches the unreachable OWNGatewayEvent to OWNNackError.responses!
+        async def _feed_offline_nack() -> None:
+            await asyncio.sleep(0.01)
+            pair.push_rx(b"*#13*700010000#9*66*2##")
+            pair.push_rx(b"*#*0##")
+
+        feeder_off = asyncio.create_task(_feed_offline_nack())
+        with pytest.raises(OWNNackError) as nack_exc:
+            await transport.send(
+                OWNGatewayCommand.get_product_info(2),
+                is_status_request=True,
+                raise_on_error=True,
+            )
+        await feeder_off
+        assert len(nack_exc.value.responses) == 1
+        off_ev = nack_exc.value.responses[0]
+        assert isinstance(off_ev, OWNGatewayEvent)
+        assert off_ev.is_zigbee_product_unreachable is True
+        assert off_ev.zigbee_product_index == 2
+
+        # Index request does not match unindexed product reply; stale quiet callback is a no-op
+        assert (
+            transport._matches_pending_request(
+                OWNGatewayCommand.get_product_info(0),
+                OWNMessage.parse("*#13*702053501#9*66*256##"),
+            )
+            is False
+        )
+        stale_fut: asyncio.Future[list[OWNMessage | str] | bool | None] = (
+            asyncio.get_running_loop().create_future()
+        )
+        transport._finish_dim66_quiet_window(stale_fut)
+        assert not stale_fut.done()
+
+        # 3. Late uncollected DIM 66 arriving while an unrelated command is in flight:
+        #    the DIM 66 goes to listeners, its trailing *#*1## is absorbed within 50ms,
+        #    and only the real command's *#*1## resolves send()!
+        async def _feed_late_dim66_during_cmd() -> None:
+            await asyncio.sleep(0.01)
+            # Late unit 03 from index 1 arrives while *1*1*700030001#9## is waiting for ACK
+            pair.push_rx(b"*#13*700020003#9*66*1*256##")
+            await asyncio.sleep(0.005)
+            pair.push_rx(b"*#*1##")  # orphan ACK -> must be absorbed!
+            await asyncio.sleep(0.02)
+            # Verify send_task is STILL waiting, then send real ACK
+            assert not cmd_task.done()
+            pair.push_rx(b"*#*1##")
+
+        cmd_task = asyncio.create_task(transport.send("*1*1*700030001#9##"))
+        feeder_late = asyncio.create_task(_feed_late_dim66_during_cmd())
+        assert await cmd_task is True
+        await feeder_late
+        assert any(
+            isinstance(m, OWNGatewayEvent) and m.zigbee_unit == "03"
+            for m in listener_msgs
+        )
+
+        # 4. Late uncollected offline DIM 66 + BUSY/NACK (*#*6## + *#*0##) neither NACKs an
+        #    in-flight command nor leaves the guard armed to swallow a subsequent real ACK!
+        async def _feed_late_offline_dim66_nack() -> None:
+            await asyncio.sleep(0.01)
+            pair.push_rx(b"*#13*700020000#9*66*1##")
+            await asyncio.sleep(0.003)
+            pair.push_rx(b"*#*6##")  # orphan BUSY -> absorbed & keeps guard alive
+            await asyncio.sleep(0.003)
+            pair.push_rx(b"*#*0##")  # orphan NACK -> absorbed & clears guard!
+            await asyncio.sleep(0.01)
+            assert not cmd_nack_guard_task.done()
+            pair.push_rx(b"*#*1##")  # real ACK for *1*1*700030001#9##
+
+        cmd_nack_guard_task = asyncio.create_task(transport.send("*1*1*700030001#9##"))
+        feeder_nack_guard = asyncio.create_task(_feed_late_offline_dim66_nack())
+        assert await cmd_nack_guard_task is True
+        await feeder_nack_guard
+
+        # Non-ACK/NACK signaling clears _orphan_dim66_ack_until without absorbing
+        pair.push_rx(b"*#13*700020000#9*66*1##")
+        await asyncio.sleep(0.005)
+        pair.push_rx(b"*99*0##")
+        await asyncio.sleep(0.005)
+        assert transport._orphan_dim66_ack_until == 0.0
+
+        # Unsolicited *1*1*... during an in-flight DIMENSION_REQUEST (*#1*...*1##) on fw <= 1.2.3
+        # must NOT be tagged is_status_reply=True or resolve the dimension request ahead of *#*0##!
+        transport._firmware_tuple = (1, 2, 3)
+
+        async def _feed_tap_before_dim1_nack() -> None:
+            await asyncio.sleep(0.01)
+            pair.push_rx(b"*1*1*700030001#9##")
+            await asyncio.sleep(0.01)
+            assert not dim1_task.done()
+            pair.push_rx(b"*#*0##")
+
+        dim1_task = asyncio.create_task(
+            transport.send("*#1*700030001#9*1##", is_status_request=True)
+        )
+        feeder_dim1 = asyncio.create_task(_feed_tap_before_dim1_nack())
+        assert await dim1_task is None
+        assert transport.last_error is not None and transport.last_error.reason == "nack"
+        await feeder_dim1
+        tap_events = [
+            m
+            for m in listener_msgs
+            if getattr(m, "who", None) == 1 and getattr(m, "what", None) == 1
+        ]
+        assert tap_events and getattr(tap_events[-1], "is_status_reply", True) is False
+
+        # 5. Expired orphan-ACK guard (>50ms) does not absorb a subsequent real ACK
+        pair.push_rx(b"*#13*700020004#9*66*1*256##")
+        await asyncio.sleep(0.07)  # > LATE_DIM66_ACK_GUARD (0.05s), no trailing ACK arrived
+        async def _ack_after_delay() -> None:
+            await asyncio.sleep(0.01)
+            pair.push_rx(b"*#*1##")
+
+        ack_task = asyncio.create_task(_ack_after_delay())
+        assert await transport.send("*1*0*700030001#9##") is True
+        await ack_task
+
+        # 6. Bootloader *13*12*## and *13*12## are refused as destructive_frame on serial send()
+        assert await transport.send("*13*12*##") is None
+        assert (
+            transport.last_error is not None
+            and transport.last_error.reason == "destructive_frame"
+        )
+        assert await transport.send("*13*12##") is None
+        assert (
+            transport.last_error is not None
+            and transport.last_error.reason == "destructive_frame"
+        )
     finally:
         transport._stopping = True
         reader_task.cancel()

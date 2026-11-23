@@ -28,6 +28,7 @@ from ..exceptions import (
 from ..message import (
     OWNMessage,
     OWNSignaling,
+    is_who13_boot_mode_frame,
     is_who18_dimension_52_crash_form,
     is_who22_bare_power_frame,
     is_who4_dimension_22_crash_form,
@@ -60,6 +61,13 @@ DESTRUCTIVE_WHO22_REASON = (
     "route_source / turn_off_atomic"
 )
 
+# Same treatment for WHO 13 WHAT 12 (*13*12*##), which switches the ZigBee USB
+# interface out of OpenWebNet into an STX/ETX bootloader protocol.
+DESTRUCTIVE_WHO13_BOOT_REASON = (
+    "WHO 13 WHAT 12 (*13*12*##) switches the ZigBee USB interface out of "
+    "OpenWebNet into raw STX/ETX bootloader mode"
+)
+
 
 def destructive_frame_reason(frame: str) -> str | None:
     """The refusal reason when ``frame`` is one every send path refuses, else ``None``.
@@ -67,7 +75,8 @@ def destructive_frame_reason(frame: str) -> str | None:
     The one classifier behind ``OWNCommandSession.send``, ``send_to_gateway``
     and ``AsyncSerialTransport.send`` (``AsyncTcpTransport.send`` goes through
     the session), so the paths cannot drift: the WHO 4 dimension 22 crash
-    forms, the WHO 18 dimension 52 crash forms and the bare WHO 22 power frame.
+    forms, the WHO 18 dimension 52 crash forms, the bare WHO 22 power frame,
+    and WHO 13 WHAT 12 boot mode.
     """
     if is_who4_dimension_22_crash_form(frame):
         return DESTRUCTIVE_FRAME_REASON
@@ -75,6 +84,8 @@ def destructive_frame_reason(frame: str) -> str | None:
         return DESTRUCTIVE_DIM52_REASON
     if is_who22_bare_power_frame(frame):
         return DESTRUCTIVE_WHO22_REASON
+    if is_who13_boot_mode_frame(frame):
+        return DESTRUCTIVE_WHO13_BOOT_REASON
     return None
 
 

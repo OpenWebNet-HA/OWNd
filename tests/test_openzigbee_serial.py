@@ -7,17 +7,24 @@ from pathlib import Path
 import pytest
 
 from OWNd.connection import OWNGateway
+from OWNd.connection.command_session import destructive_frame_reason
 from OWNd.exceptions import OWNNackError
 from OWNd.message import (
+    COARSE_PRESET_TO_PERCENT,
     OWNCommand,
     OWNEvent,
     OWNGatewayCommand,
     OWNGatewayEvent,
+    OWNLightingCommand,
     OWNLightingEvent,
     OWNMessage,
     OWNSignaling,
     ZIGBEE_DEVICE_TYPES,
+    ZIGBEE_PRESET_TO_PERCENT,
+    ZIGBEE_STATUS_WHAT_TO_PERCENT,
+    is_who13_boot_mode_frame,
     normalize_where,
+    percent_to_zigbee_brightness_preset,
 )
 from OWNd.profiles import (
     F454Profile,
@@ -132,8 +139,55 @@ def test_who13_zigbee_commands_and_builders() -> None:
         with pytest.raises(ValueError, match="non-negative integer"):
             OWNGatewayCommand.get_product_info(bad_idx)  # type: ignore[arg-type]
 
-    for invalid_frame in ("*1*1*##", "*2*1*##", "*13*99*##"):
+    # Expanded WHO 13 empty-WHERE lifecycle commands (12, 22, 30..34)
+    for what_code, log_word in (
+        (12, "boot mode"),
+        (22, "Resetting"),
+        (30, "Creating"),
+        (31, "Closing"),
+        (32, "Opening"),
+        (33, "Joining"),
+        (34, "Leaving"),
+    ):
+        empty_cmd = OWNMessage.parse(f"*13*{what_code}*##")
+        assert isinstance(empty_cmd, OWNGatewayCommand)
+        assert empty_cmd.is_valid is True
+        assert empty_cmd.what == what_code
+        assert empty_cmd.where == ""
+        assert log_word in empty_cmd.human_readable_log
+
+    # Addressed WHO 13 product commands (34 Leave, 61 Identify, 66 Supervisor)
+    leave_prod = OWNCommand.parse("*13*34*700010000#9##", gateway=Legrand3578Profile())
+    assert isinstance(leave_prod, OWNGatewayCommand)
+    assert "700010000#9" in leave_prod.human_readable_log
+    ident_prod = OWNCommand.parse("*13*61*700010000#9##", gateway=Legrand3578Profile())
+    assert isinstance(ident_prod, OWNGatewayCommand)
+    assert "Identifying ZigBee product 700010000#9" in ident_prod.human_readable_log
+
+    # WHAT 61 (Identify) is strictly product-addressed, never empty-WHERE
+    for invalid_frame in ("*1*1*##", "*2*1*##", "*13*61*##", "*13*99*##"):
         assert OWNMessage.parse(invalid_frame) is None
+
+    # Bootloader TX guard (*13*12*## and abbreviated *13*12##)
+    for blocked in (
+        "*13*12*##",
+        "*13*12##",
+        "*13*012*##",
+        "*13*12*700010000#9##",
+        b"*13*12*##",
+    ):
+        assert is_who13_boot_mode_frame(blocked) is True
+        if isinstance(blocked, str):
+            assert destructive_frame_reason(blocked) is not None
+    for allowed in (
+        "*#13**12##",
+        "*#13**12*0*3*80*0*0*1*2*3##",
+        "*13*120*##",
+        "*1*12*11##",
+        "*13*60*##",
+    ):
+        assert is_who13_boot_mode_frame(allowed) is False
+        assert destructive_frame_reason(allowed) is None
 
 
 def test_who13_zigbee_event_decoders() -> None:
@@ -197,6 +251,70 @@ def test_who13_zigbee_event_decoders() -> None:
     assert dim66_unreach.zigbee_device_type_code == 0
     assert dim66_unreach.zigbee_device_type is None
     assert dim66_unreach.zigbee_product_index is None
+
+    dim66_two_zero = OWNMessage.parse("*#13*700010001#9*66*4*0##")
+    assert isinstance(dim66_two_zero, OWNGatewayEvent)
+    assert dim66_two_zero.zigbee_product_index == 4
+    assert dim66_two_zero.zigbee_device_type_code == 0
+    assert dim66_two_zero.is_zigbee_product_unreachable is True
+
+    # Live Legrand 3578 fw 1.2.3 offline reply (*#13*<ADDR>00#9*66*<INDEX>##)
+    # works both with gateway=None and with Legrand3578Profile()
+    for ctx in (None, Legrand3578Profile()):
+        dim66_fw123_offline = OWNMessage.parse("*#13*700010000#9*66*2##", gateway=ctx)
+        assert isinstance(dim66_fw123_offline, OWNGatewayEvent)
+        assert dim66_fw123_offline.zigbee_product_index == 2
+        assert dim66_fw123_offline.zigbee_device_type_code is None
+        assert dim66_fw123_offline.zigbee_device_type is None
+        assert dim66_fw123_offline.is_zigbee_product_unreachable is True
+        assert "index 2" in dim66_fw123_offline.human_readable_log
+
+    # Non-00 unit single-value reply preserves dev_code (256 -> On/Off Switch)
+    dim66_unit01_single = OWNMessage.parse(
+        "*#13*702053501#9*66*256##", gateway=Legrand3578Profile()
+    )
+    assert isinstance(dim66_unit01_single, OWNGatewayEvent)
+    assert dim66_unit01_single.zigbee_product_index is None
+    assert dim66_unit01_single.zigbee_device_type_code == 256
+    assert dim66_unit01_single.zigbee_device_type == "On/Off Switch"
+    assert dim66_unit01_single.is_zigbee_product_unreachable is False
+
+    # Non-ASCII #param single value falls through safely (hits 432->434 branch)
+    dim66_non_ascii_param = OWNGatewayEvent("*#13**66#\uff10*256##")
+    assert dim66_non_ascii_param.zigbee_product_index is None
+    assert dim66_non_ascii_param.zigbee_device_type_code == 256
+
+    # WHO 13 ZigBee lifecycle events (31 close, 32 open, 33 join, 34 leave, 61, 66, 67)
+    join_evt = OWNMessage.parse("*13*33*700010000#9##", gateway=Legrand3578Profile())
+    assert isinstance(join_evt, OWNGatewayEvent)
+    assert join_evt.is_zigbee_join is True
+    assert join_evt.is_zigbee_leave is False
+    assert join_evt.is_zigbee_network_open is False
+    assert join_evt.is_zigbee_network_close is False
+    assert join_evt.zigbee_device_id == "7000100"
+    assert "700010000#9 joined" in join_evt.human_readable_log
+
+    leave_evt = OWNMessage.parse("*13*34*700010000#9##", gateway=Legrand3578Profile())
+    assert isinstance(leave_evt, OWNGatewayEvent)
+    assert leave_evt.is_zigbee_leave is True
+    assert "700010000#9 left" in leave_evt.human_readable_log
+
+    open_evt = OWNMessage.parse("*13*32*700010000#9##", gateway=Legrand3578Profile())
+    assert isinstance(open_evt, OWNGatewayEvent)
+    assert open_evt.is_zigbee_network_open is True
+
+    close_evt = OWNMessage.parse("*13*31*700010000#9##", gateway=Legrand3578Profile())
+    assert isinstance(close_evt, OWNGatewayEvent)
+    assert close_evt.is_zigbee_network_close is True
+
+    empty_join = OWNEvent.parse("*13*33*##", gateway=Legrand3578Profile())
+    assert isinstance(empty_join, OWNGatewayEvent)
+    assert empty_join.is_zigbee_join is True
+    assert "interface joined" in empty_join.human_readable_log
+
+    unmapped_what = OWNMessage.parse("*13*99*700010000#9##", gateway=Legrand3578Profile())
+    assert isinstance(unmapped_what, OWNGatewayEvent)
+    assert unmapped_what.human_readable_log == "*13*99*700010000#9##"
 
     # DIM 67 count
     dim67 = OWNMessage.parse("*#13**67*12##")
@@ -326,6 +444,130 @@ def test_lighting_what32_toggle_and_normalize_where() -> None:
     non_toggle = OWNLightingEvent("*1*1*12##")
     assert non_toggle.is_toggle is False
     assert non_toggle.is_on is True
+
+
+def test_zigbee_dimmer_curve_status_reply_and_set_brightness() -> None:
+    """Verify ZigBee 1/5/10/20/30/40/50/60/75/100% curve, status reply 1%, and set_brightness."""
+    zb_profile = Legrand3578Profile()
+    scs_profile = F454Profile()
+
+    # Wired SCS curve remains untouched
+    assert COARSE_PRESET_TO_PERCENT[2] == 1
+    assert ZIGBEE_PRESET_TO_PERCENT == {
+        2: 5,
+        3: 10,
+        4: 20,
+        5: 30,
+        6: 40,
+        7: 50,
+        8: 60,
+        9: 75,
+        10: 100,
+    }
+    assert ZIGBEE_STATUS_WHAT_TO_PERCENT[1] == 1
+    assert ZIGBEE_STATUS_WHAT_TO_PERCENT[2] == 5
+
+    # Round-trip and bucket boundaries for percent_to_zigbee_brightness_preset
+    expected_buckets = [
+        (-5, 0),
+        (0, 0),
+        (1, 2),
+        (5, 2),
+        (7, 2),
+        (8, 3),
+        (10, 3),
+        (14, 3),
+        (15, 4),
+        (24, 4),
+        (25, 5),
+        (34, 5),
+        (35, 6),
+        (44, 6),
+        (45, 7),
+        (54, 7),
+        (55, 8),
+        (67, 8),
+        (68, 9),
+        (75, 9),
+        (87, 9),
+        (88, 10),
+        (100, 10),
+    ]
+    for pct, preset in expected_buckets:
+        assert percent_to_zigbee_brightness_preset(pct) == preset
+    for preset, pct in ZIGBEE_PRESET_TO_PERCENT.items():
+        assert percent_to_zigbee_brightness_preset(pct) == preset
+    for bad_lvl in (True, False, 12.5):
+        with pytest.raises(ValueError, match="integer"):
+            percent_to_zigbee_brightness_preset(bad_lvl)  # type: ignore[arg-type]
+
+    # ZigBee WHAT 2..10 event vs wired SCS WHAT 2..10 event
+    zb_what2 = OWNMessage.parse("*1*2*700030001#9##", gateway=zb_profile)
+    assert isinstance(zb_what2, OWNLightingEvent)
+    assert zb_what2.is_zigbee is True
+    assert zb_what2.is_coarse_dimmer is True
+    assert zb_what2.brightness == 5
+    assert zb_what2.brightness_preset == 2
+    assert zb_what2.brightness_preset_percent == 5
+    assert zb_what2.zigbee_status_brightness_percent == 5
+    assert zb_what2.is_status_reply is False
+
+    scs_what2 = OWNMessage.parse("*1*2*12##", gateway=scs_profile)
+    assert isinstance(scs_what2, OWNLightingEvent)
+    assert scs_what2.brightness_preset_percent == 1
+    assert scs_what2.zigbee_status_brightness_percent is None
+
+    # ZigBee WHAT 1 spontaneous vs status reply (1% for dimmers, brightness stays None for relays)
+    zb_what1_ev = OWNMessage.parse("*1*1*700030001#9##", gateway=zb_profile)
+    assert isinstance(zb_what1_ev, OWNLightingEvent)
+    assert zb_what1_ev.is_status_reply is False
+    assert zb_what1_ev.brightness is None
+    assert zb_what1_ev.zigbee_status_brightness_percent is None
+
+    zb_what1_reply = OWNMessage.parse(
+        "*1*1*700030001#9##", gateway=zb_profile, is_status_reply=True
+    )
+    assert isinstance(zb_what1_reply, OWNLightingEvent)
+    assert zb_what1_reply.is_status_reply is True
+    assert zb_what1_reply.brightness is None
+    assert zb_what1_reply.zigbee_status_brightness_percent == 1
+
+    zb_what0_reply = OWNMessage.parse(
+        "*1*0*700030001#9##", gateway=zb_profile, is_status_reply=True
+    )
+    assert isinstance(zb_what0_reply, OWNLightingEvent)
+    assert zb_what0_reply.zigbee_status_brightness_percent is None
+
+    # OWNLightingCommand.set_brightness with zigbee / gateway context
+    assert (
+        str(OWNLightingCommand.set_brightness("700030001#9", 0, 5, gateway=zb_profile))
+        == "*1*0*700030001#9##"
+    )
+    assert (
+        str(OWNLightingCommand.set_brightness("700030001#9", 5, gateway=zb_profile))
+        == "*1*2*700030001#9##"
+    )
+    assert (
+        str(OWNLightingCommand.set_brightness("700030001#9", 75, zigbee=True))
+        == "*1*9*700030001#9##"
+    )
+    assert (
+        str(OWNLightingCommand.set_brightness("#25#9", 100, gateway=zb_profile))
+        == "*1*10*#25#9##"
+    )
+    # Wired SCS group #9 or explicit zigbee=False stays DIMENSION 1
+    assert (
+        str(OWNLightingCommand.set_brightness("#9", 50, gateway=zb_profile))
+        == "*#1*#9*#1*150*0##"
+    )
+    assert (
+        str(
+            OWNLightingCommand.set_brightness(
+                "700030001#9", 50, zigbee=False, gateway=zb_profile
+            )
+        )
+        == "*#1*700030001#9*#1*150*0##"
+    )
 
 
 def test_golden_corpus_context_free_parse_equivalence() -> None:

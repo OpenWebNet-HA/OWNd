@@ -4,6 +4,26 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+## [2.1.0b2] - 2026-11-23
+
+### Added
+- **OpenZigBee Dimmer Curve & Coarse Command Helper (`OWNd.message.lighting`)**:
+  - Added `ZIGBEE_PRESET_TO_PERCENT` (`{2: 5, 3: 10, 4: 20, 5: 30, 6: 40, 7: 50, 8: 60, 9: 75, 10: 100}`), `ZIGBEE_STATUS_WHAT_TO_PERCENT` (`{1: 1, **ZIGBEE_PRESET_TO_PERCENT}`), and `percent_to_zigbee_brightness_preset(level)` while keeping wired SCS `COARSE_PRESET_TO_PERCENT` (`2 -> 1%`) unchanged.
+  - `OWNLightingEvent` maps ZigBee `#9` `WHAT 2..10` frames to `ZIGBEE_PRESET_TO_PERCENT` (`is_coarse_dimmer=True`, `brightness`, `brightness_preset_percent`) and exposes `zigbee_status_brightness_percent` (`1%` on `is_status_reply=True` `WHAT 1`).
+  - `OWNLightingCommand.set_brightness(..., zigbee=..., gateway=...)` emits `*1*0*WHERE##` / `*1*2..10*WHERE##` instead of `DIMENSION 1` writes for ZigBee targets.
+- **WHO 13 ZigBee Lifecycle Decoding & Bootloader TX Guard (`OWNd.message.gateway`, `OWNd.connection.command_session`)**:
+  - Admitted empty-`WHERE` ZigBee gateway commands `WHAT 12, 22, 30, 31, 32, 33, 34, 60, 65, 66, 67` (keeping `WHAT 61` Identify strictly product-addressed) and decoded `OWNGatewayEvent` lifecycle properties (`is_zigbee_join`, `is_zigbee_leave`, `is_zigbee_network_open`, `is_zigbee_network_close`).
+  - Added `is_who13_boot_mode_frame` and blocked `*13*12*##` (`Boot mode`) in `destructive_frame_reason()` across all TCP and serial send paths so custom TX frames cannot drop the USB stick into raw `STX/ETX` bootloader mode.
+- **Status-Reply Provenance (`OWNEvent.is_status_reply`)**: `OWNEvent.parse(..., is_status_reply=...)` and `AsyncSerialTransport` tag status frames answering an in-flight `WHO 1`/`2` status request under `_command_lock` with `is_status_reply=True`.
+
+### Fixed
+- **4-Shape `WHO 13 DIMENSION 66` Parser & Multi-Endpoint Serial Coalescing (`OWNGatewayEvent`, `AsyncSerialTransport`)**:
+  - Context-independently distinguishes live `fw 1.2.3` offline replies `*#13*<ADDR>00#9*66*<INDEX>##` (`zigbee_product_index=<INDEX>`, `zigbee_device_type_code=None`, `is_zigbee_product_unreachable=True`) from single-value product replies and attaches them to `OWNNackError.responses`.
+  - Added a `90 ms` sliding post-ACK quiet window for multi-unit `DIM 66` responses (resolving immediately on non-BUSY `*#*0##` NACK) plus a `50 ms` late orphan-ACK guard so trailing `*#*1##` tokens cannot corrupt subsequent commands.
+- **Bidirectional `WHO 2` `fw <= 1.2.0` Swap & Configurable Post-Scan Supervisor Restore (`AsyncSerialTransport`)**:
+  - Applied `WHO 2` `WHAT 1 <-> 2` (`dimension is None and not what_param`) symmetrically on both TX and RX for `firmware_tuple <= (1, 2, 0)`.
+  - Added `auto_restore_supervisor: bool = True` so callers pacing `*13*66*##` externally can avoid duplicate post-scan supervisor broadcasts.
+
 ## [2.1.0b1] - 2026-11-18
 
 ### Added

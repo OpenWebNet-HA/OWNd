@@ -153,11 +153,64 @@ ZIGBEE_DEVICE_TYPES: dict[int, str] = {
     1536: "Video Switcher",
 }
 
+_WHO13_BOOT_MODE_REGEX = re.compile(
+    r"^\s*\*\s*\+?0*13\s*\*\s*\+?0*12(?=[*#\s]|\Z)",
+    re.ASCII,
+)
+
+
+def is_who13_boot_mode_frame(frame: object) -> bool:
+    """True if ``frame`` (or any ``##``-delimited frame in it) requests WHO 13 WHAT 12 boot mode.
+
+    ``*13*12*##`` drops the OpenZigBee USB interface out of OpenWebNet into an
+    STX/ETX bootloader protocol (Encyclopedia
+    ``who-13-integration-gateway/zigbee-network-management.md``).
+    """
+    if isinstance(frame, (bytes, bytearray, memoryview)):
+        raw = bytes(frame).decode("latin-1")
+    else:
+        raw = str(frame)
+    return any(_WHO13_BOOT_MODE_REGEX.search(chunk) for chunk in raw.split("##"))
+
+
 _ZIGBEE_COMMAND_LOGS: dict[int, str] = {
+    12: "Requesting ZigBee interface boot mode.",
+    22: "Resetting ZigBee interface.",
+    30: "Creating ZigBee network.",
+    31: "Closing ZigBee network.",
+    32: "Opening ZigBee network.",
+    33: "Joining ZigBee network.",
+    34: "Leaving ZigBee network.",
     60: "Checking ZigBee gateway readiness (keep connect).",
+    61: "Identifying ZigBee product.",
     65: "Scanning ZigBee network.",
     66: "Enabling ZigBee OpenWebNet supervisor mode.",
     67: "Disabling ZigBee OpenWebNet supervisor mode.",
+}
+
+_ZIGBEE_EVENT_LOGS: dict[int, str] = {
+    12: "ZigBee interface entered boot mode.",
+    22: "ZigBee interface reset.",
+    30: "ZigBee network created.",
+    31: "ZigBee network closed.",
+    32: "ZigBee network opened.",
+    33: "ZigBee interface joined network.",
+    34: "ZigBee interface left network.",
+    60: "ZigBee gateway readiness (keep connect).",
+    61: "Identifying ZigBee product.",
+    65: "ZigBee network scan.",
+    66: "Enabling ZigBee OpenWebNet supervisor mode.",
+    67: "Disabling ZigBee OpenWebNet supervisor mode.",
+}
+
+_ZIGBEE_ADDRESSED_EVENT_LOGS: dict[int, str] = {
+    31: "ZigBee network closed by {target}.",
+    32: "ZigBee network opened by {target}.",
+    33: "ZigBee product {target} joined network.",
+    34: "ZigBee product {target} left network.",
+    61: "Identifying ZigBee product {target}.",
+    66: "ZigBee supervisor indication from {target}.",
+    67: "ZigBee supervisor remove indication from {target}.",
 }
 
 
@@ -371,26 +424,54 @@ class OWNGatewayEvent(OWNEvent):
             and self._dimension_value
             and all(_is_ascii_digits(v) for v in self._dimension_value)
         ):
+            dev_code: int | None = None
             if len(self._dimension_value) >= 2:
                 self._zigbee_product_index = int(self._dimension_value[0])
                 dev_code = int(self._dimension_value[-1])
-            else:
-                if self._dimension_param and _is_ascii_digits(self._dimension_param[0]):
+            elif self._dimension_param and len(self._dimension_value) == 1:
+                if _is_ascii_digits(self._dimension_param[0]):
                     self._zigbee_product_index = int(self._dimension_param[0])
                 dev_code = int(self._dimension_value[0])
-            self._zigbee_device_type_code = dev_code
-            if dev_code == 0:
+            elif (
+                not self._where
+                and not self._dimension_param
+                and self._dimension_value == ["0"]
+            ):
+                dev_code = 0
+            elif (
+                len(self._dimension_value) == 1
+                and not self._dimension_param
+                and self._where_param == ["9"]
+                and isinstance(self._where, str)
+                and len(self._where) >= 3
+                and _is_ascii_digits(self._where)
+                and self._where.endswith("00")
+            ):
+                # Live Legrand 3578 fw 1.2.3 offline reply:
+                # *#13*<ADDR>00#9*66*<INDEX>## (+ *#*0## NACK).
+                self._zigbee_product_index = int(self._dimension_value[0])
                 self._is_zigbee_product_unreachable = True
                 self._human_readable_log = (
-                    "ZigBee product is unreachable (dimension 66)."
+                    f"ZigBee product {self._where[:-2]} at index "
+                    f"{self._zigbee_product_index} is unreachable (dimension 66)."
                 )
             else:
-                self._zigbee_device_type = ZIGBEE_DEVICE_TYPES.get(
-                    dev_code, f"Unknown ({dev_code})"
-                )
-                self._human_readable_log = (
-                    f"ZigBee product {self._where} type is: {self._zigbee_device_type} ({dev_code})."
-                )
+                dev_code = int(self._dimension_value[0])
+
+            if dev_code is not None:
+                self._zigbee_device_type_code = dev_code
+                if dev_code == 0:
+                    self._is_zigbee_product_unreachable = True
+                    self._human_readable_log = (
+                        "ZigBee product is unreachable (dimension 66)."
+                    )
+                else:
+                    self._zigbee_device_type = ZIGBEE_DEVICE_TYPES.get(
+                        dev_code, f"Unknown ({dev_code})"
+                    )
+                    self._human_readable_log = (
+                        f"ZigBee product {self._where} type is: {self._zigbee_device_type} ({dev_code})."
+                    )
 
         elif (
             self._dimension == 67
@@ -401,6 +482,15 @@ class OWNGatewayEvent(OWNEvent):
             self._human_readable_log = (
                 f"Gateway product database count is: {self._network_product_count}."
             )
+
+        elif self._dimension is None and self._what is not None:
+            target = self.zigbee_where or self._where
+            if target and self._what in _ZIGBEE_ADDRESSED_EVENT_LOGS:
+                self._human_readable_log = _ZIGBEE_ADDRESSED_EVENT_LOGS[
+                    self._what
+                ].format(target=target)
+            elif self._what in _ZIGBEE_EVENT_LOGS:
+                self._human_readable_log = _ZIGBEE_EVENT_LOGS[self._what]
 
     @property
     def time(self) -> _dt.time | None:
@@ -519,13 +609,33 @@ class OWNGatewayEvent(OWNEvent):
 
     @property
     def is_zigbee_product_unreachable(self) -> bool:
-        """Return True when Dimension 66 reported ``DEV_ID == 0`` (unreachable)."""
+        """Return True when Dimension 66 reported an unreachable ZigBee product."""
         return self._is_zigbee_product_unreachable
 
     @property
     def network_product_count(self) -> int | None:
         """Return the stored ZigBee product count from a Dimension 67 reply."""
         return self._network_product_count
+
+    @property
+    def is_zigbee_network_close(self) -> bool:
+        """Return True when WHO 13 WHAT 31 closed the ZigBee network."""
+        return self._dimension is None and self._what == 31
+
+    @property
+    def is_zigbee_network_open(self) -> bool:
+        """Return True when WHO 13 WHAT 32 opened the ZigBee network."""
+        return self._dimension is None and self._what == 32
+
+    @property
+    def is_zigbee_join(self) -> bool:
+        """Return True when WHO 13 WHAT 33 reported a ZigBee join indication."""
+        return self._dimension is None and self._what == 33
+
+    @property
+    def is_zigbee_leave(self) -> bool:
+        """Return True when WHO 13 WHAT 34 reported a ZigBee leave indication."""
+        return self._dimension is None and self._what == 34
 
 
 class OWNGatewayCommand(OWNCommand):
@@ -550,7 +660,15 @@ class OWNGatewayCommand(OWNCommand):
             return
 
         if self._what in _ZIGBEE_COMMAND_LOGS:
-            self._human_readable_log = _ZIGBEE_COMMAND_LOGS[self._what]
+            target = self.zigbee_where or self._where
+            if target and self._what == 34:
+                self._human_readable_log = (
+                    f"Requesting ZigBee product {target} to leave network."
+                )
+            elif target and self._what == 61:
+                self._human_readable_log = f"Identifying ZigBee product {target}."
+            else:
+                self._human_readable_log = _ZIGBEE_COMMAND_LOGS[self._what]
             return
 
         _validate_gateway_clock_values(self._dimension, self._dimension_value)

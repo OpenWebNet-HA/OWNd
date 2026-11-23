@@ -14,6 +14,9 @@ _COMMAND_DISPATCH: dict[int, Callable[[str], OWNCommand]] = {}
 _PARSE_GATEWAY_CTX: contextvars.ContextVar[Any] = contextvars.ContextVar(
     "ownd_parse_gateway", default=None
 )
+_PARSE_STATUS_REPLY_CTX: contextvars.ContextVar[bool] = contextvars.ContextVar(
+    "ownd_parse_status_reply", default=False
+)
 
 
 def get_parse_gateway() -> Any:
@@ -124,11 +127,12 @@ class OWNMessage:
     _DOOR_ENTRY_SHORT = re.compile(
         r"^\*6\*(?P<what>9)\*?##$"
     )  # *6*9##, *6*9*##
-    # WHO 13 ZigBee USB gateway commands use empty WHERE (*13*60*##..*13*67*##;
-    # openwebnet4j GatewayMgmt, ownkb:claim:c001823).
+    # WHO 13 ZigBee USB gateway commands use empty WHERE (*13*12*##..*13*67*##;
+    # openwebnet4j GatewayMgmt, Encyclopedia who-13-integration-gateway/zigbee-network-management.md;
+    # WHAT 61 Identify is excluded as it is always unit-00 product-addressed).
     _GATEWAY_EMPTY_WHERE = re.compile(
-        r"^\*13\*(?P<what>60|65|66|67)\*##$"
-    )  # *13*60*##..*13*67*##
+        r"^\*13\*(?P<what>12|22|30|31|32|33|34|60|65|66|67)\*##$"
+    )
     _STATUS_REQUEST = re.compile(
         r"^\*#(?P<who>\d+)(?:\*(?P<where>#?\d+)(?P<where_param>(?:#\d+)*))?##$"
     )  #  *#WHO*WHERE## or *#WHO##
@@ -297,7 +301,13 @@ class OWNMessage:
         return None
 
     @classmethod
-    def parse(cls, data: str, *, gateway: Any = None) -> OWNMessage | None:
+    def parse(
+        cls,
+        data: str,
+        *,
+        gateway: Any = None,
+        is_status_reply: bool = False,
+    ) -> OWNMessage | None:
         if (
             cls._ACK.match(data)
             or cls._NACK.match(data)
@@ -315,7 +325,9 @@ class OWNMessage:
             or cls._DIMENSION_REQUEST_REPLY.match(data)
             or cls._match_hash_value_reply(data)
         ):
-            return OWNEvent.parse(data, gateway=gateway)
+            return OWNEvent.parse(
+                data, gateway=gateway, is_status_reply=is_status_reply
+            )
         if (
             cls._GATEWAY_EMPTY_WHERE.match(data)
             or cls._STATUS_REQUEST.match(data)
@@ -614,8 +626,27 @@ class OWNEvent(OWNMessage):
     Dividing this in a subclass provides better clarity
     """
 
+    def __init__(self, data: str) -> None:
+        super().__init__(data)
+        self._is_status_reply: bool = _PARSE_STATUS_REPLY_CTX.get()
+
+    @property
+    def is_status_reply(self) -> bool:
+        """True when this event answered an in-flight status request on serial transport."""
+        return self._is_status_reply
+
+    def _mark_status_reply(self) -> None:
+        """Mark this event as a direct reply to an in-flight status request."""
+        self._is_status_reply = True
+
     @classmethod
-    def parse(cls, data: str, *, gateway: Any = None) -> OWNEvent | None:
+    def parse(
+        cls,
+        data: str,
+        *,
+        gateway: Any = None,
+        is_status_reply: bool = False,
+    ) -> OWNEvent | None:
         _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.+)?##$", data)
 
         if _match:
@@ -623,11 +654,13 @@ class OWNEvent(OWNMessage):
             _ensure_all_subsystems_registered()
             parser = _EVENT_DISPATCH.get(_who)
             token = _PARSE_GATEWAY_CTX.set(gateway)
+            reply_token = _PARSE_STATUS_REPLY_CTX.set(bool(is_status_reply))
             try:
                 if parser is not None:
                     return parser(data)
                 return cls(data)
             finally:
+                _PARSE_STATUS_REPLY_CTX.reset(reply_token)
                 _PARSE_GATEWAY_CTX.reset(token)
 
         return None
@@ -641,7 +674,14 @@ class OWNCommand(OWNMessage):
     """
 
     @classmethod
-    def parse(cls, data: str, *, gateway: Any = None) -> OWNCommand | None:
+    def parse(
+        cls,
+        data: str,
+        *,
+        gateway: Any = None,
+        is_status_reply: bool = False,
+    ) -> OWNCommand | None:
+        del is_status_reply
         _match = re.match(r"^\*#?(?P<who>\d+)(?:\*.+)?##$", data)
 
         if _match:
