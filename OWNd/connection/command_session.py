@@ -225,15 +225,36 @@ class OWNCommandSession(OWNSession):
         are missing (``send()`` reopens them anyway) and for streams installed
         by hand (test doubles, which may model a lost acknowledgement by
         feeding EOF before the write), so those keep the previous behaviour.
+
+        ``StreamReader.at_eof()`` stays false until the buffer is empty, so an
+        end of stream behind unread bytes is read from the reader's private
+        ``_eof`` flag, only on asyncio's own ``StreamReader`` class (a subclass
+        keeps the previous behaviour). A live F461 2.0.11 closes an idle
+        command session that sent nothing since its handshake that way:
+        ``*#*0##`` at 30.108 s, the FIN at 30.109 s (plant capture
+        2026-11-17); an F455 1.0.76 sends the FIN alone. ``send()`` then wrote
+        into the dead socket and took the stale ``*#*0##`` for the answer to
+        its own frame. Nothing is read from or fed to the reader here.
         """
         reader, writer = self._stream_reader, self._stream_writer
         if not isinstance(reader, asyncio.StreamReader) or not isinstance(
             writer, asyncio.StreamWriter
         ):
             return False
-        if reader.at_eof() or reader.exception() is not None:
+        if (
+            reader.at_eof()
+            or reader.exception() is not None
+            or writer.is_closing()
+        ):
             return True
-        return writer.is_closing()
+        if type(reader) is asyncio.StreamReader and getattr(reader, "_eof", False):
+            self._logger.debug(
+                "%s Gateway sent %r and closed the idle command session.",
+                self._log_id,
+                bytes(getattr(reader, "_buffer", b"")),
+            )
+            return True
+        return False
 
     async def _read_command_response(
         self,
@@ -414,7 +435,9 @@ class OWNCommandSession(OWNSession):
             # write, so the write would succeed locally and the read would fail
             # at once, with the frame never received and, written, never
             # replayed. Nothing has been written yet here, so dropping the dead
-            # socket and reopening below is not a replay.
+            # socket and reopening below is not a replay. The same holds when
+            # the gateway sent something before closing (an F461 2.0.11 sends
+            # ``*#*0##`` 1 ms before its FIN).
             if self._peer_closed():
                 self._logger.debug(
                     "%s Command session was closed by the gateway while idle; "

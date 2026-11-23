@@ -4,6 +4,9 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Sessions (`OWNCommandSession.send`)**: a session the gateway closed after sending an unsolicited frame is reopened before the write; the stale frame is no longer taken for the answer. An F461 2.0.11 ends a command session that has sent nothing since its handshake with `*#*0##` followed at once by the FIN (received 30.108 s and 30.109 s into a live capture); a MyHomeServer1 3.87.13 and a 3488 do the same (29.976 s and 30.267 s), an F455 1.0.76 sends the FIN alone. `StreamReader.at_eof()` is true only once the buffer is empty, so the check added in `OWNd#167` did not see that close: the next status request was reported as refused (`OWNNackError`) without reaching the gateway, and the next command logged "Could not send ... Retrying (1)" before it recovered. `_peer_closed()` now also reads the end-of-stream flag of asyncio's own `StreamReader` (the private `_eof`, there is no public equivalent), synchronously: nothing is read from or put back into the reader, and `send()` gains no suspension point before its write. On the four live gateways a status request after 36 s on an unused session returned `None` with `OWNNackError` before (F461, MyHomeServer1, 3488) and returns its answer `*#13**15*200##` now (all four). A session that has carried a frame is closed by the F461 without the `*#*0##`, which `_peer_closed()` already saw. A send that falls between the gateway's frame and its FIN (1 ms on the F461) behaves as before. Hand-installed (non-asyncio) streams and subclasses of `StreamReader` keep the previous behaviour.
+
 ## [2.0.1] - 2026-11-17
 
 ### Changed
