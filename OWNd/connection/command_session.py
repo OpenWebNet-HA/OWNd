@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import logging
 import time
 from collections.abc import Callable
@@ -16,6 +17,9 @@ from .session import (
     KEEPALIVE_FRAME,
     KEEPALIVE_INTERVAL,
     OWNSession,
+    RECONNECT_PAUSE_FATAL,
+    _FATAL_NEGOTIATION_ERRORS,
+    _negotiation_error_to_exception,
 )
 from ..exceptions import (
     OWNAuthError,
@@ -93,6 +97,25 @@ def destructive_frame_error(
 # concurrent callers queued behind _send_lock fail fast instead of each
 # repeating a socket connect attempt while the gateway is unreachable.
 SEND_RECONNECT_COOLDOWN = 2.0
+# The cooldown after a login the gateway refused for good (wrong, missing or
+# unusable password, failed HMAC check): the event session already waits
+# RECONNECT_PAUSE_FATAL before it logs in again, and so does every implicit
+# reconnect of ``send()``. A caller that kept sending used to log in again
+# every SEND_RECONNECT_COOLDOWN seconds (three refused logins in 4.4 s), while
+# the HMAC document says: "Every time 3 handshakes procedures fail within 60
+# seconds, the authentication service have to be disabled for 60 seconds"
+# (Hmac Specification 1.1, "Simple Authentication Mode (SAM)"). An explicit
+# ``connect()`` still tries at once, and so does a ``send()`` after the
+# gateway's address, port or password changed.
+SEND_AUTH_COOLDOWN = float(RECONNECT_PAUSE_FATAL)
+
+# Per-task active ``OWNCommandSession.connect()`` call ``(session, seq)`` so
+# ``_notify_auth_error`` attributes a refusal strictly to the ``connect()``
+# running in the current task (never to an overlapping ``connect()`` or a
+# concurrent ``test_connection()``).
+_ACTIVE_CONNECT: contextvars.ContextVar[tuple[OWNCommandSession, int] | None] = (
+    contextvars.ContextVar("_ACTIVE_CONNECT", default=None)
+)
 
 
 class OWNCommandSession(OWNSession):
@@ -115,12 +138,84 @@ class OWNCommandSession(OWNSession):
         # on the same stream would steal each other's acknowledgements.
         self._send_lock = asyncio.Lock()
         self._last_reconnect_failure: float | None = None
+        # The reason of the last connect() the gateway refused for good and
+        # the address, port and password the gateway object held when the
+        # refusal became known; ``send()``
+        # reports it without logging in again until SEND_AUTH_COOLDOWN has
+        # passed, connect() is called, or one of the three changes.
+        self._refused_login_reason: str | None = None
+        self._refused_login_target: tuple[object, object, object] | None = None
+        # Number of the latest connect() started on this session.
+        self._connect_seq: int = 0
+        # The connect() whose refusal the hold records.
+        self._refused_login_seq: int | None = None
+
+    def _clear_refused_login(self) -> None:
+        """Clear any recorded login-refusal hold."""
+        self._last_reconnect_failure = None
+        self._refused_login_reason = None
+        self._refused_login_target = None
+        self._refused_login_seq = None
 
     async def connect(
         self, *, raise_on_error: bool = False
     ) -> dict[str, Any] | None:
-        self._last_reconnect_failure = None
-        return await super().connect(raise_on_error=raise_on_error)
+        self._connect_seq += 1
+        seq = self._connect_seq
+        self._clear_refused_login()
+        token = _ACTIVE_CONNECT.set((self, seq))
+        try:
+            result = await super().connect(raise_on_error=raise_on_error)
+        except OWNError as error:
+            self._hold_refused_login(error.reason, seq)
+            raise
+        finally:
+            _ACTIVE_CONNECT.reset(token)
+        if result is not None and result.get("Success", False):
+            if seq == self._connect_seq:
+                self._clear_refused_login()
+        elif result is not None:
+            self._hold_refused_login(result.get("Message"), seq)
+        return result
+
+    def _notify_auth_error(self, error: OWNAuthError) -> None:
+        """Record the hold before the caller's callback runs and before ``connect()`` yields.
+
+        The hold names the address, port and password the gateway object
+        holds at that moment (what the refused negotiation just used).
+        Outside a ``connect()`` in this task (e.g. ``test_connection()``)
+        nothing is held, and an overlapping older ``connect()`` never
+        poisons a newer one.
+        """
+        active = _ACTIVE_CONNECT.get()
+        if active is not None and active[0] is self:
+            self._hold_refused_login(error.reason, active[1])
+        # Clear _ACTIVE_CONNECT across user callbacks so tasks spawned inside
+        # on_auth_error (e.g. test_connection) do not inherit this connect()'s tag.
+        token = _ACTIVE_CONNECT.set(None)
+        try:
+            super()._notify_auth_error(error)
+        finally:
+            _ACTIVE_CONNECT.reset(token)
+
+    def _login_target(self) -> tuple[object, object, object] | None:
+        """The address, port and password a login is refused for."""
+        if self._gateway is None:
+            return None
+        return (self._gateway.address, self._gateway.port, self._gateway.password)
+
+    def _hold_refused_login(self, reason: object, seq: int) -> None:
+        """Start the SEND_AUTH_COOLDOWN hold when ``reason`` is a login refused for good, once, and only for the latest ``connect()`` (``seq``).
+
+        The hold records the address, port and password the gateway object holds when the refusal becomes known.
+        """
+        if seq != self._connect_seq or self._refused_login_seq == seq:
+            return
+        if isinstance(reason, str) and reason in _FATAL_NEGOTIATION_ERRORS:
+            self._last_reconnect_failure = time.monotonic()
+            self._refused_login_reason = reason
+            self._refused_login_target = self._login_target()
+            self._refused_login_seq = seq
 
     @classmethod
     async def send_to_gateway(
@@ -145,7 +240,9 @@ class OWNCommandSession(OWNSession):
             if raise_on_error:
                 await connection.connect(raise_on_error=True)
                 return await connection.send(message, raise_on_error=True)
-            await connection.connect()
+            result = await connection.connect()
+            if result is None or not result.get("Success", False):
+                return None
             return await connection.send(message)
         finally:
             with contextlib.suppress(Exception):
@@ -449,12 +546,40 @@ class OWNCommandSession(OWNSession):
 
             if self._stream_reader is None or self._stream_writer is None:
                 now = time.monotonic()
+                refused_reason = self._refused_login_reason
+                if (
+                    refused_reason is not None
+                    and self._refused_login_target != self._login_target()
+                ):
+                    # The address, port or password changed since the refusal:
+                    # log in again at once.
+                    self._clear_refused_login()
+                elif (
+                    refused_reason is not None
+                    and self._last_reconnect_failure is not None
+                    and (now - self._last_reconnect_failure) < SEND_AUTH_COOLDOWN
+                ):
+                    # No new login: the answer cannot change until the
+                    # password does. Each caller gets its own exception.
+                    err = _negotiation_error_to_exception(refused_reason)
+                    self._last_error = err
+                    self._logger.warning(
+                        "%s Authentication handshake failed (%s); message `%s` "
+                        "not sent, next login attempt in %.0fs.",
+                        self._log_id,
+                        refused_reason,
+                        message,
+                        SEND_AUTH_COOLDOWN - (now - self._last_reconnect_failure),
+                    )
+                    if raise_on_error:
+                        raise err
+                    return None
                 if (
                     self._last_reconnect_failure is not None
                     and (now - self._last_reconnect_failure)
                     < SEND_RECONNECT_COOLDOWN
                 ):
-                    err = self._last_error or OWNConnectionError(
+                    err = OWNConnectionError(
                         f"Command session unavailable; message `{frame}` not sent",
                         reason="connection_unavailable",
                     )
@@ -468,6 +593,7 @@ class OWNCommandSession(OWNSession):
                         raise err
                     return None
 
+                seq_before = self._connect_seq
                 self._connect_max_attempts_override = 1
                 try:
                     result = await self.connect()
@@ -480,13 +606,15 @@ class OWNCommandSession(OWNSession):
                     or self._stream_reader is None
                     or self._stream_writer is None
                 ):
-                    self._last_reconnect_failure = time.monotonic()
                     err = self._last_error or OWNConnectionError(
                         f"Command session unavailable; message `{frame}` not sent",
                         reason="connection_unavailable",
                     )
-                    await self.close()
-                    self._last_error = err
+                    # Do not re-arm cooldown or close a newer concurrent connect()'s live socket.
+                    if self._connect_seq <= seq_before + 1:
+                        self._last_reconnect_failure = time.monotonic()
+                        await self.close()
+                        self._last_error = err
                     self._logger.warning(
                         "%s Command session unavailable; message `%s` not sent.",
                         self._log_id,

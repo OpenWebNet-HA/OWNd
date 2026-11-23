@@ -264,7 +264,7 @@ async def test_send_to_gateway_refuses_without_connecting(message: str | OWNMess
 async def test_send_to_gateway_still_connects_for_safe_forms() -> None:
     gateway = _gateway()
     with (
-        patch.object(OWNCommandSession, "connect", new=AsyncMock()) as connect,
+        patch.object(OWNCommandSession, "connect", new=AsyncMock(return_value={"Success": True})) as connect,
         patch.object(OWNCommandSession, "send", new=AsyncMock(return_value=True)) as send,
     ):
         assert await OWNCommandSession.send_to_gateway("*#18*51*52#26#9##", gateway) is True
