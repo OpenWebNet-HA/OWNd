@@ -64,9 +64,12 @@ def test_mh200_keeps_the_mh200n_pacing() -> None:
     assert mh200.event_keepalive_interval == mh200n.event_keepalive_interval
     # Legrand WHO 25 spec (2010, p. 13): MH200 lacks WHO 25 (CEN+ / dry contact & IR); MH200N supports it.
     # Firmware 2.1.2 on MH200 ships bt_difson (WHO 16) without bt_multi (WHO 22); MH200N 1.1.8 ships both.
+    # WHO 18: a physical MH200N 1.1.8 answers *#18*51*51## and the 010108 image translates it
+    # (energy-ts10.tsv:24,27, ack/out); the MH200 020102 image NACKs all 50 WHO 18 frames with no bus output.
     assert set(mh200n.supported_who) - set(mh200.supported_who) == {
         WHO_CEN_PLUS,
         WHO_SOUND_DIFFUSION,
+        WHO_ENERGY,
     }
     assert mh200.supports_who(WHO_CEN) is True
     assert not mh200.supports_who(WHO_CEN_PLUS)
@@ -772,3 +775,25 @@ def test_who4_heating_capability_flags(
     assert profile.supports_heating_humidity_request is humidity_request
     assert profile.supports_interface_zone_requests is interface_requests
 
+
+def test_mh200n_carries_energy_management() -> None:
+    """A physical MH200N 1.1.8 answers *#18*51*51## in 0.19 s (MyHOME issue_466 sweep,
+    317 WHO 18 frames in four captures) and the 010108 image translates *#18*51*113## and
+    *#18*51*51## (energy-ts10.tsv:24,27, ack/out). The MH200 020102 image NACKs them with no bus output."""
+    assert get_gateway_profile("MH200N").supports_who(WHO_ENERGY)
+    assert get_gateway_profile("003565").supports_who(WHO_ENERGY)
+    assert get_gateway_profile("03565").supports_who(WHO_ENERGY)
+    assert not get_gateway_profile("MH200").supports_who(WHO_ENERGY)
+
+
+@pytest.mark.parametrize(
+    ("name", "expected"),
+    [("MH200N", True), ("003565", True), ("03565", True), ("MH200", False)],
+)
+def test_mh200n_reports_instant_power(name: str, expected: bool) -> None:
+    """275 of the 317 WHO 18 frames of the four MH200N captures are DIMENSION 113 (active power),
+    and the 010108 image translates *#18*51*113## (energy-ts10.tsv:24, ack/out). The MH200 keeps
+    its own flags."""
+    profile = get_gateway_profile(name)
+    assert profile.supports_who(WHO_ENERGY) is expected
+    assert profile.supports_energy_instant_power is expected

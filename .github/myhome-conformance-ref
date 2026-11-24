@@ -1,0 +1,9 @@
+# The MyHOME ref the "MyHOME conformance" workflow tests this checkout against.
+#
+#   master      MyHOME's default branch (the normal value)
+#   pull/<N>    the companion MyHOME pull request of an intentional change to what MyHOME
+#               pins from OWNd (a gateway profile's WHO list, a capability flag); see
+#               scripts/myhome_conformance_ref.py. Set it back to master once that pull
+#               request is merged and its change is in master (a staging branch it went
+#               into has to be merged first): the workflow warns until then.
+pull/998

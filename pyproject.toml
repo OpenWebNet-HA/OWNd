@@ -62,6 +62,7 @@ asyncio_default_fixture_loop_scope = "function"
 filterwarnings = [
     "error::DeprecationWarning",
     "error::PendingDeprecationWarning",
+    "error::RuntimeWarning",
 ]
 
 [tool.ruff]
