@@ -95,6 +95,7 @@ DROP_BURST_WINDOW = 600  # 10 minutes
 DROP_WARNING_INTERVAL = 3600  # 1 hour
 # Task-local single-attempt connect cap used by OWNCommandSession.send() so a
 # concurrent connect() in another task never sees the 1-attempt override.
+# OWNSession.connect() reads it once and clears it at once (one call, one cap).
 _CONNECT_MAX_ATTEMPTS: contextvars.ContextVar[int | None] = contextvars.ContextVar(
     "_CONNECT_MAX_ATTEMPTS", default=None
 )
@@ -444,8 +445,16 @@ class OWNSession:
         self._logger.debug("%s Opening %s session.", self._log_id, self._type)
         self._last_error = None
 
+        # The cap ``OWNCommandSession.send()`` sets belongs to this one call.
+        # It is taken out of the context here, before any callback runs: a
+        # task started by a callback during this ``connect()``
+        # (``on_auth_error``, ``on_state_change``) copies the context, and
+        # would keep a cap of 1 for every ``connect()`` it makes later.
+        send_cap = _CONNECT_MAX_ATTEMPTS.get()
+        if send_cap is not None:
+            _CONNECT_MAX_ATTEMPTS.set(None)
         max_attempts = (
-            _CONNECT_MAX_ATTEMPTS.get()
+            send_cap
             or self._connect_max_attempts_override
             or MAX_CONNECT_ATTEMPTS
         )

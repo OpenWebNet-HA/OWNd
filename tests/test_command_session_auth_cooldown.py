@@ -952,3 +952,179 @@ async def test_event_session_and_tcp_transport_guard_non_mapping_connect_results
             connected = await transport.connect()
         assert connected is False
         gc.collect()
+
+
+# --- An expired hold, and the single attempt of send() in tasks a callback starts ---
+
+
+@pytest.mark.asyncio
+async def test_an_expired_hold_does_not_come_back_after_an_attempt_without_a_login() -> None:
+    """Past the 60 s, a ``send()`` whose reconnect fails before any login (gateway
+    unreachable) is a connection failure with the 2 s cooldown. ``connect()`` keeps
+    a hold for the same address, port and password, so the old refusal used to
+    start a second 60 s there, with no login behind it.
+    """
+    session = make_session()
+    open_connection, negotiate = refuse_logins()
+    unreachable = AsyncMock(side_effect=OSError("unreachable"))
+    clock = [1000.0]
+
+    with (
+        patch.object(session, "_negotiate", new=negotiate),
+        patch(f"{MODULE}.time.monotonic", side_effect=lambda: clock[0]),
+    ):
+        with patch(OPEN, new=open_connection):
+            assert await session.send("*#13**15##", is_status_request=True) is None
+        assert session._refused_login_reason == "password_error"
+
+        session._logger.reset_mock()
+        with patch(OPEN, new=unreachable):
+            clock[0] += SEND_AUTH_COOLDOWN + 1.0
+            assert await session.send("*#13**15##", is_status_request=True) is None
+            assert unreachable.await_count == 1
+            assert isinstance(session.last_error, OWNConnectionError)
+            assert session.last_error.reason == "network_error"
+            assert session._refused_login_reason is None
+
+            # Inside the 2 s: no attempt, and not the refusal of a minute ago.
+            clock[0] += 1.0
+            assert await session.send("*#13**15##", is_status_request=True) is None
+            assert isinstance(session.last_error, OWNConnectionError)
+            assert session.last_error.reason == "connection_unavailable"
+            assert unreachable.await_count == 1
+
+            # Past the 2 s: the next attempt.
+            clock[0] += SEND_RECONNECT_COOLDOWN
+            assert await session.send("*#13**15##", is_status_request=True) is None
+            assert session.last_error.reason == "network_error"
+            assert unreachable.await_count == 2
+
+    assert negotiate.await_count == 1
+    assert not [
+        call
+        for call in session._logger.warning.call_args_list
+        if call.args[0].startswith("%s Authentication handshake failed")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_connect_inside_the_hold_does_not_end_or_extend_it() -> None:
+    """An explicit ``connect()`` that fails before any login leaves the hold as it
+    was: the same reason, and the 60 s still counted from the refused login.
+    """
+    session = make_session()
+    open_connection, negotiate = refuse_logins()
+    unreachable = AsyncMock(side_effect=OSError("unreachable"))
+    clock = [1000.0]
+
+    with (
+        patch.object(session, "_negotiate", new=negotiate),
+        patch("OWNd.connection.session.asyncio.sleep", new=AsyncMock()),
+        patch(f"{MODULE}.time.monotonic", side_effect=lambda: clock[0]),
+    ):
+        with patch(OPEN, new=open_connection):
+            assert await session.send("*#13**15##", is_status_request=True) is None
+
+        with patch(OPEN, new=unreachable):
+            clock[0] += 10.0
+            assert await session.connect() is None
+            assert unreachable.await_count == MAX_CONNECT_ATTEMPTS
+
+            clock[0] = 1000.0 + SEND_AUTH_COOLDOWN - 0.5
+            assert await session.send("*#13**15##", is_status_request=True) is None
+            assert isinstance(session.last_error, OWNAuthError)
+            assert unreachable.await_count == MAX_CONNECT_ATTEMPTS
+
+            clock[0] = 1000.0 + SEND_AUTH_COOLDOWN + 0.5
+            assert await session.send("*#13**15##", is_status_request=True) is None
+            assert isinstance(session.last_error, OWNConnectionError)
+            assert unreachable.await_count == MAX_CONNECT_ATTEMPTS + 1
+
+    assert negotiate.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_task_started_in_on_auth_error_does_not_keep_the_single_attempt_of_send() -> None:
+    """A task copies the context it is created in. One that ``on_auth_error`` starts
+    during the ``connect()`` of ``send()`` (to reconnect later) makes its own
+    ``connect()`` with all ``MAX_CONNECT_ATTEMPTS``.
+    """
+    session = make_session()
+    open_connection, negotiate = refuse_logins()
+    unreachable = AsyncMock(side_effect=OSError("unreachable"))
+    send_done = asyncio.Event()
+    tasks: list[asyncio.Task[object]] = []
+
+    async def connect_later() -> object:
+        await send_done.wait()
+        with (
+            patch(OPEN, new=unreachable),
+            patch("OWNd.connection.session.asyncio.sleep", new=AsyncMock()),
+        ):
+            return await session.connect()
+
+    session.on_auth_error = lambda _error: tasks.append(asyncio.create_task(connect_later()))
+
+    with (
+        patch(OPEN, new=open_connection),
+        patch.object(session, "_negotiate", new=negotiate),
+    ):
+        assert await session.send("*#13**15##", is_status_request=True) is None
+    assert open_connection.await_count == 1
+    send_done.set()
+
+    assert len(tasks) == 1
+    assert await tasks[0] is None
+    assert unreachable.await_count == MAX_CONNECT_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_a_task_started_in_on_state_change_does_not_keep_the_single_attempt_of_send() -> None:
+    """The same for ``on_state_change``: the session was connected, its socket is gone,
+    and the one attempt of ``send()`` fails. The consumer hears ``False`` inside that
+    ``connect()`` and starts a task to reconnect.
+    """
+    send_done = asyncio.Event()
+    tasks: list[asyncio.Task[object]] = []
+    unreachable = AsyncMock(side_effect=OSError("unreachable"))
+    still_unreachable = AsyncMock(side_effect=OSError("unreachable"))
+
+    async def connect_later() -> object:
+        await send_done.wait()
+        with (
+            patch(OPEN, new=still_unreachable),
+            patch("OWNd.connection.session.asyncio.sleep", new=AsyncMock()),
+        ):
+            return await session.connect()
+
+    def on_state_change(connected: bool) -> None:
+        if not connected:
+            tasks.append(asyncio.create_task(connect_later()))
+
+    gateway = OWNGateway(
+        {"address": "192.0.2.1", "port": 20000, "password": "madeup1", "modelName": "F461"}
+    )
+    session = OWNCommandSession(
+        gateway=gateway, logger=MagicMock(), on_state_change=on_state_change
+    )
+    open_connection, negotiate = refuse_logins()
+    negotiate.return_value = {"Success": True, "Message": None}
+    with (
+        patch(OPEN, new=open_connection),
+        patch.object(session, "_negotiate", new=negotiate),
+    ):
+        assert await session.connect() == {"Success": True, "Message": None}
+    # What send() does itself when it finds the socket closed by the gateway.
+    await session._close_streams()
+    assert session.is_connected
+    assert not session.is_open
+    assert not tasks
+
+    with patch(OPEN, new=unreachable):
+        assert await session.send("*#13**15##", is_status_request=True) is None
+    assert unreachable.await_count == 1
+    send_done.set()
+
+    assert len(tasks) == 1
+    assert await tasks[0] is None
+    assert still_unreachable.await_count == MAX_CONNECT_ATTEMPTS

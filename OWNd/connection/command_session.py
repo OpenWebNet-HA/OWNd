@@ -589,6 +589,13 @@ class OWNCommandSession(OWNSession):
                     if raise_on_error:
                         raise err
                     return None
+                elif refused_reason is not None:
+                    # The hold has run out and this send() logs in again. The
+                    # old refusal goes first: connect() keeps a hold for the
+                    # same address, port and password, and an attempt that
+                    # then fails without a login (gateway unreachable) would
+                    # restart the 60 s under the old reason.
+                    self._clear_refused_login()
                 if (
                     self._last_reconnect_failure is not None
                     and (now - self._last_reconnect_failure)
