@@ -11,6 +11,7 @@ authentication service have to be disabled for 60 seconds" (Hmac Specification
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import gc
 import logging
 import socket
@@ -788,11 +789,16 @@ async def test_send_max_attempts_cap_does_not_leak_to_concurrent_connect() -> No
     release_send = asyncio.Event()
     explicit_attempts = 0
     send_attempts = 0
-    send_task_ref: list[asyncio.Task[object]] = []
+    # Use a ContextVar rather than current_task() identity: in Python 3.11,
+    # asyncio.wait_for() wraps open_connection() in a child Task that inherits
+    # contextvars but has a different Task identity from send_task.
+    in_send_task: contextvars.ContextVar[bool] = contextvars.ContextVar(
+        "in_send_task", default=False
+    )
 
     async def fake_open(*_args: object, **_kwargs: object) -> tuple[MagicMock, MagicMock]:
         nonlocal explicit_attempts, send_attempts
-        if asyncio.current_task() is send_task_ref[0]:
+        if in_send_task.get():
             send_attempts += 1
             send_in_connect.set()
             await release_send.wait()
@@ -800,12 +806,15 @@ async def test_send_max_attempts_cap_does_not_leak_to_concurrent_connect() -> No
         explicit_attempts += 1
         raise OSError("explicit connect failed")
 
+    async def run_send() -> object:
+        in_send_task.set(True)
+        return await session.send("*1*1*05##", raise_on_error=False)
+
     with (
         patch(OPEN, new=AsyncMock(side_effect=fake_open)),
         patch("OWNd.connection.session.asyncio.sleep", new=AsyncMock()),
     ):
-        send_task = asyncio.create_task(session.send("*1*1*05##", raise_on_error=False))
-        send_task_ref.append(send_task)
+        send_task = asyncio.create_task(run_send())
         await send_in_connect.wait()
 
         explicit_res = await session.connect()
