@@ -6,7 +6,7 @@ import asyncio
 import contextlib
 import logging
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from .gateway import OWNGateway
@@ -62,7 +62,7 @@ class OWNEventSession(OWNSession):
     ) -> dict[str, Any] | None:
         await self._stop_keepalive()
         result = await super().connect(raise_on_error=raise_on_error)
-        if result is not None and result.get("Success"):
+        if isinstance(result, Mapping) and result.get("Success"):
             self._start_keepalive()
         return result
 
@@ -136,7 +136,7 @@ class OWNEventSession(OWNSession):
                     f"Gateway authentication failed ({result.get('Message')})",
                     reason=str(result.get("Message")),
                 )
-                if result is not None
+                if isinstance(result, Mapping)
                 and result.get("Message") in _AUTH_NEGOTIATION_ERRORS
                 else None
             )
@@ -182,7 +182,7 @@ class OWNEventSession(OWNSession):
                 # gateway with connection attempts.
                 pause = (
                     RECONNECT_PAUSE_FATAL
-                    if result is not None
+                    if isinstance(result, Mapping)
                     and result.get("Message") in _FATAL_NEGOTIATION_ERRORS
                     else RECONNECT_PAUSE
                 )

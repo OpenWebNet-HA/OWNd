@@ -4,6 +4,10 @@ All notable changes to `OWNd` are documented in this file.
 
 ## [Unreleased]
 
+### Fixed
+- **Sessions (`OWNSession`, `OWNCommandSession`)**: `negotiation_error` now arms `SEND_AUTH_COOLDOWN` synchronously via `_on_fatal_negotiation_error()` before `await _close_streams()` yields (previously only `OWNAuthError` triggered `_notify_auth_error()`, allowing concurrent `send()` calls during stream close to open a second login after an `OWNProtocolError` `negotiation_error`). `OWNCommandSession.send()` now scopes its single-attempt connect cap to a task-local `_CONNECT_MAX_ATTEMPTS` `ContextVar` (no shared-attribute race with concurrent `connect()`), preserves an active refusal hold while a same-target explicit `connect()` is in flight until negotiation succeeds or the target changes, and derives fatal negotiation exceptions directly from `result["Message"]` even if a concurrent `connect()` cleared `self._last_error`.
+- **Sessions & Transport (`OWNEventSession`, `AsyncTcpTransport`)**: Guard `connect()` / `_reconnect()` return values with `isinstance(..., Mapping)` before `.get(...)`, matching `OWNCommandSession` and preventing `AttributeError` or unawaited-coroutine `RuntimeWarning` when `connect()` is patched with a bare `AsyncMock`.
+
 ## [2.0.2] - 2026-11-24
 
 ### Changed

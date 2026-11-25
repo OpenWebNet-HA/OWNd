@@ -18,6 +18,7 @@ from .session import (
     KEEPALIVE_INTERVAL,
     OWNSession,
     RECONNECT_PAUSE_FATAL,
+    _CONNECT_MAX_ATTEMPTS,
     _FATAL_NEGOTIATION_ERRORS,
     _negotiation_error_to_exception,
 )
@@ -162,7 +163,11 @@ class OWNCommandSession(OWNSession):
     ) -> dict[str, Any] | None:
         self._connect_seq += 1
         seq = self._connect_seq
-        self._clear_refused_login()
+        if (
+            self._refused_login_reason is not None
+            and self._refused_login_target != self._login_target()
+        ):
+            self._clear_refused_login()
         token = _ACTIVE_CONNECT.set((self, seq))
         try:
             result = await super().connect(raise_on_error=raise_on_error)
@@ -177,6 +182,16 @@ class OWNCommandSession(OWNSession):
         elif isinstance(result, Mapping):
             self._hold_refused_login(result.get("Message"), seq)
         return result
+
+    def _on_fatal_negotiation_error(self, reason: str, error: OWNError) -> None:
+        """Record the hold before user callbacks run and before ``connect()`` yields to close streams.
+
+        Applies to every fatal negotiation error (including ``negotiation_error``,
+        which raises ``OWNProtocolError`` rather than ``OWNAuthError``).
+        """
+        active = _ACTIVE_CONNECT.get()
+        if active is not None and active[0] is self:
+            self._hold_refused_login(reason, active[1])
 
     def _notify_auth_error(self, error: OWNAuthError) -> None:
         """Record the hold before the caller's callback runs and before ``connect()`` yields.
@@ -594,11 +609,11 @@ class OWNCommandSession(OWNSession):
                     return None
 
                 seq_before = self._connect_seq
-                self._connect_max_attempts_override = 1
+                attempts_token = _CONNECT_MAX_ATTEMPTS.set(1)
                 try:
                     result = await self.connect()
                 finally:
-                    self._connect_max_attempts_override = None
+                    _CONNECT_MAX_ATTEMPTS.reset(attempts_token)
 
                 if (
                     not isinstance(result, Mapping)
@@ -606,10 +621,14 @@ class OWNCommandSession(OWNSession):
                     or self._stream_reader is None
                     or self._stream_writer is None
                 ):
-                    err = self._last_error or OWNConnectionError(
-                        f"Command session unavailable; message `{frame}` not sent",
-                        reason="connection_unavailable",
-                    )
+                    msg = result.get("Message") if isinstance(result, Mapping) else None
+                    if isinstance(msg, str) and msg in _FATAL_NEGOTIATION_ERRORS:
+                        err = _negotiation_error_to_exception(msg)
+                    else:
+                        err = self._last_error or OWNConnectionError(
+                            f"Command session unavailable; message `{frame}` not sent",
+                            reason="connection_unavailable",
+                        )
                     # Do not re-arm cooldown or close a newer concurrent connect()'s live socket.
                     if self._connect_seq <= seq_before + 1:
                         self._last_reconnect_failure = time.monotonic()
