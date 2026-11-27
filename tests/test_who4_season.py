@@ -77,7 +77,7 @@ def test_non_mode_frames_have_no_season() -> None:
 def test_unrecognised_whats_have_no_season() -> None:
     for frame in (
         "*4*150*1##",
-        "*4*1104*#0##",
+        "*4*1117*#0##",
         "*4*1199*#0##",
         "*4*13000*1##",
         "*4*13256*1##",

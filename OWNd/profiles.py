@@ -274,7 +274,10 @@ class F453Profile(GatewayProfile):
     - WHO 3 (Load Control): ``bt_energia`` translates all 9 WHO 3 force and
       measurement requests onto the SCS bus (``energy-ts10.tsv``).
     - WHO 4 (Thermoregulation): ``bt_H4690`` translates zone and central-unit
-      queries and commands.
+      queries and commands. General ``*#4*0##`` emits point-to-point SCS queries
+      to non-existent zone 0 (``thermo-four-zone-central.tsv:41``,
+      ``findings/bt-termo.md`` QUIRK-15) and stalls with 0 replies on physical
+      plants, so ``supports_general_heating_status`` is ``False``.
     - WHO 15 & 25 (CEN & CEN+): ``bt_cen`` translates both classic CEN and
       CEN+ / dry-contact frames; also listed as YES in Legrand's WHO 25
       specification (p. 13, https://developer.legrand.com/uploads/2019/12/WHO_25.pdf)
@@ -295,7 +298,7 @@ class F453Profile(GatewayProfile):
         super().__init__(
             model_name="F453",
             command_queue_delay=0.15,
-            supports_general_heating_status=True,
+            supports_general_heating_status=False,
             supports_heating_actuator_status=False,
             supports_heating_humidity_request=False,
             supports_interface_zone_requests=False,
@@ -345,7 +348,7 @@ class F453AVProfile(GatewayProfile):
             model_name="F453AV",
             firmware_version=fw_str,
             command_queue_delay=0.15,
-            supports_general_heating_status=True,
+            supports_general_heating_status=False,
             supports_heating_actuator_status=False,
             supports_heating_humidity_request=False,
             supports_interface_zone_requests=False,
@@ -584,6 +587,10 @@ class MH200NProfile(GatewayProfile):
     ``oracle/targets/MH200N/010108.yaml:52``), which the MH200 ``020102`` image
     does not ship (it has ``bt_energia``, the WHO 3 translator:
     ``oracle/targets/MH200/020102.yaml:54-55``).
+    WHO 4 general status ``*#4*0##`` emits point-to-point SCS queries to
+    non-existent zone 0 (``thermo-four-zone-central.tsv:41``,
+    ``findings/bt-termo.md`` QUIRK-15) and stalls with 0 replies on physical
+    plants, so ``supports_general_heating_status`` is ``False``.
     """
 
     def __init__(self) -> None:
@@ -593,7 +600,7 @@ class MH200NProfile(GatewayProfile):
             max_queue_size=100,
             event_keepalive_interval=90,
             supports_audio=True,
-            supports_general_heating_status=True,
+            supports_general_heating_status=False,
             supports_heating_actuator_status=False,
             supports_heating_humidity_request=False,
             supports_interface_zone_requests=False,
@@ -791,6 +798,47 @@ class MyHomeServer1Profile(GatewayProfile):
         )
 
 
+class Bticino3488Profile(GatewayProfile):
+    """The BTicino 3488 HOMETOUCH 7" touch screen (SMARTDES / Legrand 067259).
+
+    Verified by the firmware oracle (``3488 030205``,
+    ``results/3488/030205/oracle/full/`` and ``findings/3488/README.md``):
+    - WHO 4 (Thermoregulation): ships the same Gen D ``bt_termo`` translator
+      stack as F461 / MyHomeServer1 (``findings/bt-termo.md``): refuses
+      ``*#4*0##`` (``trace-corpus.tsv:52``), forwards ``*#4*Z##``,
+      ``*#4*Z*20##``, ``*#4*0#0*20##``, ``*#4*Z*60##``, and ``*#4*0*60##``
+      (``thermo-zone-requests.tsv:16-38``), and drops or truncates ``#4#II``
+      interface suffixes.
+    - WHO 3, 16, 17: omitted (0/15 out in ``energy-ts10.tsv``, 0/77 out in
+      ``sound-who16-source.tsv``, 0/9 out in ``scenario-who17.tsv``).
+    - WHO 18, 22, 25: forwarded by ``bt_supervisione``, ``bt_multi``, and
+      ``bt_luci`` (``energy-ts10.tsv``, ``sound-who22.tsv``,
+      ``who25-messages.tsv``).
+    - Authentication: HMAC-SHA256 verified on live hardware (fw ``3.2.5``,
+      ``*98*2##`` handshake, ``ForceHMAC=1`` in ``findings/3488/README.md:61``);
+      live WHO 22 routing remains unmeasured (``audio_measured=False``).
+    """
+
+    def __init__(self) -> None:
+        super().__init__(
+            model_name="3488",
+            supports_hmac=True,
+            auth_measured=True,
+            audio_measured=False,
+            supports_audio=True,
+            supports_general_heating_status=False,
+            supports_heating_zone_status=True,
+            supports_heating_actuator_status=True,
+            supports_heating_humidity_request=True,
+            supports_interface_zone_requests=False,
+            supported_who=tuple(
+                w
+                for w in DEFAULT_SUPPORTED_WHO
+                if w not in (WHO_LOAD_CONTROL, WHO_SOUND, WHO_SCENARIO)
+            ),
+        )
+
+
 class GenericGatewayProfile(GatewayProfile):
     def __init__(self, model_name: str = "Generic") -> None:
         super().__init__(model_name=model_name)
@@ -799,6 +847,7 @@ class GenericGatewayProfile(GatewayProfile):
 _GENERIC = GenericGatewayProfile()
 
 _PROFILES = {
+    "3488": Bticino3488Profile(),
     "f452": F452Profile(),
     "f452v": F452VProfile(),
     "f453": F453Profile(),
@@ -817,6 +866,7 @@ _PROFILES = {
 
 CANONICAL_PROFILE_ORDER = (
     "myhomeserver1",
+    "3488",
     "f452",
     "f452v",
     "f453",
@@ -870,6 +920,12 @@ _ALIASES = {
     "003565": "mh200n",
     "003535": "mh202",
     "03535": "mh202",
+    # 067259 is Legrand's catalogue number of the 3488 HOMETOUCH (SMARTDES
+    # firmware conf.xml.def.067259, own-firmware-oracle findings/3488/README.md).
+    "bticino3488": "3488",
+    "legrand067259": "3488",
+    "067259": "3488",
+    "67259": "3488",
 }
 
 

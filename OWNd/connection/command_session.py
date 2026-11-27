@@ -35,6 +35,7 @@ from ..message import (
     is_who18_dimension_52_crash_form,
     is_who22_bare_power_frame,
     is_who4_dimension_22_crash_form,
+    who4_bt_termo_crash_reason,
 )
 
 # Why every send path refuses a WHO 4 dimension 22 frame without an actuator
@@ -71,7 +72,10 @@ def destructive_frame_reason(frame: str) -> str | None:
     The one classifier behind ``OWNCommandSession.send``, ``send_to_gateway``
     and ``AsyncSerialTransport.send`` (``AsyncTcpTransport.send`` goes through
     the session), so the paths cannot drift: the WHO 4 dimension 22 crash
-    forms, the WHO 18 dimension 52 crash forms and the bare WHO 22 power frame.
+    forms, the WHO 18 dimension 52 crash forms, the bare WHO 22 power frame,
+    and the ``bt_termo`` WHO 4 crash vectors (bare ``#`` WHERE, oversized
+    WHERE / dimension-write first value, and missing required arguments on
+    ``#14`` / ``#7`` writes).
     """
     if is_who4_dimension_22_crash_form(frame):
         return DESTRUCTIVE_FRAME_REASON
@@ -79,7 +83,7 @@ def destructive_frame_reason(frame: str) -> str | None:
         return DESTRUCTIVE_DIM52_REASON
     if is_who22_bare_power_frame(frame):
         return DESTRUCTIVE_WHO22_REASON
-    return None
+    return who4_bt_termo_crash_reason(frame)
 
 
 def destructive_frame_error(
