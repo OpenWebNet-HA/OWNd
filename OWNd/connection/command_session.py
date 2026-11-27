@@ -111,7 +111,7 @@ SEND_RECONNECT_COOLDOWN = 2.0
 SEND_AUTH_COOLDOWN = float(RECONNECT_PAUSE_FATAL)
 
 # Per-task active ``OWNCommandSession.connect()`` call ``(session, seq)`` so
-# ``_notify_auth_error`` attributes a refusal strictly to the ``connect()``
+# ``_on_fatal_negotiation_error`` attributes a refusal strictly to the ``connect()``
 # running in the current task (never to an overlapping ``connect()`` or a
 # concurrent ``test_connection()``).
 _ACTIVE_CONNECT: contextvars.ContextVar[tuple[OWNCommandSession, int] | None] = (
@@ -143,7 +143,7 @@ class OWNCommandSession(OWNSession):
         # the address, port and password the gateway object held when the
         # refusal became known; ``send()``
         # reports it without logging in again until SEND_AUTH_COOLDOWN has
-        # passed, connect() is called, or one of the three changes.
+        # passed, connect() succeeds, or one of the three changes.
         self._refused_login_reason: str | None = None
         self._refused_login_target: tuple[object, object, object] | None = None
         # Number of the latest connect() started on this session.
@@ -194,22 +194,24 @@ class OWNCommandSession(OWNSession):
             self._hold_refused_login(reason, active[1])
 
     def _notify_auth_error(self, error: OWNAuthError) -> None:
-        """Record the hold before the caller's callback runs and before ``connect()`` yields.
+        """Clear ``_ACTIVE_CONNECT`` across auth callbacks so spawned tasks do not inherit it.
 
-        The hold names the address, port and password the gateway object
-        holds at that moment (what the refused negotiation just used).
-        Outside a ``connect()`` in this task (e.g. ``test_connection()``)
-        nothing is held, and an overlapping older ``connect()`` never
-        poisons a newer one.
+        Hold-arming during ``connect()`` happens in
+        ``_on_fatal_negotiation_error()`` right before this hook runs, so
+        ``test_connection()`` (which invokes ``_notify_auth_error()`` directly)
+        can never arm ``SEND_AUTH_COOLDOWN``.
         """
-        active = _ACTIVE_CONNECT.get()
-        if active is not None and active[0] is self:
-            self._hold_refused_login(error.reason, active[1])
-        # Clear _ACTIVE_CONNECT across user callbacks so tasks spawned inside
-        # on_auth_error (e.g. test_connection) do not inherit this connect()'s tag.
         token = _ACTIVE_CONNECT.set(None)
         try:
             super()._notify_auth_error(error)
+        finally:
+            _ACTIVE_CONNECT.reset(token)
+
+    def _set_connected(self, value: bool) -> None:
+        """Clear ``_ACTIVE_CONNECT`` across state callbacks so spawned tasks do not inherit it."""
+        token = _ACTIVE_CONNECT.set(None)
+        try:
+            super()._set_connected(value)
         finally:
             _ACTIVE_CONNECT.reset(token)
 
@@ -649,7 +651,8 @@ class OWNCommandSession(OWNSession):
                     if raise_on_error:
                         raise err
                     return None
-                self._last_reconnect_failure = None
+                if self._connect_seq <= seq_before + 1:
+                    self._last_reconnect_failure = None
 
             written = False
             try:

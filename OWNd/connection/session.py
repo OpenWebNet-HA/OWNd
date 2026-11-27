@@ -724,11 +724,7 @@ class OWNSession:
                     self._stream_writer.write(b"*#*0##")
                     await self._stream_writer.drain()
                 else:
-                    method = "sha"
-                    if resulting_message.is_sha_1():
-                        method = "sha1"
-                    elif resulting_message.is_sha_256():
-                        method = "sha256"
+                    method = "sha1" if resulting_message.is_sha_1() else "sha256"
                     self._logger.debug(
                         "%s Accepting %s challenge, initiating handshake.",
                         self._log_id,
