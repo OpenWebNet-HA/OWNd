@@ -28,6 +28,8 @@ MESSAGE_TYPE_SEASON = "hvac_season"
 
 MESSAGE_TYPE_FAN_SPEED = "fan_speed"
 MESSAGE_TYPE_ZONE_STATE = "zone_state"
+MESSAGE_TYPE_PUMP_CALL = "pump_call"
+MESSAGE_TYPE_LOCAL_OFFSET_RELEASE = "local_offset_release"
 
 CLIMATE_MODE_OFF = "off"
 CLIMATE_MODE_HEAT = "heat"
@@ -73,6 +75,14 @@ _ZONE_STATES = {
 
 
 _WHO4_TEMP_REGEX = re.compile(r"^[01][0-9]{3}$")
+# DIM 15 3rd field: 4-bit binary hi(B5) from SCS D2 04 21 (bt-termo.md §4.4).
+_WHO4_PROBE_STATUS_REGEX = re.compile(r"^[01]{4}\Z", re.ASCII)
+# Accidental 2-digit leading-zero plain zone (``01``..``09``, optionally behind
+# ``#4#II``) triggers bt_termo's 8-probe scan on DIM 0 (QUIRK-05). 3-digit
+# ``001``..``099`` (published all-probes-of-zone form) and ``0`` stay untouched.
+_WHO4_LEADING_ZERO_ZONE_REGEX = re.compile(
+    r"^0([1-9])(#4#[0-9]{1,2})?\Z", re.ASCII
+)
 # DIMENSION 60 humidity value: digits with an optional decimal part. An empty
 # value (``*#4*1*60*##``) is no reading and must not raise out of the parser.
 _WHO4_HUMIDITY_REGEX = re.compile(r"[0-9]+(?:\.[0-9]+)?", re.ASCII)
@@ -492,7 +502,12 @@ class OWNHeatingEvent(OWNEvent):
         self._local_set_temperature = None
         self._measured_temperature = None
         self._secondary_temperature = None
+        self._probe_status_raw: str | None = None
+        self._probe_status_mask: int | None = None
         self._measured_humidity = None
+        self._pump_call_active: bool | None = None
+        self._calling_zone: int | None = None
+        self._pump: int | None = None
         self._program: int | None = None
         self._scenario: int | None = None
         self._holiday_end_date: tuple[int, int, int] | None = None
@@ -623,6 +638,60 @@ class OWNHeatingEvent(OWNEvent):
                 self._human_readable_log = (
                     f"Zone {self._zone}'s central unit reports {_status_text}"
                 )
+            elif self._mode == 40 and not self._what_param:
+                # WHO 4 §1.4.7: release of sensor local adjustment (*4*40*Z##).
+                self._type = MESSAGE_TYPE_LOCAL_OFFSET_RELEASE
+                self._mode_name = None
+                self._human_readable_log = (
+                    f"Zone {self._zone}'s local offset is released"
+                )
+            elif self._mode in (39, 41, 42, 43, 44, 45):
+                # Undocumented Gen D bt_termo events (findings/bt-termo.md §4.1/§4.3):
+                # keep message_type None until hardware semantics are verified.
+                self._mode_name = None
+                self._human_readable_log = (
+                    f"Zone {self._zone} reported undocumented WHO 4 event {self._mode}"
+                )
+            elif self._mode in (4001, 4002):
+                # Circulation-pump demand call ON (4001, SCS 9D) / OFF (4002, SCS 9E),
+                # observed across F461, MyHomeServer1, 3488, and F455 captures
+                # (findings/bt-termo.md §4.1): *4*4001#Z*0#N##, *4*4002#Z*0#N##,
+                # *4*4002*Z##, *4*4002*0#N##.
+                self._type = MESSAGE_TYPE_PUMP_CALL
+                self._mode_name = None
+                self._pump_call_active = self._mode == 4001
+                if self._what_param:
+                    calling_zone = _ascii_int(self._what_param[0])
+                    if calling_zone is not None and calling_zone > 0:
+                        self._calling_zone = calling_zone
+                elif (
+                    self._zone > 0
+                    and self._sensor is None
+                    and not where.startswith("#")
+                ):
+                    self._calling_zone = self._zone
+                if self._where == "0" and where_params:
+                    pump_num = _ascii_int(where_params[0])
+                    if pump_num is not None and pump_num > 0:
+                        self._pump = pump_num
+                if self._calling_zone is not None and self._pump is not None:
+                    self._human_readable_log = (
+                        f"Zone {self._calling_zone} calls pump {self._pump} on"
+                        if self._pump_call_active
+                        else f"Zone {self._calling_zone} releases pump {self._pump}"
+                    )
+                elif self._calling_zone is not None:
+                    self._human_readable_log = (
+                        f"Zone {self._calling_zone} calls pump on"
+                        if self._pump_call_active
+                        else f"Zone {self._calling_zone} releases its pump call"
+                    )
+                elif self._pump is not None:
+                    _pump_state = "on" if self._pump_call_active else "released"
+                    self._human_readable_log = f"Pump {self._pump} call is {_pump_state}"
+                else:
+                    _pump_state = "on" if self._pump_call_active else "released"
+                    self._human_readable_log = f"Pump call is {_pump_state}"
             else:
                 self._mode_name = None
                 self._human_readable_log = f"Zone {self._zone}'s mode is unknown"
@@ -785,6 +854,9 @@ class OWNHeatingEvent(OWNEvent):
                 # Observed on 3550 systems when the local/manual override is active.
                 self._local_control_state = LOCAL_CONTROL_OVERRIDE
             else:
+                # Includes undocumented bt_termo 0x54c0 codes "7" (0x82) and "8"
+                # (0x85) (findings/bt-termo.md §4.5.2); raw code stays in
+                # local_offset_raw until hardware semantics are verified.
                 self._local_control_state = LOCAL_CONTROL_UNKNOWN
 
             if self._local_offset is not None:
@@ -809,11 +881,20 @@ class OWNHeatingEvent(OWNEvent):
             if self._dimension_value:
                 temp_raw: str | None
                 if len(self._dimension_value) >= 2:
-                    # ``*#4*Z*15*SENSOR*TTTT##``: an empty or non-ASCII sensor
-                    # slot (``*#4*1*15**0215##``) used to raise ValueError from
-                    # int(); it is no reading.
+                    # ``*#4*Z*15*SENSOR*TTTT[*SSSS]##``: an empty or non-ASCII
+                    # sensor slot (``*#4*1*15**0215##``) used to raise
+                    # ValueError from int(); it is no reading.
                     self._sensor = _ascii_int(self._dimension_value[0])
                     temp_raw = self._dimension_value[1] if self._sensor is not None else None
+                    if (
+                        self._sensor is not None
+                        and len(self._dimension_value) >= 3
+                        and _WHO4_PROBE_STATUS_REGEX.fullmatch(self._dimension_value[2])
+                    ):
+                        # 4-bit binary hi(B5) from SCS D2 04 21 (findings/bt-termo.md
+                        # §4.4); bit meanings are undocumented so expose raw + mask.
+                        self._probe_status_raw = self._dimension_value[2]
+                        self._probe_status_mask = int(self._probe_status_raw, 2)
                 else:
                     temp_raw = self._dimension_value[0]
 
@@ -1011,6 +1092,31 @@ class OWNHeatingEvent(OWNEvent):
         return self._secondary_temperature
 
     @property
+    def probe_status_raw(self) -> str | None:
+        """4-bit binary status field from DIMENSION 15 (``"0000"``..``"1111"``), or None."""
+        return self._probe_status_raw
+
+    @property
+    def probe_status_mask(self) -> int | None:
+        """Integer value (``0..15``, ``hi(B5)``) of DIMENSION 15's 4-bit status field, or None."""
+        return self._probe_status_mask
+
+    @property
+    def pump_call_active(self) -> bool | None:
+        """``True`` for pump call ON (``4001``), ``False`` for OFF/release (``4002``), else None."""
+        return self._pump_call_active
+
+    @property
+    def calling_zone(self) -> int | None:
+        """Zone number named by a ``4001``/``4002`` pump call (``4001#Z`` or ``*4*4002*Z##``), else None."""
+        return self._calling_zone
+
+    @property
+    def pump(self) -> int | None:
+        """Pump number ``N`` from WHERE ``0#N`` on a ``4001``/``4002`` pump call, else None."""
+        return self._pump
+
+    @property
     def set_temperature(self) -> float | None:
         return self._set_temperature
 
@@ -1173,8 +1279,50 @@ class OWNHeatingCommand(OWNCommand):
 
     @classmethod
     def get_temperature(cls, where: str | int) -> OWNHeatingCommand:
-        message = cls(f"*#4*{where}*0##")
+        """Request measured temperature (``*#4*WHERE*0##``).
+
+        Strips accidental 2-digit leading zeros on plain zones (``"01"``..``"09"``,
+        optionally behind ``#4#II``) so ``bt_termo`` does not divert the request
+        into its 8-probe slave scan (``QUIRK-05``, ``findings/bt-termo.md`` §3.5),
+        while preserving intentional 3-digit ``"001"``..``"099"`` all-probes queries.
+        """
+        where_str = str(where)
+        leading_zero = _WHO4_LEADING_ZERO_ZONE_REGEX.fullmatch(where_str)
+        if leading_zero is not None:
+            where_str = f"{leading_zero.group(1)}{leading_zero.group(2) or ''}"
+        message = cls(f"*#4*{where_str}*0##")
         message._human_readable_log = f"Requesting climate status update for {message._where}{message._interface_log_text}."
+        return message
+
+    @classmethod
+    def release_local_offset(cls, where: str | int) -> OWNHeatingCommand:
+        """Release a zone's local probe adjustment (``*4*40*Z##``).
+
+        Defined by WHO 4 §1.4.7 with plain ``where = [1-99]`` and forwarded by
+        all 13 emulated gateways (``*4*40*#Z##`` is dropped by all 13;
+        ``own-firmware-oracle/oracle/cases/thermo-zone-what.cases`` and
+        ``thermo-zone-what-high.cases``); verified live on F461 2.0.11 and F455 1.0.76.
+        """
+        if isinstance(where, bool):
+            raise ValueError(f"Invalid zone number: {where}")
+        if isinstance(where, int):
+            zone_number = where
+        else:
+            where_str = str(where)
+            if (
+                not (where_str.isascii() and where_str.isdigit())
+                or len(where_str) > 2
+            ):
+                raise ValueError(f"Invalid zone address: {where}")
+            zone_number = int(where_str)
+        if not (1 <= zone_number <= 99):
+            raise ValueError(
+                f"Invalid zone number: {zone_number}. Zone must be 1..99"
+            )
+        message = cls(f"*4*40*{zone_number}##")
+        message._human_readable_log = (
+            f"Releasing local offset for zone {zone_number}."
+        )
         return message
 
     @classmethod
