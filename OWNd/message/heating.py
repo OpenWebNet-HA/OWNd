@@ -225,8 +225,9 @@ def _c_atoi(token: str) -> int | None:
 def who4_bt_termo_crash_reason(frame: object) -> str | None:
     """Return a refusal reason if ``frame`` hits a known ``bt_termo`` crash, else ``None``.
 
-    Covers the four non-DIM-22 crash vectors verified in ``bt_termo`` firmware
-    disassembly (own-firmware-oracle ``findings/bt-termo.md`` §6.1):
+    Covers the three non-DIM-22 OWN-outbound crash classes verified in
+    ``bt_termo`` firmware disassembly (own-firmware-oracle
+    ``findings/bt-termo.md`` §6.1):
 
     - ``CRASH-01``: Any WHO 4 frame whose WHERE is bare ``#`` (or ``#``-only),
       causing a NULL vector dereference (``SIGSEGV``) in ``OpenMsg::where()``.
@@ -656,8 +657,9 @@ class OWNHeatingEvent(OWNEvent):
                     f"Zone {self._zone}'s season is {self._season}."
                 )
             elif self._mode in (103, 203, 303, 102, 202, 302, 402, 502):
-                # 402/502: bt_termo 0x5390 / D2 04 C1 extended protection modes
-                # (findings/bt-termo.md §4.5.1); season stays None.
+                # 402/502: bt_termo 0x5390 (D2 04 12; 402 also D2 04 C1)
+                # extended protection modes (findings/bt-termo.md §4.5.1);
+                # season stays None.
                 self._type = MESSAGE_TYPE_MODE
                 self._mode_name = CLIMATE_MODE_OFF
                 if self._mode in (102, 103):
@@ -715,8 +717,9 @@ class OWNHeatingEvent(OWNEvent):
                 or (33001 <= self._mode <= 33255)
             ):
                 # 304: CU zone generic timed manual (D2 04 C2 09);
-                # 407/408/410 and 507/508/510: bt_termo 0x5390 / D2 04 C1
-                # extended Eco/Comfort/Manual modes (season stays None);
+                # 407/408/410 and 507/508/510: bt_termo 0x5390 (D2 04 12;
+                # 407/408/410/507/508 also D2 04 C1) extended Eco/Comfort/Manual
+                # modes (season stays None);
                 # 3100 "last set up weekly program", 3200 "last set up
                 # scenario" and 3000 / 3000#31PP "holiday mode deactivation"
                 # (Legrand WHO 4 1.6.8 p. 33, 1.6.12 p. 39, 1.6.20 p. 52,
@@ -766,8 +769,9 @@ class OWNHeatingEvent(OWNEvent):
 
             # Program / scenario numbers carried in the WHAT (Legrand WHO 4
             # p. 5 and p. 64; libqtdevices thermal_device.cpp:209-211, 246-256,
-            # 291-301; bt_termo 0xc39c): 11xx/21xx/31xx program (1..16),
-            # 12xx/22xx/32xx scenario (1..16); *00 leaves program/scenario None.
+            # 291-301; findings/bt-termo.md §4.4 / QUIRK-10): 11xx/21xx/31xx
+            # program (1..16), 12xx/22xx/32xx scenario (1..16); *00 leaves
+            # program/scenario None.
             if self._type == MESSAGE_TYPE_MODE:
                 if (
                     1101 <= self._mode <= 1116
@@ -1760,9 +1764,9 @@ class OWNHeatingCommand(OWNCommand):
         BTicino client (libqtdevices TS10_1_0_23 ThermalDevice::setWeekendDateTime)
         sends *4*315#3100+prog*WHERE##.
 
-        Note on ``bt_termo`` gateways (own-firmware-oracle ``findings/bt-termo.md`` §3.3):
-        ``115/215/315`` requires ``WHERE == "#0"`` exact; ``#0#C`` is NACKed on
-        ``bt_termo`` gateways and is accepted only on ``MH202`` (``coso``).
+        Note (own-firmware-oracle ``thermo-four-zone-central.tsv``): ``#0`` and
+        ``#0#C`` are forwarded with ``<CU>=C`` across Gen B/C/C-coso/D gateways;
+        Gen A (``H4684``/``MH200``) collapses ``#0#C`` to ``00``.
         """
         where = _validate_central_where(where, "Central unit weekend mode")
         try:
@@ -1789,9 +1793,9 @@ class OWNHeatingCommand(OWNCommand):
         BTicino client (libqtdevices TS10_1_0_23 ThermalDevice::setHolidayDateTime)
         sends *4*33000+days#3100+prog*WHERE##.
 
-        Note on ``bt_termo`` gateways (own-firmware-oracle ``findings/bt-termo.md`` §3.3):
-        ``13xxx/23xxx/33xxx`` requires ``WHERE == "#0"`` exact; ``#0#C`` is NACKed
-        on ``bt_termo`` gateways and is accepted only on ``MH202`` (``coso``).
+        Note (own-firmware-oracle ``findings/bt-termo.md`` §3.3): ``#0`` and
+        ``#0#C`` are forwarded with ``<CU>=C`` across Gen B/C/C-coso/D gateways;
+        Gen A (``H4684``/``MH200``) collapses ``#0#C`` to ``00``.
         """
         where = _validate_central_where(where, "Central unit holiday mode")
         try:
