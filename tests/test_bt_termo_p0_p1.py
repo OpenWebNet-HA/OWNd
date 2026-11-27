@@ -242,6 +242,8 @@ def test_p0_7_program_and_scenario_ranges(
         ("*#4*0*15*1*0200*0001##", "4-#0", 0),
         ("*#4*00*15*1*0200*0001##", "4-#0", 0),
         ("*#4*000*15*1*0200*0001##", "4-#0", 0),
+        ("*#4*2*15*1*0215##", "4-2", 2),
+        ("*#4*02*15*1*0215##", "4-02", 2),
         ("*4*1**##", "4-#0", 0),
     ],
 )
@@ -264,6 +266,7 @@ def test_p0_8_external_probe_unique_id(frame: str, expected_uid: str, expected_z
         ("*#4*#*0##", "CRASH-01"),
         ("*#4*#*#14*0215*1##", "CRASH-01"),
         ("*1*1*11##*#4*###", "CRASH-01"),
+        ("*##*#4*#*#14*0215*1##", "CRASH-01"),
         ("*#4*#", "CRASH-01"),
         ("*#04*###", "CRASH-01"),
         # CRASH-03: len(WHERE) >= 10
@@ -328,6 +331,7 @@ def test_p1_9_bt_termo_crash_frames_refused(frame: str, tag: str) -> None:
         "*#4*3#45#1*#22*3**1*1##",
         "*#1*11*#4*01##",
         "*1*1*11##",
+        "*##",
     ],
 )
 def test_p1_9_valid_frames_not_refused(frame: str) -> None:
