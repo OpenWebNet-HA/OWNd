@@ -627,29 +627,22 @@ class OWNSoundDiffusionEvent(OWNEvent):
             kind = parts[0]
             if kind == "3" and len(parts) >= 3:
                 self._target_type = "speaker"
-                if parts[1].isdigit():
-                    self._area = int(parts[1])
-                if parts[2].isdigit():
-                    self._point = int(parts[2])
+                self._area = int(parts[1])
+                self._point = int(parts[2])
             elif kind == "4" and len(parts) >= 2:
                 self._target_type = "area"
-                if parts[1].isdigit():
-                    self._area = int(parts[1])
+                self._area = int(parts[1])
             elif kind == "2" and len(parts) >= 2:
                 self._target_type = "source"
-                if parts[1].isdigit():
-                    self._source_id = int(parts[1])
+                self._source_id = int(parts[1])
             elif kind == "5" and len(parts) >= 3 and parts[1] == "2":
                 self._target_type = "source"
-                if parts[2].isdigit():
-                    self._source_id = int(parts[2])
+                self._source_id = int(parts[2])
             elif kind == "5" and len(parts) >= 4 and parts[1] == "3":
                 # 5#3#AREA#POINT: zone control of a wall unit; 5#3#0#0 is every zone.
                 self._target_type = "zone_control"
-                if parts[2].isdigit():
-                    self._area = int(parts[2])
-                if parts[3].isdigit():
-                    self._point = int(parts[3])
+                self._area = int(parts[2])
+                self._point = int(parts[3])
             elif kind == "6":
                 self._target_type = "all_sources"
 
@@ -680,12 +673,9 @@ class OWNSoundDiffusionEvent(OWNEvent):
             self._multimedia_type = int(self._what_param[0])
             self._output_area = int(self._what_param[1])
         elif self._what == 35 and len(self._what_param) >= 3:
-            if self._what_param[0].isdigit():
-                self._multimedia_type = int(self._what_param[0])
-            if self._what_param[1].isdigit():
-                self._matrix_area = int(self._what_param[1])
-            if self._what_param[2].isdigit():
-                self._source_request = int(self._what_param[2])
+            self._multimedia_type = int(self._what_param[0])
+            self._matrix_area = int(self._what_param[1])
+            self._source_request = int(self._what_param[2])
         elif self._what == 33 and self._what_param and self._what_param[0].isdigit():
             self._preset = int(self._what_param[0])
 

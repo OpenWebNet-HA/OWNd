@@ -123,6 +123,21 @@ class TestConnectionFaults:
             session._apply_tcp_keepalive()
             assert writer._sock.setsockopt.call_count >= 4
 
+        # 4. Platform without fine-grained Linux TCP keepalive knobs
+        from types import SimpleNamespace
+
+        writer._sock.setsockopt.reset_mock()
+        minimal_socket = SimpleNamespace(
+            SOL_SOCKET=socket.SOL_SOCKET,
+            SO_KEEPALIVE=socket.SO_KEEPALIVE,
+            IPPROTO_TCP=socket.IPPROTO_TCP,
+        )
+        with patch("OWNd.connection.session.socket", minimal_socket):
+            session._apply_tcp_keepalive()
+        writer._sock.setsockopt.assert_called_once_with(
+            socket.SOL_SOCKET, socket.SO_KEEPALIVE, 1
+        )
+
     @pytest.mark.asyncio
     async def test_read_frame_without_timeout(self) -> None:
         session, _ = make_fault_session()

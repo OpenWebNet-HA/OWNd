@@ -18,6 +18,7 @@ from .session import (
     KEEPALIVE_INTERVAL,
     OWNSession,
     RECONNECT_PAUSE_FATAL,
+    _CONNECT_MAX_ATTEMPTS,
     _FATAL_NEGOTIATION_ERRORS,
     _negotiation_error_to_exception,
 )
@@ -110,7 +111,7 @@ SEND_RECONNECT_COOLDOWN = 2.0
 SEND_AUTH_COOLDOWN = float(RECONNECT_PAUSE_FATAL)
 
 # Per-task active ``OWNCommandSession.connect()`` call ``(session, seq)`` so
-# ``_notify_auth_error`` attributes a refusal strictly to the ``connect()``
+# ``_on_fatal_negotiation_error`` attributes a refusal strictly to the ``connect()``
 # running in the current task (never to an overlapping ``connect()`` or a
 # concurrent ``test_connection()``).
 _ACTIVE_CONNECT: contextvars.ContextVar[tuple[OWNCommandSession, int] | None] = (
@@ -142,7 +143,7 @@ class OWNCommandSession(OWNSession):
         # the address, port and password the gateway object held when the
         # refusal became known; ``send()``
         # reports it without logging in again until SEND_AUTH_COOLDOWN has
-        # passed, connect() is called, or one of the three changes.
+        # passed, connect() succeeds, or one of the three changes.
         self._refused_login_reason: str | None = None
         self._refused_login_target: tuple[object, object, object] | None = None
         # Number of the latest connect() started on this session.
@@ -162,7 +163,11 @@ class OWNCommandSession(OWNSession):
     ) -> dict[str, Any] | None:
         self._connect_seq += 1
         seq = self._connect_seq
-        self._clear_refused_login()
+        if (
+            self._refused_login_reason is not None
+            and self._refused_login_target != self._login_target()
+        ):
+            self._clear_refused_login()
         token = _ACTIVE_CONNECT.set((self, seq))
         try:
             result = await super().connect(raise_on_error=raise_on_error)
@@ -178,23 +183,35 @@ class OWNCommandSession(OWNSession):
             self._hold_refused_login(result.get("Message"), seq)
         return result
 
-    def _notify_auth_error(self, error: OWNAuthError) -> None:
-        """Record the hold before the caller's callback runs and before ``connect()`` yields.
+    def _on_fatal_negotiation_error(self, reason: str, error: OWNError) -> None:
+        """Record the hold before user callbacks run and before ``connect()`` yields to close streams.
 
-        The hold names the address, port and password the gateway object
-        holds at that moment (what the refused negotiation just used).
-        Outside a ``connect()`` in this task (e.g. ``test_connection()``)
-        nothing is held, and an overlapping older ``connect()`` never
-        poisons a newer one.
+        Applies to every fatal negotiation error (including ``negotiation_error``,
+        which raises ``OWNProtocolError`` rather than ``OWNAuthError``).
         """
         active = _ACTIVE_CONNECT.get()
         if active is not None and active[0] is self:
-            self._hold_refused_login(error.reason, active[1])
-        # Clear _ACTIVE_CONNECT across user callbacks so tasks spawned inside
-        # on_auth_error (e.g. test_connection) do not inherit this connect()'s tag.
+            self._hold_refused_login(reason, active[1])
+
+    def _notify_auth_error(self, error: OWNAuthError) -> None:
+        """Clear ``_ACTIVE_CONNECT`` across auth callbacks so spawned tasks do not inherit it.
+
+        Hold-arming during ``connect()`` happens in
+        ``_on_fatal_negotiation_error()`` right before this hook runs, so
+        ``test_connection()`` (which invokes ``_notify_auth_error()`` directly)
+        can never arm ``SEND_AUTH_COOLDOWN``.
+        """
         token = _ACTIVE_CONNECT.set(None)
         try:
             super()._notify_auth_error(error)
+        finally:
+            _ACTIVE_CONNECT.reset(token)
+
+    def _set_connected(self, value: bool) -> None:
+        """Clear ``_ACTIVE_CONNECT`` across state callbacks so spawned tasks do not inherit it."""
+        token = _ACTIVE_CONNECT.set(None)
+        try:
+            super()._set_connected(value)
         finally:
             _ACTIVE_CONNECT.reset(token)
 
@@ -574,6 +591,13 @@ class OWNCommandSession(OWNSession):
                     if raise_on_error:
                         raise err
                     return None
+                elif refused_reason is not None:
+                    # The hold has run out and this send() logs in again. The
+                    # old refusal goes first: connect() keeps a hold for the
+                    # same address, port and password, and an attempt that
+                    # then fails without a login (gateway unreachable) would
+                    # restart the 60 s under the old reason.
+                    self._clear_refused_login()
                 if (
                     self._last_reconnect_failure is not None
                     and (now - self._last_reconnect_failure)
@@ -594,11 +618,11 @@ class OWNCommandSession(OWNSession):
                     return None
 
                 seq_before = self._connect_seq
-                self._connect_max_attempts_override = 1
+                attempts_token = _CONNECT_MAX_ATTEMPTS.set(1)
                 try:
                     result = await self.connect()
                 finally:
-                    self._connect_max_attempts_override = None
+                    _CONNECT_MAX_ATTEMPTS.reset(attempts_token)
 
                 if (
                     not isinstance(result, Mapping)
@@ -606,10 +630,14 @@ class OWNCommandSession(OWNSession):
                     or self._stream_reader is None
                     or self._stream_writer is None
                 ):
-                    err = self._last_error or OWNConnectionError(
-                        f"Command session unavailable; message `{frame}` not sent",
-                        reason="connection_unavailable",
-                    )
+                    msg = result.get("Message") if isinstance(result, Mapping) else None
+                    if isinstance(msg, str) and msg in _FATAL_NEGOTIATION_ERRORS:
+                        err = _negotiation_error_to_exception(msg)
+                    else:
+                        err = self._last_error or OWNConnectionError(
+                            f"Command session unavailable; message `{frame}` not sent",
+                            reason="connection_unavailable",
+                        )
                     # Do not re-arm cooldown or close a newer concurrent connect()'s live socket.
                     if self._connect_seq <= seq_before + 1:
                         self._last_reconnect_failure = time.monotonic()
@@ -623,7 +651,8 @@ class OWNCommandSession(OWNSession):
                     if raise_on_error:
                         raise err
                     return None
-                self._last_reconnect_failure = None
+                if self._connect_seq <= seq_before + 1:
+                    self._last_reconnect_failure = None
 
             written = False
             try:

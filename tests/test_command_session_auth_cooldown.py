@@ -11,6 +11,7 @@ authentication service have to be disabled for 60 seconds" (Hmac Specification
 from __future__ import annotations
 
 import asyncio
+import contextvars
 import gc
 import logging
 import socket
@@ -24,15 +25,20 @@ import pytest
 
 from OWNd.connection import (
     MAX_CONNECT_ATTEMPTS,
+    RECONNECT_PAUSE,
     RECONNECT_PAUSE_FATAL,
     SEND_AUTH_COOLDOWN,
     SEND_RECONNECT_COOLDOWN,
     OWNAuthError,
     OWNCommandSession,
     OWNConnectionError,
+    OWNEventSession,
     OWNGateway,
     OWNProtocolError,
+    OWNSession,
 )
+from OWNd.connection.command_session import _ACTIVE_CONNECT
+from OWNd.transport.tcp import AsyncTcpTransport
 
 MODULE = "OWNd.connection.command_session"
 OPEN = "OWNd.connection.session.asyncio.open_connection"
@@ -724,3 +730,608 @@ async def test_connect_and_probe_bare_async_mock_no_runtime_warning() -> None:
     assert session._refused_login_reason is None
     assert alive is False
     mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_negotiation_error_arms_cooldown_before_closing_streams() -> None:
+    """``negotiation_error`` maps to ``OWNProtocolError`` (not ``OWNAuthError``),
+    so ``connect()`` must arm ``SEND_AUTH_COOLDOWN`` via ``_on_fatal_negotiation_error``
+    synchronously before ``await _close_streams()`` yields to a concurrent ``send()``.
+    """
+    session = make_session()
+    closing = asyncio.Event()
+    release_close = asyncio.Event()
+    negotiate_calls = 0
+
+    async def fake_open(*_args: object, **_kwargs: object) -> tuple[MagicMock, MagicMock]:
+        writer = MagicMock()
+        writer.close = MagicMock()
+        writer.is_closing = MagicMock(return_value=False)
+
+        async def wait_closed() -> None:
+            closing.set()
+            await release_close.wait()
+
+        writer.wait_closed = wait_closed
+        reader = MagicMock()
+        reader.at_eof = MagicMock(return_value=False)
+        return reader, writer
+
+    async def fake_negotiate() -> dict[str, object]:
+        nonlocal negotiate_calls
+        negotiate_calls += 1
+        return {"Success": False, "Message": "negotiation_error"}
+
+    with (
+        patch(OPEN, new=AsyncMock(side_effect=fake_open)),
+        patch.object(session, "_negotiate", new=AsyncMock(side_effect=fake_negotiate)),
+    ):
+        connect_task = asyncio.create_task(session.connect())
+        await closing.wait()
+
+        with pytest.raises(OWNProtocolError) as exc_info:
+            await session.send("*1*1*05##", raise_on_error=True)
+        assert exc_info.value.reason == "negotiation_error"
+        assert negotiate_calls == 1
+
+        release_close.set()
+        res = await connect_task
+        assert res is not None and res["Message"] == "negotiation_error"
+
+    assert negotiate_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_send_max_attempts_cap_does_not_leak_to_concurrent_connect() -> None:
+    """``send()`` caps its own ``connect()`` to 1 attempt via a task-local ContextVar
+    so a concurrent explicit ``connect()`` still runs all ``MAX_CONNECT_ATTEMPTS``.
+    """
+    session = make_session()
+    send_in_connect = asyncio.Event()
+    release_send = asyncio.Event()
+    explicit_attempts = 0
+    send_attempts = 0
+    # Use a ContextVar rather than current_task() identity: in Python 3.11,
+    # asyncio.wait_for() wraps open_connection() in a child Task that inherits
+    # contextvars but has a different Task identity from send_task.
+    in_send_task: contextvars.ContextVar[bool] = contextvars.ContextVar(
+        "in_send_task", default=False
+    )
+
+    async def fake_open(*_args: object, **_kwargs: object) -> tuple[MagicMock, MagicMock]:
+        nonlocal explicit_attempts, send_attempts
+        if in_send_task.get():
+            send_attempts += 1
+            send_in_connect.set()
+            await release_send.wait()
+            raise OSError("send connect failed")
+        explicit_attempts += 1
+        raise OSError("explicit connect failed")
+
+    async def run_send() -> object:
+        in_send_task.set(True)
+        return await session.send("*1*1*05##", raise_on_error=False)
+
+    with (
+        patch(OPEN, new=AsyncMock(side_effect=fake_open)),
+        patch("OWNd.connection.session.asyncio.sleep", new=AsyncMock()),
+    ):
+        send_task = asyncio.create_task(run_send())
+        await send_in_connect.wait()
+
+        explicit_res = await session.connect()
+        assert explicit_res is None
+        assert explicit_attempts == MAX_CONNECT_ATTEMPTS
+
+        release_send.set()
+        assert await send_task is None
+        assert send_attempts == 1
+
+
+@pytest.mark.asyncio
+async def test_test_connection_negotiation_error_does_not_arm_hold() -> None:
+    """``test_connection()`` runs outside ``connect()`` (``_ACTIVE_CONNECT`` is None),
+    so a ``negotiation_error`` from ``test_connection()`` never arms ``SEND_AUTH_COOLDOWN``.
+    """
+    session = make_session()
+    open_connection, negotiate = refuse_logins("negotiation_error")
+    with (
+        patch(OPEN, new=open_connection),
+        patch.object(session, "_negotiate", new=negotiate),
+    ):
+        res = await session.test_connection()
+    assert res is not None and res["Message"] == "negotiation_error"
+    assert session._refused_login_reason is None
+    assert session._last_reconnect_failure is None
+
+
+@pytest.mark.asyncio
+async def test_same_target_explicit_connect_keeps_refusal_hold_while_in_flight() -> None:
+    """An explicit ``connect()`` for the same refused target keeps the hold active while
+    negotiating so concurrent ``send()`` calls do not open extra connections, and lifts
+    the hold once negotiation succeeds.
+    """
+    session = make_session()
+    in_flight = asyncio.Event()
+    release_connect = asyncio.Event()
+    open_calls = 0
+
+    async def fake_open(*_args: object, **_kwargs: object) -> tuple[MagicMock, MagicMock]:
+        nonlocal open_calls
+        open_calls += 1
+        writer = MagicMock()
+        writer.close = MagicMock()
+        writer.is_closing = MagicMock(return_value=False)
+        writer.wait_closed = AsyncMock()
+        reader = MagicMock()
+        reader.at_eof = MagicMock(return_value=False)
+        if open_calls == 2:
+            in_flight.set()
+            await release_connect.wait()
+        return reader, writer
+
+    negotiate_results = [
+        {"Success": False, "Message": "password_error"},
+        {"Success": True, "Message": "ok"},
+    ]
+
+    with (
+        patch(OPEN, new=AsyncMock(side_effect=fake_open)),
+        patch.object(session, "_negotiate", new=AsyncMock(side_effect=negotiate_results)),
+    ):
+        first = await session.connect()
+        assert first is not None and first["Message"] == "password_error"
+        assert open_calls == 1
+
+        # Same-target explicit connect starts; while in-flight, concurrent send() stays held.
+        retry_task = asyncio.create_task(session.connect())
+        await in_flight.wait()
+        with pytest.raises(OWNAuthError) as exc_info:
+            await session.send("*1*1*05##", raise_on_error=True)
+        assert exc_info.value.reason == "password_error"
+        assert open_calls == 2
+
+        # Once explicit connect succeeds, hold is cleared.
+        release_connect.set()
+        second = await retry_task
+        assert second is not None and second["Success"] is True
+        assert session._refused_login_reason is None
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_send_raises_fatal_negotiation_error_when_concurrent_connect_clears_last_error() -> None:
+    """If a concurrent ``connect()`` clears ``self._last_error`` while ``send()``'s own
+    refused ``connect()`` is finishing, ``send(raise_on_error=True)`` still raises the
+    typed fatal negotiation error from ``result['Message']``.
+    """
+    session = make_session()
+
+    async def fake_connect(*_args: object, **_kwargs: object) -> dict[str, object]:
+        # Simulate another concurrent connect() resetting _last_error to None.
+        session._connect_seq += 2
+        session._last_error = None
+        return {"Success": False, "Message": "password_error"}
+
+    with patch.object(session, "connect", new=AsyncMock(side_effect=fake_connect)):
+        with pytest.raises(OWNAuthError) as exc_info:
+            await session.send("*1*1*05##", raise_on_error=True)
+        assert exc_info.value.reason == "password_error"
+
+
+@pytest.mark.asyncio
+async def test_event_session_and_tcp_transport_guard_non_mapping_connect_results() -> None:
+    """``OWNEventSession`` and ``AsyncTcpTransport`` guard non-Mapping ``connect()`` results
+    (such as bare ``AsyncMock`` patches) without raising ``AttributeError`` or leaking warnings.
+    """
+    gateway = OWNGateway({"address": "127.0.0.1", "port": 20000})
+    event_session = OWNEventSession(gateway=gateway, logger=MagicMock())
+    transport = AsyncTcpTransport(gateway=gateway, logger=MagicMock())
+    sleeps: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        sleeps.append(delay)
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error")
+        with patch("OWNd.connection.session.OWNSession.connect", new_callable=AsyncMock):
+            res = await event_session.connect()
+        assert res is not None
+        assert event_session._keepalive_task is None
+
+        with (
+            patch.object(event_session, "_reconnect", new_callable=AsyncMock),
+            patch("OWNd.connection.event_session.asyncio.sleep", side_effect=record_sleep),
+        ):
+            nxt = await event_session.get_next(raise_on_auth_error=True)
+        assert nxt is None
+        assert sleeps == [RECONNECT_PAUSE]
+
+        with (
+            patch.object(OWNEventSession, "connect", new_callable=AsyncMock),
+            patch.object(OWNCommandSession, "connect", new_callable=AsyncMock),
+        ):
+            connected = await transport.connect()
+        assert connected is False
+
+        with (
+            patch.object(
+                OWNEventSession,
+                "connect",
+                new=AsyncMock(return_value={"Success": True}),
+            ),
+            patch.object(OWNCommandSession, "connect", new_callable=AsyncMock),
+        ):
+            connected = await transport.connect()
+        assert connected is False
+        gc.collect()
+
+
+# --- An expired hold, and the single attempt of send() in tasks a callback starts ---
+
+
+@pytest.mark.asyncio
+async def test_an_expired_hold_does_not_come_back_after_an_attempt_without_a_login() -> None:
+    """Past the 60 s, a ``send()`` whose reconnect fails before any login (gateway
+    unreachable) is a connection failure with the 2 s cooldown. ``connect()`` keeps
+    a hold for the same address, port and password, so the old refusal used to
+    start a second 60 s there, with no login behind it.
+    """
+    session = make_session()
+    open_connection, negotiate = refuse_logins()
+    unreachable = AsyncMock(side_effect=OSError("unreachable"))
+    clock = [1000.0]
+
+    with (
+        patch.object(session, "_negotiate", new=negotiate),
+        patch(f"{MODULE}.time.monotonic", side_effect=lambda: clock[0]),
+    ):
+        with patch(OPEN, new=open_connection):
+            assert await session.send("*#13**15##", is_status_request=True) is None
+        assert session._refused_login_reason == "password_error"
+
+        session._logger.reset_mock()
+        with patch(OPEN, new=unreachable):
+            clock[0] += SEND_AUTH_COOLDOWN + 1.0
+            assert await session.send("*#13**15##", is_status_request=True) is None
+            assert unreachable.await_count == 1
+            assert isinstance(session.last_error, OWNConnectionError)
+            assert session.last_error.reason == "network_error"
+            assert session._refused_login_reason is None
+
+            # Inside the 2 s: no attempt, and not the refusal of a minute ago.
+            clock[0] += 1.0
+            assert await session.send("*#13**15##", is_status_request=True) is None
+            assert isinstance(session.last_error, OWNConnectionError)
+            assert session.last_error.reason == "connection_unavailable"
+            assert unreachable.await_count == 1
+
+            # Past the 2 s: the next attempt.
+            clock[0] += SEND_RECONNECT_COOLDOWN
+            assert await session.send("*#13**15##", is_status_request=True) is None
+            assert session.last_error.reason == "network_error"
+            assert unreachable.await_count == 2
+
+    assert negotiate.await_count == 1
+    assert not [
+        call
+        for call in session._logger.warning.call_args_list
+        if call.args[0].startswith("%s Authentication handshake failed")
+    ]
+
+
+@pytest.mark.asyncio
+async def test_an_explicit_connect_inside_the_hold_does_not_end_or_extend_it() -> None:
+    """An explicit ``connect()`` that fails before any login leaves the hold as it
+    was: the same reason, and the 60 s still counted from the refused login.
+    """
+    session = make_session()
+    open_connection, negotiate = refuse_logins()
+    unreachable = AsyncMock(side_effect=OSError("unreachable"))
+    clock = [1000.0]
+
+    with (
+        patch.object(session, "_negotiate", new=negotiate),
+        patch("OWNd.connection.session.asyncio.sleep", new=AsyncMock()),
+        patch(f"{MODULE}.time.monotonic", side_effect=lambda: clock[0]),
+    ):
+        with patch(OPEN, new=open_connection):
+            assert await session.send("*#13**15##", is_status_request=True) is None
+
+        with patch(OPEN, new=unreachable):
+            clock[0] += 10.0
+            assert await session.connect() is None
+            assert unreachable.await_count == MAX_CONNECT_ATTEMPTS
+
+            clock[0] = 1000.0 + SEND_AUTH_COOLDOWN - 0.5
+            assert await session.send("*#13**15##", is_status_request=True) is None
+            assert isinstance(session.last_error, OWNAuthError)
+            assert unreachable.await_count == MAX_CONNECT_ATTEMPTS
+
+            clock[0] = 1000.0 + SEND_AUTH_COOLDOWN + 0.5
+            assert await session.send("*#13**15##", is_status_request=True) is None
+            assert isinstance(session.last_error, OWNConnectionError)
+            assert unreachable.await_count == MAX_CONNECT_ATTEMPTS + 1
+
+    assert negotiate.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_a_task_started_in_on_auth_error_does_not_keep_the_single_attempt_of_send() -> None:
+    """A task copies the context it is created in. One that ``on_auth_error`` starts
+    during the ``connect()`` of ``send()`` (to reconnect later) makes its own
+    ``connect()`` with all ``MAX_CONNECT_ATTEMPTS``.
+    """
+    session = make_session()
+    open_connection, negotiate = refuse_logins()
+    unreachable = AsyncMock(side_effect=OSError("unreachable"))
+    send_done = asyncio.Event()
+    tasks: list[asyncio.Task[object]] = []
+
+    async def connect_later() -> object:
+        await send_done.wait()
+        with (
+            patch(OPEN, new=unreachable),
+            patch("OWNd.connection.session.asyncio.sleep", new=AsyncMock()),
+        ):
+            return await session.connect()
+
+    session.on_auth_error = lambda _error: tasks.append(asyncio.create_task(connect_later()))
+
+    with (
+        patch(OPEN, new=open_connection),
+        patch.object(session, "_negotiate", new=negotiate),
+    ):
+        assert await session.send("*#13**15##", is_status_request=True) is None
+    assert open_connection.await_count == 1
+    send_done.set()
+
+    assert len(tasks) == 1
+    assert await tasks[0] is None
+    assert unreachable.await_count == MAX_CONNECT_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_a_task_started_in_on_state_change_does_not_keep_the_single_attempt_of_send() -> None:
+    """The same for ``on_state_change``: the session was connected, its socket is gone,
+    and the one attempt of ``send()`` fails. The consumer hears ``False`` inside that
+    ``connect()`` and starts a task to reconnect.
+    """
+    send_done = asyncio.Event()
+    tasks: list[asyncio.Task[object]] = []
+    unreachable = AsyncMock(side_effect=OSError("unreachable"))
+    still_unreachable = AsyncMock(side_effect=OSError("unreachable"))
+
+    async def connect_later() -> object:
+        await send_done.wait()
+        with (
+            patch(OPEN, new=still_unreachable),
+            patch("OWNd.connection.session.asyncio.sleep", new=AsyncMock()),
+        ):
+            return await session.connect()
+
+    def on_state_change(connected: bool) -> None:
+        if not connected:
+            tasks.append(asyncio.create_task(connect_later()))
+
+    gateway = OWNGateway(
+        {"address": "192.0.2.1", "port": 20000, "password": "madeup1", "modelName": "F461"}
+    )
+    session = OWNCommandSession(
+        gateway=gateway, logger=MagicMock(), on_state_change=on_state_change
+    )
+    open_connection, negotiate = refuse_logins()
+    negotiate.return_value = {"Success": True, "Message": None}
+    with (
+        patch(OPEN, new=open_connection),
+        patch.object(session, "_negotiate", new=negotiate),
+    ):
+        assert await session.connect() == {"Success": True, "Message": None}
+    # What send() does itself when it finds the socket closed by the gateway.
+    await session._close_streams()
+    assert session.is_connected
+    assert not session.is_open
+    assert not tasks
+
+    with patch(OPEN, new=unreachable):
+        assert await session.send("*#13**15##", is_status_request=True) is None
+    assert unreachable.await_count == 1
+    send_done.set()
+
+    assert len(tasks) == 1
+    assert await tasks[0] is None
+    assert still_unreachable.await_count == MAX_CONNECT_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_task_started_in_on_state_change_test_connection_does_not_arm_hold() -> None:
+    """A task started inside ``on_state_change(True)`` or ``on_state_change(False)``
+    must not inherit ``_ACTIVE_CONNECT``, and calling ``test_connection()`` on a
+    refused login from that task must never arm ``SEND_AUTH_COOLDOWN``.
+    """
+    inherited_tags: list[object] = []
+    probe_tasks: list[asyncio.Task[dict[str, object]]] = []
+    trigger_for: set[bool] = {True}
+
+    gateway = OWNGateway(
+        {"address": "192.0.2.1", "port": 20000, "password": "madeup1", "modelName": "F461"}
+    )
+    open_refused, negotiate_refused = refuse_logins("password_error")
+
+    async def probe_from_callback() -> dict[str, object]:
+        inherited_tags.append(_ACTIVE_CONNECT.get())
+        with (
+            patch(OPEN, new=open_refused),
+            patch.object(session, "_negotiate", new=negotiate_refused),
+        ):
+            return await session.test_connection()
+
+    def on_state_change(connected: bool) -> None:
+        if connected in trigger_for:
+            probe_tasks.append(asyncio.create_task(probe_from_callback()))
+
+    session = OWNCommandSession(
+        gateway=gateway, logger=MagicMock(), on_state_change=on_state_change
+    )
+
+    # 1. on_state_change(True) inside connect()
+    open_ok, negotiate_ok = refuse_logins()
+    negotiate_ok.return_value = {"Success": True, "Message": None}
+    with (
+        patch(OPEN, new=open_ok),
+        patch.object(session, "_negotiate", new=negotiate_ok),
+    ):
+        assert await session.connect() == {"Success": True, "Message": None}
+    assert len(probe_tasks) == 1
+    probe_res = await probe_tasks[0]
+    assert probe_res["Message"] == "password_error"
+    assert inherited_tags == [None]
+    assert session._refused_login_reason is None
+    assert session._last_reconnect_failure is None
+
+    # 2. on_state_change(False) inside connect() on retry exhaustion
+    trigger_for.clear()
+    with (
+        patch(OPEN, new=open_ok),
+        patch.object(session, "_negotiate", new=negotiate_ok),
+    ):
+        assert await session.connect() == {"Success": True, "Message": None}
+    await session._close_streams()
+    assert session.is_connected
+    trigger_for.add(False)
+    unreachable = AsyncMock(side_effect=OSError("unreachable"))
+    with (
+        patch(OPEN, new=unreachable),
+        patch("OWNd.connection.session.asyncio.sleep", new=AsyncMock()),
+    ):
+        assert await session.connect() is None
+    assert len(probe_tasks) == 2
+    probe_res2 = await probe_tasks[1]
+    assert probe_res2["Message"] == "password_error"
+    assert inherited_tags == [None, None]
+    assert session._refused_login_reason is None
+    assert session._last_reconnect_failure is None
+
+
+@pytest.mark.asyncio
+async def test_on_fatal_negotiation_error_ignores_untracked_or_foreign_connect() -> None:
+    """``_on_fatal_negotiation_error`` ignores calls outside this session's
+    ``OWNCommandSession.connect()`` (both when ``_ACTIVE_CONNECT`` is ``None`` and
+    when it belongs to a different session).
+    """
+    session = make_session()
+    other_session = make_session()
+
+    # 1. _ACTIVE_CONNECT is None (e.g. OWNSession.connect called directly).
+    open_refused, negotiate_refused = refuse_logins("negotiation_error")
+    with (
+        patch(OPEN, new=open_refused),
+        patch.object(session, "_negotiate", new=negotiate_refused),
+    ):
+        res = await OWNSession.connect(session)
+    assert res is not None and res["Message"] == "negotiation_error"
+    assert session._refused_login_reason is None
+    assert session._last_reconnect_failure is None
+
+    # 2. _ACTIVE_CONNECT belongs to another session.
+    token = _ACTIVE_CONNECT.set((other_session, 1))
+    try:
+        session._on_fatal_negotiation_error(
+            "negotiation_error", OWNProtocolError("bad", reason="negotiation_error")
+        )
+    finally:
+        _ACTIVE_CONNECT.reset(token)
+    assert session._refused_login_reason is None
+    assert session._last_reconnect_failure is None
+
+
+@pytest.mark.asyncio
+async def test_stale_connect_success_does_not_clear_newer_refusal_hold() -> None:
+    """When an older overlapping ``connect()`` (seq 1) returns ``{"Success": True}``
+    after a newer ``connect()`` (seq 2) has started and armed a refusal hold, the
+    stale success must not clear seq 2's hold.
+    """
+    session = make_session()
+    seq1_negotiating = asyncio.Event()
+    release_seq1 = asyncio.Event()
+    call_count = 0
+
+    async def fake_open(*_args: object, **_kwargs: object) -> tuple[MagicMock, MagicMock]:
+        writer = MagicMock()
+        writer.close = MagicMock()
+        writer.is_closing = MagicMock(return_value=False)
+        writer.wait_closed = AsyncMock()
+        reader = MagicMock()
+        reader.at_eof = MagicMock(return_value=False)
+        return reader, writer
+
+    async def fake_negotiate() -> dict[str, object]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            seq1_negotiating.set()
+            await release_seq1.wait()
+            return {"Success": True, "Message": None}
+        return {"Success": False, "Message": "password_error"}
+
+    with (
+        patch(OPEN, new=AsyncMock(side_effect=fake_open)),
+        patch.object(session, "_negotiate", new=AsyncMock(side_effect=fake_negotiate)),
+    ):
+        seq1_task = asyncio.create_task(session.connect())
+        await seq1_negotiating.wait()
+
+        # Newer connect() (seq 2) fails fatally and arms the refusal hold.
+        seq2_res = await session.connect()
+        assert seq2_res is not None and seq2_res["Message"] == "password_error"
+        assert session._connect_seq == 2
+        assert session._refused_login_reason == "password_error"
+        assert session._refused_login_seq == 2
+        hold_ts = session._last_reconnect_failure
+        assert hold_ts is not None
+
+        # Older connect() (seq 1) finishes with Success=True; seq 2's hold must stay.
+        release_seq1.set()
+        seq1_res = await seq1_task
+        assert seq1_res == {"Success": True, "Message": None}
+        assert session._refused_login_reason == "password_error"
+        assert session._refused_login_seq == 2
+        assert session._last_reconnect_failure == hold_ts
+        await session.close()
+
+
+@pytest.mark.asyncio
+async def test_send_stale_reconnect_success_does_not_clear_newer_hold_timestamp() -> None:
+    """When ``send()``'s reconnect ``connect()`` succeeds after a newer concurrent
+    ``connect()`` has incremented ``_connect_seq`` and armed a refusal hold,
+    ``_locked_send()`` must not wipe ``_last_reconnect_failure``.
+    """
+    session = make_session()
+    hold_ts = 12345.0
+
+    async def fake_connect(*_args: object, **_kwargs: object) -> dict[str, object]:
+        # Simulate seq=1 completing while a newer seq=2 already armed a hold,
+        # leaving live streams from seq=1 in place.
+        session._connect_seq += 2
+        session._refused_login_reason = "password_error"
+        session._refused_login_target = session._login_target()
+        session._refused_login_seq = session._connect_seq
+        session._last_reconnect_failure = hold_ts
+        reader = asyncio.StreamReader()
+        reader.feed_data(ACK)
+        writer = MagicMock()
+        writer.write = MagicMock()
+        writer.drain = AsyncMock()
+        writer.close = MagicMock()
+        writer.is_closing = MagicMock(return_value=False)
+        writer.wait_closed = AsyncMock()
+        session._stream_reader = reader
+        session._stream_writer = writer
+        return {"Success": True, "Message": None}
+
+    with patch.object(session, "connect", new=AsyncMock(side_effect=fake_connect)):
+        result = await session.send("*1*1*05##")
+    assert result is True
+    assert session._last_reconnect_failure == hold_ts
+    assert session._refused_login_reason == "password_error"
+    await session.close()

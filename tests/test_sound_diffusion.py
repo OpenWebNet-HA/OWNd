@@ -270,6 +270,17 @@ def test_who22_tuner_frequency_event(frame: str, khz: int) -> None:
     assert f"{khz / 1000:.2f} MHz" in event.human_readable_log
 
 
+def test_who22_tuner_frequency_empty_band_decodes_khz() -> None:
+    """Dimension 5 with an empty band token keeps ``frequency_band`` None and decodes kHz."""
+    event = OWNMessage.parse("*#22*2#1*5**10150##")
+    assert isinstance(event, OWNSoundDiffusionEvent)
+    assert event.target_type == "source"
+    assert event.source_id == 1
+    assert event.frequency_band is None
+    assert event.frequency_khz == 101500
+    assert event.frequency_mhz == 101.5
+
+
 @pytest.mark.parametrize(
     ("frame", "khz", "preset"),
     [

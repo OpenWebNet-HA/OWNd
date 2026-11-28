@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import hmac
 import logging
 import secrets
@@ -92,6 +93,12 @@ RECONNECT_PAUSE_FATAL = 60
 DROP_BURST_COUNT = 3
 DROP_BURST_WINDOW = 600  # 10 minutes
 DROP_WARNING_INTERVAL = 3600  # 1 hour
+# Task-local single-attempt connect cap used by OWNCommandSession.send() so a
+# concurrent connect() in another task never sees the 1-attempt override.
+# OWNSession.connect() reads it once and clears it at once (one call, one cap).
+_CONNECT_MAX_ATTEMPTS: contextvars.ContextVar[int | None] = contextvars.ContextVar(
+    "_CONNECT_MAX_ATTEMPTS", default=None
+)
 
 
 def _negotiation_error_to_exception(reason: str | None) -> OWNError:
@@ -230,6 +237,9 @@ class OWNSession:
                     self._logger.exception(
                         "%s on_state_change callback raised.", self._log_id
                     )
+
+    def _on_fatal_negotiation_error(self, reason: str, error: OWNError) -> None:
+        """Hook invoked synchronously on any fatal negotiation error before closing streams."""
 
     def _apply_tcp_keepalive(self) -> None:
         """Enable OS-level TCP keepalive on the current socket (best-effort).
@@ -435,7 +445,19 @@ class OWNSession:
         self._logger.debug("%s Opening %s session.", self._log_id, self._type)
         self._last_error = None
 
-        max_attempts = self._connect_max_attempts_override or MAX_CONNECT_ATTEMPTS
+        # The cap ``OWNCommandSession.send()`` sets belongs to this one call.
+        # It is taken out of the context here, before any callback runs: a
+        # task started by a callback during this ``connect()``
+        # (``on_auth_error``, ``on_state_change``) copies the context, and
+        # would keep a cap of 1 for every ``connect()`` it makes later.
+        send_cap = _CONNECT_MAX_ATTEMPTS.get()
+        if send_cap is not None:
+            _CONNECT_MAX_ATTEMPTS.set(None)
+        max_attempts = (
+            send_cap
+            or self._connect_max_attempts_override
+            or MAX_CONNECT_ATTEMPTS
+        )
         retry_count = 0
         last_attempt_error: OWNError = OWNConnectionError(
             "Session could not be established", reason="connection_error"
@@ -481,6 +503,7 @@ class OWNSession:
                         msg,
                     )
                     self._last_error = last_attempt_error
+                    self._on_fatal_negotiation_error(msg, last_attempt_error)
                     if isinstance(last_attempt_error, OWNAuthError):
                         self._notify_auth_error(last_attempt_error)
                     self._set_connected(False)
@@ -701,11 +724,7 @@ class OWNSession:
                     self._stream_writer.write(b"*#*0##")
                     await self._stream_writer.drain()
                 else:
-                    method = "sha"
-                    if resulting_message.is_sha_1():
-                        method = "sha1"
-                    elif resulting_message.is_sha_256():
-                        method = "sha256"
+                    method = "sha1" if resulting_message.is_sha_1() else "sha256"
                     self._logger.debug(
                         "%s Accepting %s challenge, initiating handshake.",
                         self._log_id,

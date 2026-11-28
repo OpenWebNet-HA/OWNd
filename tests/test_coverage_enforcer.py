@@ -7,6 +7,7 @@ import pytest
 
 from scripts.verify_coverage import (
     collapse_line_ranges,
+    format_partial_branches,
     get_source_snippet,
     normalize_coverage_filename,
     verify_all_coverage,
@@ -57,10 +58,10 @@ def test_verify_all_coverage_success(tmp_path):
                 if rel_path not in EXCLUDED_MODULES:
                     disk_files.append(rel_path)
 
-    root = ET.Element("coverage")
+    root = ET.Element("coverage", attrib={"branches-valid": "10", "branches-covered": "10", "branch-rate": "1.0"})
     pkg = ET.SubElement(root, "package")
     for df in disk_files:
-        cls = ET.SubElement(pkg, "class", attrib={"filename": df, "line-rate": "1.0"})
+        cls = ET.SubElement(pkg, "class", attrib={"filename": df, "line-rate": "1.0", "branch-rate": "1.0"})
         lines = ET.SubElement(cls, "lines")
         ET.SubElement(lines, "line", number="1", hits="1")
 
@@ -99,6 +100,61 @@ def test_verify_all_coverage_detects_uncovered_lines(tmp_path):
     assert "Test Coverage Enforcement Failed" in summary_content
     assert "session.py" in summary_content
     assert "10-11" in summary_content
+
+
+def test_format_partial_branches():
+    """Verify formatting of partial branch entries into line->target labels."""
+    assert format_partial_branches([]) == ""
+    assert format_partial_branches([("180", "184"), ("193", "exit")]) == "180->184, 193->exit"
+    assert format_partial_branches([("20", "25,exit")]) == "20->25, 20->exit"
+
+
+def test_verify_all_coverage_detects_partial_branches(tmp_path, capsys):
+    """Verify that partial branches fail enforcement even with 100% line coverage."""
+    xml_file = tmp_path / "coverage.xml"
+    summary_file = tmp_path / "summary.md"
+
+    from scripts.verify_coverage import OWND_DIR, REPO_ROOT, EXCLUDED_MODULES
+
+    disk_files = []
+    for root_dir, _, files in os.walk(OWND_DIR):
+        for f in files:
+            if f.endswith(".py"):
+                full_path = os.path.join(root_dir, f)
+                rel_path = os.path.relpath(full_path, REPO_ROOT).replace("\\", "/")
+                if rel_path not in EXCLUDED_MODULES:
+                    disk_files.append(rel_path)
+
+    root = ET.Element("coverage", attrib={"branches-valid": "10", "branches-covered": "9", "branch-rate": "0.9"})
+    pkg = ET.SubElement(root, "package")
+    for df in disk_files:
+        if df == "OWNd/connection/command_session.py":
+            cls = ET.SubElement(pkg, "class", attrib={"filename": df, "line-rate": "1.0", "branch-rate": "0.95"})
+            lines = ET.SubElement(cls, "lines")
+            ET.SubElement(
+                lines,
+                "line",
+                number="193",
+                hits="1",
+                branch="true",
+                attrib={"condition-coverage": "50% (1/2)", "missing-branches": "exit"},
+            )
+        else:
+            cls = ET.SubElement(pkg, "class", attrib={"filename": df, "line-rate": "1.0", "branch-rate": "1.0"})
+            lines = ET.SubElement(cls, "lines")
+            ET.SubElement(lines, "line", number="1", hits="1")
+
+    ET.ElementTree(root).write(str(xml_file))
+
+    with pytest.MonkeyPatch.context() as mp:
+        mp.setenv("GITHUB_STEP_SUMMARY", str(summary_file))
+        assert verify_all_coverage(str(xml_file), min_threshold=100.0) == 1
+
+    captured = capsys.readouterr().out
+    assert "::error file=OWNd/connection/command_session.py,line=193::" in captured
+    summary_content = summary_file.read_text(encoding="utf-8")
+    assert "Test Coverage Enforcement Failed" in summary_content
+    assert "193->exit" in summary_content
 
 
 def test_update_readme_and_svg(tmp_path):

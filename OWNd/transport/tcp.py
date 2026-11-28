@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections.abc import Mapping
 
 from ..connection import OWNCommandSession, OWNEventSession, OWNGateway
 from ..exceptions import OWNError
@@ -55,12 +56,16 @@ class AsyncTcpTransport(OWNTransport):
         self._command_session = command_session
 
         event_result = await event_session.connect()
-        if event_result is None or not event_result.get("Success", False):
+        if not isinstance(event_result, Mapping) or not event_result.get(
+            "Success", False
+        ):
             await self.disconnect()
             return False
 
         command_result = await command_session.connect()
-        if command_result is None or not command_result.get("Success", False):
+        if not isinstance(command_result, Mapping) or not command_result.get(
+            "Success", False
+        ):
             await self.disconnect()
             return False
 
