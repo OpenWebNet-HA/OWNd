@@ -346,3 +346,12 @@ def test_p2_15_get_temperature_leading_zero_guard(
 ) -> None:
     cmd = OWNHeatingCommand.get_temperature(where)
     assert str(cmd) == expected_frame
+
+
+def test_p2_13_pump_call_ignores_out_of_range_calling_zone() -> None:
+    event = OWNEvent.parse("*4*4001#105*0#3##")
+    assert isinstance(event, OWNHeatingEvent)
+    assert event.message_type == MESSAGE_TYPE_PUMP_CALL
+    assert event.pump_call_active is True
+    assert event.calling_zone is None
+    assert event.pump == 3

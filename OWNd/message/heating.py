@@ -662,7 +662,7 @@ class OWNHeatingEvent(OWNEvent):
                 self._pump_call_active = self._mode == 4001
                 if self._what_param:
                     calling_zone = _ascii_int(self._what_param[0])
-                    if calling_zone is not None and calling_zone > 0:
+                    if calling_zone is not None and 0 < calling_zone <= 99:
                         self._calling_zone = calling_zone
                 elif (
                     self._zone > 0
