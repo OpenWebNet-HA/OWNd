@@ -231,10 +231,12 @@ def who4_bt_termo_crash_reason(frame: object) -> str | None:
 
     - ``CRASH-01``: Any WHO 4 frame whose WHERE is bare ``#`` (or ``#``-only),
       causing a NULL vector dereference (``SIGSEGV``) in ``OpenMsg::where()``.
-    - ``CRASH-03``: Any WHO 4 frame with ``len(WHERE) >= 10`` (10-byte stack
-      buffer ``__strcpy_chk`` abort) or any WHO 4 dimension write whose first
+    - ``CRASH-03``: Any WHO 4 frame with ``len(WHO) >= 5`` (5-byte ``Extract_chi()``
+      stack buffer ``__strcpy_chk`` abort at ``0x6ee8``), ``len(Extract_dove()) >= 10``
+      (primary WHERE token before sub-address ``#``; 10-byte ``dove`` stack buffer
+      ``__strcpy_chk`` abort at ``0x6efc``), or any WHO 4 dimension write whose first
       value field ``V0`` has ``len(V0) >= 5`` (5-byte stack buffer
-      ``__strcpy_chk`` abort).
+      ``__strcpy_chk`` abort at ``0x7c54``).
     - ``CRASH-04``: WHO 4 dimension write ``#14`` with fewer than 2 non-empty
       values, or ``#7`` with ``M*F`` in ``{0*1, 1*1, 2*1, 3*1, 0*31}`` and fewer
       than 3 non-empty values (uncaught ``std::runtime_error`` from
@@ -252,6 +254,11 @@ def who4_bt_termo_crash_reason(frame: object) -> str | None:
         parts = (body[1:] if is_dim else body).split("*")
         if not _WHO4_FRAME_WHO_REGEX.match(parts[0]):
             continue
+        if len(parts[0]) >= 5:
+            return (
+                "WHO 4 WHO token of 5 or more characters overflows bt_termo's 5-byte "
+                "chi stack buffer (SIGABRT, CRASH-03)"
+            )
 
         if is_dim:
             where = parts[1] if len(parts) >= 2 else ""
@@ -264,9 +271,14 @@ def who4_bt_termo_crash_reason(frame: object) -> str | None:
                 "WHO 4 frame with bare '#' in WHERE dereferences an empty vector "
                 "in bt_termo (SIGSEGV, CRASH-01)"
             )
-        if len(where) >= 10:
+        primary_where = (
+            "#" + where[1:].split("#", 1)[0]
+            if where.startswith("#")
+            else where.split("#", 1)[0]
+        )
+        if len(primary_where) >= 10:
             return (
-                "WHO 4 WHERE of 10 or more characters overflows bt_termo's 10-byte "
+                "WHO 4 primary WHERE of 10 or more characters overflows bt_termo's 10-byte "
                 "dove stack buffer (SIGABRT, CRASH-03)"
             )
 

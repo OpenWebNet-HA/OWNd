@@ -269,9 +269,11 @@ def test_p0_8_external_probe_unique_id(frame: str, expected_uid: str, expected_z
         ("*##*#4*#*#14*0215*1##", "CRASH-01"),
         ("*#4*#", "CRASH-01"),
         ("*#04*###", "CRASH-01"),
-        # CRASH-03: len(WHERE) >= 10
+        # CRASH-03: len(WHO) >= 5 (Extract_chi) or len(Extract_dove()) >= 10
+        ("*#00004*1*0##", "CRASH-03"),
+        ("*00004*1*1##", "CRASH-03"),
         ("*#4*1234567890*0##", "CRASH-03"),
-        ("*4*1*#99#9#4#99##", "CRASH-03"),
+        ("*4*1*#012345678##", "CRASH-03"),
         # CRASH-03: dim write len(V0) >= 5
         ("*#4*1*#14*00215*1##", "CRASH-03"),
         ("*#4*1*#0*12345##", "CRASH-03"),
@@ -313,6 +315,8 @@ def test_p1_9_bt_termo_crash_frames_refused(frame: str, tag: str) -> None:
         "*#4*0#0*20##",
         "*#4*0*60##",
         "*#4*99#9#4#99##"[:12] + "##",  # safe shorter frame
+        str(OWNHeatingCommand.actuators_status("#10#1#4#01")),  # 10-char routed WHERE (Extract_dove == '#10')
+        "*#4*11#4#01#12##",  # QEMU-verified non-crashing (Extract_dove == '11')
         "*#4*1*#14*0215*1##",
         "*#4*#1*#14*0215*3##",
         "*#4*#23#1*#14*0250*3##",
