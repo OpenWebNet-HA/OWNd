@@ -56,6 +56,7 @@ def test_local_control_states_preserve_raw_values() -> None:
         "5": (None, LOCAL_CONTROL_PROTECTION),
         "6": (None, LOCAL_CONTROL_OVERRIDE),
         "7": (None, LOCAL_CONTROL_UNKNOWN),
+        "8": (None, LOCAL_CONTROL_UNKNOWN),
     }
 
     for raw, state in expected.items():
