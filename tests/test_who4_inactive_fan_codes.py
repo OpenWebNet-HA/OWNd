@@ -290,16 +290,26 @@ def test_unlabelled_codes_log_the_value_and_the_state(code: int, state: str) -> 
     )
 
 
-def test_dimension_19_with_an_empty_field_stays_untyped() -> None:
-    """``*#4*1*19*0*##``: what an emulated MyHomeServer1 028206 and F461 020011 emit for an unassigned telegram value."""
+def test_dimension_19_with_an_empty_field_decodes_populated_side() -> None:
+    """``*#4*1*19*0*##``: emulated MyHomeServer1 028206 and F461 020011 emit an empty field for an unmapped SCS byte.
+
+    The populated cooling side is decoded (``is_cooling() is False``), the empty
+    heating side stays ``None``, and ``is_active()`` stays ``None`` (never claims
+    the zone is idle while the other side is unknown). Both-empty stays untyped.
+    """
     event = _parse("*#4*1*19*0*##")
-    assert event.message_type is None
+    assert event.message_type == MESSAGE_TYPE_ACTION
     assert event.is_active() is None
     assert event.is_heating() is None
-    assert event.is_cooling() is None
+    assert event.is_cooling() is False
     assert event.fan_on is None
     assert event.cooling_fan_on is None
-    assert event.human_readable_log == "*#4*1*19*0*##"
+    assert event.human_readable_log == "Zone 1's cooling valve is off; heating output is unmapped."
+
+    both_empty = _parse("*#4*1*19**##")
+    assert both_empty.message_type is None
+    assert both_empty.is_active() is None
+    assert both_empty.human_readable_log == "*#4*1*19**##"
 
 
 @pytest.mark.parametrize("code", _ALL_CODES)

@@ -51,11 +51,14 @@ ZONE_CONTEXT_HEATING = "heating"
 ZONE_CONTEXT_COOLING = "cooling"
 ZONE_CONTEXT_AUTOMATIC = "automatic"
 
+ZONE_STATE_MANUAL = "manual"
 ZONE_STATE_SETPOINT = "setpoint"
 ZONE_STATE_PROTECTION = "protection"
 ZONE_STATE_COMFORT = "comfort"
 ZONE_STATE_ECO = "eco"
 ZONE_STATE_OFF = "off"
+ZONE_STATE_EXTENDED_31 = "state_31"
+ZONE_STATE_EXTENDED_32 = "state_32"
 
 _ZONE_CONTEXTS = {
     "0": ZONE_CONTEXT_GENERIC,
@@ -63,16 +66,28 @@ _ZONE_CONTEXTS = {
     "2": ZONE_CONTEXT_COOLING,
     "3": ZONE_CONTEXT_AUTOMATIC,
 }
+# bt_termo 0x58b0 / 0x55f0 (own-firmware-oracle findings/bt-termo.md §4.5.3):
+# F=0 is manual/active without setpoint (0xF0->1*0, 0xF1->2*0, 0x17->3*0);
+# F=1..5 are setpoint, protection, comfort, eco, off; F=31/32 map 0xF9/0xFA.
 _ZONE_STATES = {
+    "0": ZONE_STATE_MANUAL,
     "1": ZONE_STATE_SETPOINT,
     "2": ZONE_STATE_PROTECTION,
     "3": ZONE_STATE_COMFORT,
     "4": ZONE_STATE_ECO,
     "5": ZONE_STATE_OFF,
+    "31": ZONE_STATE_EXTENDED_31,
+    "32": ZONE_STATE_EXTENDED_32,
 }
 
 
-_WHO4_TEMP_REGEX = re.compile(r"^[01][0-9]{3}$")
+# Standard WHO 4 temperatures are 4 ASCII digits ``SXXX`` (S=0 positive, S=1
+# negative). Gen A gateways (MH200 020102, H4684 020054) format positive
+# temperatures below 10.0°C with ``0%d``, emitting 2 or 3 ASCII digits
+# (``00``, ``05``, ``085`` for 0.0°C, 0.5°C, 8.5°C; findings/bt-termo.md
+# QUIRK-11). Only leading-zero 2-3 digit positive values are accepted so
+# malformed values like ``12``, ``215``, ``100``, ``00215`` stay rejected.
+_WHO4_TEMP_REGEX = re.compile(r"^(?:[01][0-9]{3}|0[0-9]{1,2})\Z", re.ASCII)
 # DIMENSION 60 humidity value: digits with an optional decimal part. An empty
 # value (``*#4*1*60*##``) is no reading and must not raise out of the parser.
 _WHO4_HUMIDITY_REGEX = re.compile(r"[0-9]+(?:\.[0-9]+)?", re.ASCII)
@@ -193,6 +208,124 @@ def is_who4_dimension_22_crash_form(frame: object) -> bool:
     )
 
 
+_C_ATOI_REGEX = re.compile(r"^\s*([+-]?[0-9]+)", re.ASCII)
+_WHO4_FRAME_WHO_REGEX = re.compile(r"^\s*\+?0*4\s*\Z", re.ASCII)
+# Split multi-frame strings on the final ``##`` of each frame so a bare ``#``
+# WHERE (``*#4*###`` or ``*4*1*###``) keeps its ``#`` inside the frame chunk
+# instead of splitting the first two ``#`` characters off.
+_FRAME_END_SPLIT_REGEX = re.compile(r"##(?!#)")
+
+
+def _c_atoi(token: str) -> int | None:
+    """Parse the leading base-10 integer the way C ``atoi()`` does, or ``None``."""
+    match = _C_ATOI_REGEX.match(token)
+    return int(match.group(1)) if match else None
+
+
+def who4_bt_termo_crash_reason(frame: object) -> str | None:
+    """Return a refusal reason if ``frame`` hits a known ``bt_termo`` crash, else ``None``.
+
+    Covers the three non-DIM-22 OWN-outbound crash classes verified in
+    ``bt_termo`` firmware disassembly (own-firmware-oracle
+    ``findings/bt-termo.md`` §6.1):
+
+    - ``CRASH-01``: Any WHO 4 frame whose WHERE is bare ``#`` (or ``#``-only),
+      causing a NULL vector dereference (``SIGSEGV``) in ``OpenMsg::where()``.
+    - ``CRASH-03``: Any WHO 4 frame with ``len(WHO) >= 5`` (5-byte ``Extract_chi()``
+      stack buffer ``__strcpy_chk`` abort at ``0x6ee8``), ``len(Extract_dove()) >= 10``
+      (primary WHERE token before sub-address ``#``; 10-byte ``dove`` stack buffer
+      ``__strcpy_chk`` abort at ``0x6efc``), or any WHO 4 dimension write whose first
+      value field ``V0`` has ``len(V0) >= 5`` (5-byte stack buffer
+      ``__strcpy_chk`` abort at ``0x7c54``).
+    - ``CRASH-04``: WHO 4 dimension write ``#14`` with fewer than 2 non-empty
+      values, or ``#7`` with ``M*F`` in ``{0*1, 1*1, 2*1, 3*1, 0*31}`` and fewer
+      than 3 non-empty values (uncaught ``std::runtime_error`` from
+      ``OpenMsg::whatArgN()``, ``SIGABRT``).
+    """
+    raw = _decode_frame(frame)
+    for chunk in _FRAME_END_SPLIT_REGEX.split(raw):
+        star = chunk.find("*")
+        if star == -1:
+            continue
+        body = chunk[star + 1 :]
+        if not body:
+            continue
+        is_dim = body.startswith("#")
+        parts = (body[1:] if is_dim else body).split("*")
+        if not _WHO4_FRAME_WHO_REGEX.match(parts[0]):
+            continue
+        if len(parts[0]) >= 5:
+            return (
+                "WHO 4 WHO token of 5 or more characters overflows bt_termo's 5-byte "
+                "chi stack buffer (SIGABRT, CRASH-03)"
+            )
+
+        if is_dim:
+            where = parts[1] if len(parts) >= 2 else ""
+        else:
+            where = parts[2] if len(parts) >= 3 else ""
+
+        stripped_where = where.strip()
+        if stripped_where and "#" in stripped_where and not stripped_where.strip("#"):
+            return (
+                "WHO 4 frame with bare '#' in WHERE dereferences an empty vector "
+                "in bt_termo (SIGSEGV, CRASH-01)"
+            )
+        primary_where = (
+            "#" + where[1:].split("#", 1)[0]
+            if where.startswith("#")
+            else where.split("#", 1)[0]
+        )
+        if len(primary_where) >= 10:
+            return (
+                "WHO 4 primary WHERE of 10 or more characters overflows bt_termo's 10-byte "
+                "dove stack buffer (SIGABRT, CRASH-03)"
+            )
+
+        if not is_dim or len(parts) < 3:
+            continue
+        dim_token = parts[2].lstrip()
+        if not dim_token.startswith("#"):
+            continue
+        values = parts[3:]
+        if values and len(values[0]) >= 5:
+            return (
+                "WHO 4 dimension write with first value of 5 or more characters "
+                "overflows bt_termo's 5-byte value stack buffer (SIGABRT, CRASH-03)"
+            )
+        dim_num = _c_atoi(dim_token[1:].split("#", 1)[0])
+        if dim_num == 14:
+            if (
+                len(values) < 2
+                or not values[0].strip("# \t\r\n")
+                or not values[1].strip("# \t\r\n")
+            ):
+                return (
+                    "WHO 4 dimension #14 write with fewer than 2 values throws an "
+                    "uncaught exception in bt_termo (SIGABRT, CRASH-04)"
+                )
+        elif dim_num == 7 and len(values) >= 2:
+            # C atoi("") and atoi("abc") return 0, which matches M=0 in bt_termo's
+            # #7 handler (0x90b0 -> 0x55f0(1)/0x55f0(31) -> whatArgN(2)).
+            m_val = _c_atoi(values[0])
+            if m_val is None:
+                m_val = 0
+            f_val = _c_atoi(values[1])
+            if (
+                f_val is not None
+                and (
+                    (m_val in (0, 1, 2, 3) and f_val == 1)
+                    or (m_val == 0 and f_val == 31)
+                )
+                and (len(values) < 3 or not values[2].strip("# \t\r\n"))
+            ):
+                return (
+                    "WHO 4 dimension #7 setpoint write without a 3rd temperature "
+                    "value throws an uncaught exception in bt_termo (SIGABRT, CRASH-04)"
+                )
+    return None
+
+
 # A central-unit address: ``#0`` (3550 99-zone central unit) or ``#0#C`` (4695
 # 4-zone central unit ``C``, 1..99 or ``01``..``99``: MyHOME_Suite OPEN.db
 # ``#0#[ZA][ZB]``, MHCatalogue 4695 ``ZAZB_CENTRAL`` 1..99, oracle
@@ -273,7 +406,8 @@ _WHO4_WHERE_REGEX = re.compile(r"#?[0-9]{1,2}(?:#[0-9])?(?:#4#[0-9]{2})?", re.AS
 # ``200``): the same domains, except that the MH202 and the F459 drop
 # ``100..200`` there. ``9`` comes out on DIMENSION 19 from all five. For a
 # telegram value outside their table the MyHomeServer1 and the F461 emit the
-# frame with an empty field (``*#4*1*19*0*##``); it stays an untyped event.
+# frame with an empty field on that side (``*#4*1*19*0*##``, ``*#4*1*19**1##``);
+# the populated side is decoded independently while the empty side stays ``None``.
 #
 # The maintainer's reading of the firmware (OWNd#174, 2026-11-15) says the
 # same and puts the F454 (020051) with the MH202; the emulated F454 gave no
@@ -343,7 +477,7 @@ def _thermo_output_text(code: int, valve: str, fan: str, output: str) -> str:
 
 
 def who4_temperature(raw: str) -> float | None:
-    """Decode WHO 4 temperature ``SXXX`` (tenths of a degree)."""
+    """Decode WHO 4 temperature ``SXXX`` (or Gen A 2/3-digit ``0X``/``0XX`` below 10 °C)."""
     if not _WHO4_TEMP_REGEX.match(raw):
         return None
     magnitude = int(raw[1:]) / 10.0
@@ -475,7 +609,8 @@ class OWNHeatingEvent(OWNEvent):
         if self._zone == 0 and where_params and where.startswith("#"):
             self._zone = int(where_params[0])
         self._sensor = None
-        if self._zone > 99:
+        self._is_probe_address = self._zone > 99
+        if self._is_probe_address:
             self._sensor = int(str(self._zone)[:1])
             self._zone = int(str(self._zone)[1:])
         self._actuator = None
@@ -498,6 +633,7 @@ class OWNHeatingEvent(OWNEvent):
         self._holiday_end_date: tuple[int, int, int] | None = None
         self._holiday_end_time: tuple[int, int] | None = None
         self._manual_timed_duration: tuple[int, int] | None = None
+        self._timed_manual_hours: int | None = None
         self._holiday_days: int | None = None
 
         self._is_active = None
@@ -532,7 +668,10 @@ class OWNHeatingEvent(OWNEvent):
                 self._human_readable_log = (
                     f"Zone {self._zone}'s season is {self._season}."
                 )
-            elif self._mode in [103, 203, 303, 102, 202, 302]:
+            elif self._mode in (103, 203, 303, 102, 202, 302, 402, 502):
+                # 402/502: bt_termo 0x5390 (D2 04 12; 402 also D2 04 C1)
+                # extended protection modes (findings/bt-termo.md §4.5.1);
+                # season stays None.
                 self._type = MESSAGE_TYPE_MODE
                 self._mode_name = CLIMATE_MODE_OFF
                 if self._mode in (102, 103):
@@ -543,11 +682,15 @@ class OWNHeatingEvent(OWNEvent):
                     f"Zone {self._zone}'s mode is set to '{self._mode_name}'"
                 )
             elif (
-                self._mode in [210, 211, 212, 215]
-                or (self._mode >= 2101 and self._mode <= 2103)
-                or (self._mode >= 2201 and self._mode <= 2216)
-                or (self._mode >= 23001 and self._mode <= 23255)
+                self._mode in (204, 207, 208, 210, 211, 212, 215)
+                or (2100 <= self._mode <= 2116)
+                or (2200 <= self._mode <= 2216)
+                or (23001 <= self._mode <= 23255)
             ):
+                # 204: CU zone timed manual (D2 04 C2 29); 207/208: Cooling
+                # Eco/Comfort (bt_termo 0x5390 0x13/0x12, live F461 capture);
+                # 2100/2200: multi-CU #0#C off-by-one emission (QUIRK-10);
+                # 2101..2116: weekly programs 1..16;
                 # 23xxx: holiday days in conditioning mode (Legrand WHO 4
                 # p. 5 / p. 64; libqtdevices thermal_device.cpp:58, 258-262).
                 self._type = MESSAGE_TYPE_MODE
@@ -559,11 +702,15 @@ class OWNHeatingEvent(OWNEvent):
                     f"Zone {self._zone}'s mode is set to '{self._mode_name}'"
                 )
             elif (
-                self._mode in [110, 111, 112, 115]
-                or (self._mode >= 1101 and self._mode <= 1103)
-                or (self._mode >= 1201 and self._mode <= 1216)
-                or (self._mode >= 13001 and self._mode <= 13255)
+                self._mode in (104, 107, 108, 110, 111, 112, 115)
+                or (1100 <= self._mode <= 1116)
+                or (1200 <= self._mode <= 1216)
+                or (13001 <= self._mode <= 13255)
             ):
+                # 104: CU zone timed manual (D2 04 C2 19); 107/108: Heating
+                # Eco/Comfort (bt_termo 0x5390 0x11/0x10, live F461 capture);
+                # 1100/1200: multi-CU #0#C off-by-one emission (QUIRK-10);
+                # 1101..1116: weekly programs 1..16;
                 # 13xxx: holiday days in heating mode (Legrand WHO 4 p. 5 /
                 # p. 64; libqtdevices thermal_device.cpp:68, 303-307).
                 self._type = MESSAGE_TYPE_MODE
@@ -575,11 +722,16 @@ class OWNHeatingEvent(OWNEvent):
                     f"Zone {self._zone}'s mode is set to '{self._mode_name}'"
                 )
             elif (
-                self._mode in [310, 311, 312, 315, 3000]
-                or (self._mode >= 3100 and self._mode <= 3116)
-                or (self._mode >= 3200 and self._mode <= 3216)
-                or (self._mode >= 33001 and self._mode <= 33255)
+                self._mode
+                in (304, 310, 311, 312, 315, 407, 408, 410, 507, 508, 510, 3000)
+                or (3100 <= self._mode <= 3116)
+                or (3200 <= self._mode <= 3216)
+                or (33001 <= self._mode <= 33255)
             ):
+                # 304: CU zone generic timed manual (D2 04 C2 09);
+                # 407/408/410 and 507/508/510: bt_termo 0x5390 (D2 04 12;
+                # 407/408/410/507/508 also D2 04 C1) extended Eco/Comfort/Manual
+                # modes (season stays None);
                 # 3100 "last set up weekly program", 3200 "last set up
                 # scenario" and 3000 / 3000#31PP "holiday mode deactivation"
                 # (Legrand WHO 4 1.6.8 p. 33, 1.6.12 p. 39, 1.6.20 p. 52,
@@ -629,11 +781,13 @@ class OWNHeatingEvent(OWNEvent):
 
             # Program / scenario numbers carried in the WHAT (Legrand WHO 4
             # p. 5 and p. 64; libqtdevices thermal_device.cpp:209-211, 246-256,
-            # 291-301): 11xx/21xx/31xx program, 12xx/22xx/32xx scenario.
+            # 291-301; findings/bt-termo.md §4.4 / QUIRK-10): 11xx/21xx/31xx
+            # program (1..16), 12xx/22xx/32xx scenario (1..16); *00 leaves
+            # program/scenario None.
             if self._type == MESSAGE_TYPE_MODE:
                 if (
-                    1101 <= self._mode <= 1103
-                    or 2101 <= self._mode <= 2103
+                    1101 <= self._mode <= 1116
+                    or 2101 <= self._mode <= 2116
                     or 3101 <= self._mode <= 3116
                 ):
                     self._program = self._mode % 100
@@ -670,10 +824,24 @@ class OWNHeatingEvent(OWNEvent):
                 and self._what_param[0] is not None
             ):
                 # 110#T / 210#T manual with temperature (Legrand WHO 4 p. 23,
-                # p. 56), 312#T timed manual (libqtdevices thermal_device.cpp:378).
+                # p. 56), 112#T#H / 212#T#H / 312#T#H timed manual
+                # (libqtdevices thermal_device.cpp:378; bt_termo D2 04 C1 19/29/09).
                 self._type = MESSAGE_TYPE_MODE_TARGET
                 self._set_temperature = who4_temperature(self._what_param[0])
-                if self._set_temperature is not None:
+                if (
+                    self._mode in (112, 212, 312)
+                    and len(self._what_param) >= 2
+                    and self._what_param[1]
+                ):
+                    self._timed_manual_hours = _ascii_int(self._what_param[1])
+                if (
+                    self._set_temperature is not None
+                    and self._timed_manual_hours is not None
+                ):
+                    self._human_readable_log += (
+                        f" at {self._set_temperature}°C for {self._timed_manual_hours}h."
+                    )
+                elif self._set_temperature is not None:
                     self._human_readable_log += f" at {self._set_temperature}°C."
                 else:
                     self._human_readable_log += "."
@@ -829,34 +997,69 @@ class OWNHeatingEvent(OWNEvent):
         elif (
             self._dimension == 19
             and len(self._dimension_value) >= 2
-            and _ascii_ints(self._dimension_value[:2])
         ):  # Valves status
-            self._type = MESSAGE_TYPE_ACTION
-            _cooling_value = int(self._dimension_value[0])
-            _heating_value = int(self._dimension_value[1])
-            _cooling = _decode_thermo_output_code(_cooling_value)
-            _heating = _decode_thermo_output_code(_heating_value)
-            # A code that is not decoded on either side leaves the whole
-            # status unknown (``None``), as MyHOME reads it: the frame keeps
-            # its type and only the log names the unknown value.
-            if _cooling is not None and _heating is not None:
-                self._is_cooling, self._cooling_fan_on, self._cooling_fan_speed = _cooling
-                self._is_heating, self._fan_on, self._fan_speed = _heating
-                # A fan-coil value on one side must not hide an open valve or a
-                # running fan on the other side: *#4*2*19*5*1## (cooling fan off,
-                # heating valve on) is an active zone (F461 plant capture,
-                # tests/test_f461_live_plant.py).
-                self._is_active = self._is_cooling or self._is_heating
-            _cooling_text = _thermo_output_text(
-                _cooling_value,
-                f"Zone {self._zone}'s cooling valve",
-                f"Zone {self._zone}'s cooling fan",
-                f"Zone {self._zone}'s cooling output",
-            )
-            _heating_text = _thermo_output_text(
-                _heating_value, "heating valve", "heating fan", "heating output"
-            )
-            self._human_readable_log = f"{_cooling_text}; {_heating_text}."
+            _raw_cooling = self._dimension_value[0]
+            _raw_heating = self._dimension_value[1]
+            _cooling_int = _ascii_int(_raw_cooling)
+            _heating_int = _ascii_int(_raw_heating)
+            if _cooling_int is not None and _heating_int is not None:
+                self._type = MESSAGE_TYPE_ACTION
+                _cooling = _decode_thermo_output_code(_cooling_int)
+                _heating = _decode_thermo_output_code(_heating_int)
+                # A code that is not decoded on either side leaves the whole
+                # status unknown (``None``), as MyHOME reads it: the frame keeps
+                # its type and only the log names the unknown value.
+                if _cooling is not None and _heating is not None:
+                    self._is_cooling, self._cooling_fan_on, self._cooling_fan_speed = _cooling
+                    self._is_heating, self._fan_on, self._fan_speed = _heating
+                    # A fan-coil value on one side must not hide an open valve or a
+                    # running fan on the other side: *#4*2*19*5*1## (cooling fan off,
+                    # heating valve on) is an active zone (F461 plant capture,
+                    # tests/test_f461_live_plant.py).
+                    self._is_active = self._is_cooling or self._is_heating
+                _cooling_text = _thermo_output_text(
+                    _cooling_int,
+                    f"Zone {self._zone}'s cooling valve",
+                    f"Zone {self._zone}'s cooling fan",
+                    f"Zone {self._zone}'s cooling output",
+                )
+                _heating_text = _thermo_output_text(
+                    _heating_int, "heating valve", "heating fan", "heating output"
+                )
+                self._human_readable_log = f"{_cooling_text}; {_heating_text}."
+            elif _raw_cooling == "" and _heating_int is not None:
+                # bt_termo D2 04 13 writes "" when one side's SCS byte is
+                # unmapped (e.g. *#4*Z*19**1## on a single-pipe heating zone).
+                # Decode the present side; only assert zone active when that
+                # side is active (never claim idle when the other side is unknown).
+                _heating = _decode_thermo_output_code(_heating_int)
+                if _heating is not None:
+                    self._type = MESSAGE_TYPE_ACTION
+                    self._is_heating, self._fan_on, self._fan_speed = _heating
+                    if self._is_heating:
+                        self._is_active = True
+                    _heating_text = _thermo_output_text(
+                        _heating_int, "heating valve", "heating fan", "heating output"
+                    )
+                    self._human_readable_log = (
+                        f"Zone {self._zone}'s cooling output is unmapped; {_heating_text}."
+                    )
+            elif _raw_heating == "" and _cooling_int is not None:
+                _cooling = _decode_thermo_output_code(_cooling_int)
+                if _cooling is not None:
+                    self._type = MESSAGE_TYPE_ACTION
+                    self._is_cooling, self._cooling_fan_on, self._cooling_fan_speed = _cooling
+                    if self._is_cooling:
+                        self._is_active = True
+                    _cooling_text = _thermo_output_text(
+                        _cooling_int,
+                        f"Zone {self._zone}'s cooling valve",
+                        f"Zone {self._zone}'s cooling fan",
+                        f"Zone {self._zone}'s cooling output",
+                    )
+                    self._human_readable_log = (
+                        f"{_cooling_text}; heating output is unmapped."
+                    )
 
         elif (
             self._dimension == 20
@@ -935,6 +1138,13 @@ class OWNHeatingEvent(OWNEvent):
     @property
     def unique_id(self) -> str:
         """The ID of the subject of this message"""
+        # External probes ``100..900`` have ``_is_probe_address=True`` and
+        # ``_zone=0``; keep their full address (``4-100``, ``4-500``) instead
+        # of colliding with the central unit ``4-#0``, while ``#0``, ``0``,
+        # ``00``, ``000``, and ``0#N`` remain ``4-#0`` (even on DIM 15 which
+        # sets/clears ``_sensor`` from the slot field).
+        if self._is_probe_address and self._where and not self._where.startswith("#"):
+            return f"{self._who}-{self._where}"
         if self._zone == 0:
             return f"{self._who}-#0"
         if self._sensor is not None:
@@ -965,7 +1175,7 @@ class OWNHeatingEvent(OWNEvent):
         Set for the bare season frame (WHAT 1 / 0, message_type
         MESSAGE_TYPE_SEASON, mode None) and for every season-specific mode
         WHAT (1xx, 11xx, 12xx, 13xxx heating; 2xx, 21xx, 22xx, 23xxx
-        conditioning). Generic WHATs (3xx, 31xx, 32xx, 33xxx) have no season.
+        conditioning). Generic WHATs (3xx, 4xx, 5xx, 31xx, 32xx, 33xxx) have no season.
         """
         return self._season
 
@@ -1048,7 +1258,7 @@ class OWNHeatingEvent(OWNEvent):
 
     @property
     def program(self) -> int | None:
-        """Weekly program number (1..3 for seasonal, 1..16 for generic) named by the WHAT, else None."""
+        """Weekly program number (1..16) named by the WHAT, else None."""
         return self._program
 
     @property
@@ -1073,8 +1283,13 @@ class OWNHeatingEvent(OWNEvent):
 
     @property
     def manual_timed_duration(self) -> tuple[int, int] | None:
-        """Timed manual duration (hours, minutes), or None."""
+        """Timed manual duration (hours, minutes) from DIMENSION 32, or None."""
         return self._manual_timed_duration
+
+    @property
+    def timed_manual_hours(self) -> int | None:
+        """Timed manual duration in hours from ``112/212/312#TTTT#HH``, or None."""
+        return self._timed_manual_hours
 
 
 
@@ -1526,6 +1741,11 @@ class OWNHeatingCommand(OWNCommand):
 
         BTicino client (libqtdevices TS10_1_0_23 ThermalDevice4Zones::setManualTempTimed)
         sends *4*312#TTTT#H*WHERE##.
+
+        Note on ``bt_termo`` gateways (own-firmware-oracle ``findings/bt-termo.md`` §3.3):
+        ``112/212/312#TTTT#H`` always emits SCS central-unit command byte ``C1``
+        (not zone command byte ``C2``), so on ``bt_termo`` gateways this command
+        targets a central unit (``#0`` or ``#0#C``) rather than an individual zone.
         """
         zone, zone_name = _zone_address_and_name(where, standalone=standalone)
         temp_val = float(temperature)
@@ -1555,6 +1775,10 @@ class OWNHeatingCommand(OWNCommand):
 
         BTicino client (libqtdevices TS10_1_0_23 ThermalDevice::setWeekendDateTime)
         sends *4*315#3100+prog*WHERE##.
+
+        Note (own-firmware-oracle ``thermo-four-zone-central.tsv``): ``#0`` and
+        ``#0#C`` are forwarded with ``<CU>=C`` across Gen B/C/C-coso/D gateways;
+        Gen A (``H4684``/``MH200``) collapses ``#0#C`` to ``00``.
         """
         where = _validate_central_where(where, "Central unit weekend mode")
         try:
@@ -1580,6 +1804,10 @@ class OWNHeatingCommand(OWNCommand):
 
         BTicino client (libqtdevices TS10_1_0_23 ThermalDevice::setHolidayDateTime)
         sends *4*33000+days#3100+prog*WHERE##.
+
+        Note (own-firmware-oracle ``findings/bt-termo.md`` §3.3): ``#0`` and
+        ``#0#C`` are forwarded with ``<CU>=C`` across Gen B/C/C-coso/D gateways;
+        Gen A (``H4684``/``MH200``) collapses ``#0#C`` to ``00``.
         """
         where = _validate_central_where(where, "Central unit holiday mode")
         try:

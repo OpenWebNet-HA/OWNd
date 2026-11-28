@@ -320,16 +320,26 @@ def test_fix4_captured_actuator_status_keeps_its_actuator() -> None:
 # ── Fix 5: valve status with an empty field ────────────────────────────────
 
 
-@pytest.mark.parametrize("frame", ["*#4*40*19**0##", "*#4*40*19*1*##"])
-def test_fix5_valve_status_with_an_empty_field_is_not_decoded(frame: str) -> None:
+def test_fix5_valve_status_with_an_empty_field_decodes_known_side() -> None:
     """Emitted: the firmware prints an empty field for a status byte outside its table.
 
-    Before the fix ``int("")`` raised ValueError and the frame was dropped.
+    Before Fix 5 ``int("")`` raised ValueError and the frame was dropped; now
+    the populated side is decoded independently without asserting idle when the
+    other side is unmapped.
     """
-    event = OWNEvent.parse(frame)
+    heating_off = OWNEvent.parse("*#4*40*19**0##")
+    assert isinstance(heating_off, OWNHeatingEvent)
+    assert heating_off.message_type == "hvac_action"
+    assert heating_off.is_cooling() is None
+    assert heating_off.is_heating() is False
+    assert heating_off.is_active() is None
 
-    assert isinstance(event, OWNHeatingEvent)
-    assert event.is_active() is None
+    cooling_on = OWNEvent.parse("*#4*40*19*1*##")
+    assert isinstance(cooling_on, OWNHeatingEvent)
+    assert cooling_on.message_type == "hvac_action"
+    assert cooling_on.is_cooling() is True
+    assert cooling_on.is_heating() is None
+    assert cooling_on.is_active() is True
 
 
 def test_fix5_gateway_valve_status_is_still_decoded() -> None:

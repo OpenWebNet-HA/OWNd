@@ -78,7 +78,7 @@ WHO13_DEVICE_TYPES: dict[str, str] = {
     # dimension 1 tells them apart (the MH201 on 3.6.27 answers only
     # *#1013**1##, model 10, and NACKs *#1013*0*1##).
     "200": (
-        "F454 / MyHomeServer1 / MH202 / F461 / H4890 / F450 / F459 / F460 / MH201"
+        "F454 / MyHomeServer1 / MH202 / F461 / H4890 / F450 / F459 / F460 / MH201 / 3488"
     ),
 }
 
@@ -114,6 +114,9 @@ WHO1013_DEVICE_TYPES: dict[str, str] = {
     "65": "F459",
     "67": "MyHomeServer1",
     "105": "F458",
+    # Live BTicino 3488 fw 3.2.5: *#13**15*200##, *#13**27*51#52#56#56## ("3488"),
+    # *#1013**1*128*15*1*0## (BRAND 1 = BTicino).
+    "128": "3488",
     "134": "F461",
 }
 

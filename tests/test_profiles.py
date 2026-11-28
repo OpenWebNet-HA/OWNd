@@ -189,7 +189,7 @@ def test_h4890_does_not_claim_a_measured_auth_scheme() -> None:
     assert "HMAC" not in summary and "Legacy password" not in summary
 
 
-@pytest.mark.parametrize("name", ["HC4890", "MH4892", "MH4893C", "3488", "3487", "myhometouch", "myhometouch10"])
+@pytest.mark.parametrize("name", ["HC4890", "MH4892", "MH4893C", "3487", "myhometouch", "myhometouch10"])
 def test_other_touch_screens_stay_generic_until_captured(name: str) -> None:
     """Only the 3.5" 4890 family is measured; other screens may carry WHO 4 and must not be restricted."""
     profile = get_gateway_profile(name)
@@ -251,6 +251,7 @@ def test_sound_is_measured_only_where_a_reply_is_captured() -> None:
         "mh200n",
     }
     for key in (
+        "3488",
         "f452",
         "f452v",
         "f461",
@@ -586,7 +587,7 @@ def test_owngateway_event_properties() -> None:
     evt_dev = OWNGatewayEvent("*#13**15*200##")
     assert (
         evt_dev.device_type
-        == "F454 / MyHomeServer1 / MH202 / F461 / H4890 / F450 / F459 / F460 / MH201"
+        == "F454 / MyHomeServer1 / MH202 / F461 / H4890 / F450 / F459 / F460 / MH201 / 3488"
     )
     assert evt_dev.device_type_code == "200"
     assert evt_dev.firmware_version is None
@@ -727,6 +728,8 @@ def test_who16_stays_on_gateways_that_forward_it(model: str) -> None:
     ),
     [
         # Oracle + live multi-session captures (MyHOME#629, #799, #866)
+        ("3488", False, True, True, True, False),
+        ("067259", False, True, True, True, False),
         ("F454", False, True, True, False, False),
         ("003598", False, True, True, False, False),
         ("F461", False, True, True, True, False),
@@ -735,10 +738,12 @@ def test_who16_stays_on_gateways_that_forward_it(model: str) -> None:
         ("MH202", False, True, False, False, False),
         ("03535", False, True, False, False, False),
         ("003535", False, True, False, False, False),
-        # Gateways supporting general sweep *#4*0## (zone_status left None / unverified)
-        ("F453", True, None, False, False, False),
-        ("F453AV", True, None, False, False, False),
-        ("MH200N", True, None, False, False, False),
+        # Gen B gateways: *#4*0## polls non-existent zone 0 point-to-point
+        # (thermo-four-zone-central.tsv:41, findings/bt-termo.md QUIRK-15) and
+        # stalls with 0 replies on physical plants (zone_status left None).
+        ("F453", False, None, False, False, False),
+        ("F453AV", False, None, False, False, False),
+        ("MH200N", False, None, False, False, False),
         # Live F455 1.0.76, catalogued but not emulated in own-firmware-oracle (MyHOME#466
         # capture, MyHOME#932): *#4*0## ACKed after ~9 s with no frame, *#4*Z*60## NACKed in
         # 19 ms. Zone status (frames on the event session, ACK after ~9 s) and actuator status
